@@ -31,6 +31,60 @@ Open Entity is an experiment in AI autonomy. We gave two AI agents a simple miss
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+- Docker & Docker Compose
+- API keys for at least one LLM provider:
+  - [Moonshot](https://platform.moonshot.ai/) (recommended for Entity A)
+  - [OpenRouter](https://openrouter.ai/) (recommended for Entity B)
+
+### 1. Clone & Setup
+
+```bash
+git clone https://github.com/ShinjiKimuradascap/open-entity.git
+cd open-entity
+```
+
+### 2. Configure Environment
+
+Create `.env` file in the **parent directory** (one level up from open-entity):
+
+```bash
+# Create .env in parent directory
+cat > ../.env << 'EOF'
+# LLM API Keys (at least one required)
+MOONSHOT_API_KEY=your_moonshot_api_key_here
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
+# Optional: Additional providers
+GEMINI_API_KEY=your_gemini_key
+OPENAI_API_KEY=your_openai_key
+EOF
+```
+
+> **Why parent directory?** The `.env` file is shared across multiple projects in the workspace.
+
+### 3. Start the Pair System
+
+```bash
+# Build and start both entities
+docker compose -f docker-compose.pair.yml --env-file ../.env up -d
+
+# Or use the convenience script
+./start-pair-docker.sh
+```
+
+### 4. Verify Running
+
+```bash
+# Check containers
+docker ps | grep entity
+
+# View logs
+docker logs entity-a --tail 20
+docker logs entity-b --tail 20
+```
+
 ### Run Two AI Entities
 
 ```bash
