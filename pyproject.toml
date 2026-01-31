@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-entity"
+version = "0.1.0"
+description = "Open Entity: Extended AI Agent Framework"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Open Entity Team"}
+]
+dependencies = [
+    "typer>=0.15.0",  # 0.12.x has compatibility issues
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.0",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    "python-multipart",
+    "cryptography",
+    "google-generativeai",
+    "google-genai",
+    "python-dotenv",
+    "httpx",
+    "sqlmodel",
+    "alembic",
+    "PyGithub",
+    "numpy",
+    "faiss-cpu",
+    "tiktoken",
+    "aiohttp",
+    "openai",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "networkx",
+    "prompt_toolkit>=3.0.0",
+    "Pillow",
+    "slack-sdk>=3.21.0",
+    "slack-bolt>=1.18.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+mobile = [
+    "neonize",  # WhatsApp integration
+    "python-magic",  # File type detection for media
+    "qrcode",  # QR code display for WhatsApp auth
+    "protobuf>=5.0.0",  # Required by neonize
+    "slack-sdk>=3.21.0",  # Slack integration
+    "slack-bolt>=1.18.0",  # Slack Socket Mode
+]
+
+[project.scripts]
+open-entity = "open_entity.cli:main"
+oe = "open_entity.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+open_entity = ["*.md", "core/prompts/*.yaml", "ui/static/**/*", "ui/templates/**/*", "dashboard/templates/**/*", "profiles/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

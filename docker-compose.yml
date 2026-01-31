@@ -1,0 +1,77 @@
+services:
+  moco:
+    build: .
+    container_name: moco
+    ports:
+      - "8001:8000"
+    volumes:
+      # プロファイル（読み取り専用）
+      - ./profiles:/app/profiles:ro
+      # データ永続化
+      - moco_data:/app/data
+      # ワークスペース（AIの作業領域 - ここだけ書き込み可能）
+      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+    environment:
+      # LLM API キー（.envファイルから読み込み）
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      # Slack 連携
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      # その他設定
+      - MOCO_PROFILE=${MOCO_PROFILE:-cursor}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
+      # サンドボックス：作業ディレクトリを制限
+      - MOCO_WORKING_DIRECTORY=/home/moco/workspace
+    restart: unless-stopped
+    
+    # ========== セキュリティ強化 ==========
+    security_opt:
+      - no-new-privileges:true
+    # 読み取り専用ルートファイルシステム
+    read_only: true
+    # 一時的な書き込みが必要なディレクトリ
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/tmp:size=50M,mode=1777
+    # 不要な機能を削除
+    cap_drop:
+      - ALL
+    # 必要最小限の機能のみ追加
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    # リソース制限
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  # Slack ゲートウェイ（オプション）
+  slack-gateway:
+    build: .
+    container_name: moco-slack
+    command: ["python", "-m", "moco.gateway.clients.slack"]
+    depends_on:
+      - moco
+    environment:
+      - MOCO_API_URL=http://moco:8000/api/chat
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    profiles:
+      - slack  # docker compose --profile slack up で起動
+
+volumes:
+  moco_data:

@@ -1,0 +1,11 @@
+# Image Encoder Skill - Requirements
+# This skill uses only Python standard library modules
+# No external dependencies are required
+
+# Python version: 3.7+
+# Standard library modules used:
+# - base64
+# - os
+# - json
+# - pathlib
+# - typing
