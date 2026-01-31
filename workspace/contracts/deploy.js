@@ -30,7 +30,7 @@ async function main() {
     console.log("ValidationRegistry deployed to:", validationRegistry.address);
     
     // Deploy AgentToken
-    console.log("\n[4/4] Deploying AgentToken...");
+    console.log("\n[4/7] Deploying AgentToken...");
     const initialSupply = hre.ethers.utils.parseEther("10000000"); // 10M tokens
     const AgentToken = await hre.ethers.getContractFactory("AgentToken");
     const agentToken = await AgentToken.deploy(
@@ -41,6 +41,58 @@ async function main() {
     await agentToken.deployed();
     console.log("AgentToken deployed to:", agentToken.address);
     
+    // Deploy TaskEscrow
+    console.log("\n[5/7] Deploying TaskEscrow...");
+    const TaskEscrow = await hre.ethers.getContractFactory("TaskEscrow");
+    const taskEscrow = await TaskEscrow.deploy(
+        agentIdentity.address,
+        agentToken.address
+    );
+    await taskEscrow.deployed();
+    console.log("TaskEscrow deployed to:", taskEscrow.address);
+    
+    // Deploy ServiceRegistry
+    console.log("\n[6/7] Deploying ServiceRegistry...");
+    const ServiceRegistry = await hre.ethers.getContractFactory("ServiceRegistry");
+    const serviceRegistry = await ServiceRegistry.deploy(
+        agentIdentity.address,
+        reputationRegistry.address
+    );
+    await serviceRegistry.deployed();
+    console.log("ServiceRegistry deployed to:", serviceRegistry.address);
+    
+    // Deploy Governance
+    console.log("\n[7/8] Deploying Governance...");
+    const Governance = await hre.ethers.getContractFactory("Governance");
+    const governance = await Governance.deploy(
+        agentToken.address,
+        taskEscrow.address
+    );
+    await governance.deployed();
+    console.log("Governance deployed to:", governance.address);
+    
+    // Deploy OrderBook
+    console.log("\n[8/8] Deploying OrderBook...");
+    const OrderBook = await hre.ethers.getContractFactory("OrderBook");
+    const orderBook = await OrderBook.deploy(
+        serviceRegistry.address,
+        agentToken.address,
+        taskEscrow.address,
+        agentIdentity.address
+    );
+    await orderBook.deployed();
+    console.log("OrderBook deployed to:", orderBook.address);
+    
+    // Setup contract connections
+    console.log("\n[Setup] Configuring contract connections...");
+    
+    // Grant VERIFIER_ROLE to OrderBook in ServiceRegistry
+    await serviceRegistry.grantRole(
+        hre.ethers.utils.keccak256(hre.ethers.utils.toUtf8Bytes("VERIFIER_ROLE")),
+        orderBook.address
+    );
+    console.log("Granted VERIFIER_ROLE to OrderBook in ServiceRegistry");
+    
     // Summary
     console.log("\n========================================");
     console.log("Deployment Summary");
@@ -49,6 +101,10 @@ async function main() {
     console.log("ReputationRegistry:", reputationRegistry.address);
     console.log("ValidationRegistry:", validationRegistry.address);
     console.log("AgentToken:", agentToken.address);
+    console.log("TaskEscrow:", taskEscrow.address);
+    console.log("ServiceRegistry:", serviceRegistry.address);
+    console.log("Governance:", governance.address);
+    console.log("OrderBook:", orderBook.address);
     console.log("========================================");
     
     // Save deployment info
@@ -60,7 +116,11 @@ async function main() {
             AgentIdentity: agentIdentity.address,
             ReputationRegistry: reputationRegistry.address,
             ValidationRegistry: validationRegistry.address,
-            AgentToken: agentToken.address
+            AgentToken: agentToken.address,
+            TaskEscrow: taskEscrow.address,
+            ServiceRegistry: serviceRegistry.address,
+            Governance: governance.address,
+            OrderBook: orderBook.address
         },
         timestamp: new Date().toISOString()
     };

@@ -1,0 +1,247 @@
+version: '3.8'
+#
+# Moltbook Integration Test Environment
+# Moltbook連携モジュールのテスト環境
+#
+
+services:
+  # Moltbook Mock Server（テスト用モックAPI）
+  moltbook-mock:
+    build: .
+    container_name: moltbook-mock
+    ports:
+      - "9000:9000"
+    environment:
+      - MOCK_SERVER_PORT=9000
+      - MOCK_API_KEY=test_api_key_12345
+    volumes:
+      - ./services:/app/services
+    command: >
+      python -c "
+      import sys
+      sys.path.insert(0, '/app/services')
+      
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import json
+      import uuid
+      from datetime import datetime, timezone
+      
+      posts = []
+      messages = []
+      
+      class MockMoltbookHandler(BaseHTTPRequestHandler):
+          def log_message(self, format, *args):
+              pass  # ログ出力を抑制
+          
+          def do_GET(self):
+              if self.path.startswith('/v1/feed'):
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps({'posts': posts[-10:]}).encode())
+              elif self.path.startswith('/v1/messages'):
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps({'messages': messages}).encode())
+              else:
+                  self.send_response(404)
+                  self.end_headers()
+          
+          def do_POST(self):
+              content_length = int(self.headers.get('Content-Length', 0))
+              body = self.rfile.read(content_length)
+              data = json.loads(body) if body else {}
+              
+              # API Keyチェック
+              auth = self.headers.get('Authorization', '')
+              if not auth.startswith('Bearer '):
+                  self.send_response(401)
+                  self.end_headers()
+                  return
+              
+              if self.path == '/v1/auth':
+                  # 認証エンドポイント
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps({
+                      'auth_token': str(uuid.uuid4()),
+                      'verified': True
+                  }).encode())
+              
+              elif self.path == '/v1/posts':
+                  # 投稿作成
+                  post = {
+                      'id': str(uuid.uuid4()),
+                      'agent_id': 'test_agent',
+                      'content': data.get('content', ''),
+                      'submolt': data.get('submolt'),
+                      'created_at': datetime.now(timezone.utc).isoformat(),
+                      'likes': 0,
+                      'replies': 0
+                  }
+                  posts.append(post)
+                  self.send_response(201)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps(post).encode())
+              
+              elif self.path == '/v1/messages':
+                  # DM送信
+                  msg = {
+                      'id': str(uuid.uuid4()),
+                      'from_agent_id': 'test_agent',
+                      'to_agent_id': data.get('to_agent_id'),
+                      'content': data.get('content', ''),
+                      'created_at': datetime.now(timezone.utc).isoformat(),
+                      'read': False
+                  }
+                  messages.append(msg)
+                  self.send_response(201)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps(msg).encode())
+              
+              else:
+                  self.send_response(404)
+                  self.end_headers()
+      
+      server = HTTPServer(('0.0.0.0', 9000), MockMoltbookHandler)
+      print('Mock Moltbook Server running on port 9000')
+      server.serve_forever()
+      "
+    networks:
+      - moltbook-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/v1/feed"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Moltbook Integration Test Runner
+  moltbook-test:
+    build: .
+    container_name: moltbook-test
+    environment:
+      - MOLTBOOK_API_KEY=test_api_key_12345
+      - MOLTBOOK_AGENT_ID=test_agent_123
+      - MOLTBOOK_BASE_URL=http://moltbook-mock:9000/v1
+      - PYTHONPATH=/app:/app/services
+    volumes:
+      - ./services:/app/services
+      - ./tests:/app/tests
+    command: >
+      python -c "
+      import sys
+      sys.path.insert(0, '/app/services')
+      sys.path.insert(0, '/app')
+      
+      import asyncio
+      import os
+      from datetime import datetime, timezone
+      
+      from moltbook_integration import (
+          MoltbookClient, create_moltbook_client,
+          MoltbookError, AuthenticationError, RateLimitError
+      )
+      
+      print('='*60)
+      print('Moltbook Integration Tests')
+      print('='*60)
+      print(f'Base URL: {os.getenv(\"MOLTBOOK_BASE_URL\")}')
+      print('')
+      
+      async def run_tests():
+          # Test 1: Client creation
+          print('[Test 1] Client Creation')
+          try:
+              client = create_moltbook_client(
+                  api_key=os.getenv('MOLTBOOK_API_KEY'),
+                  agent_id=os.getenv('MOLTBOOK_AGENT_ID'),
+                  base_url=os.getenv('MOLTBOOK_BASE_URL')
+              )
+              print(f'  Client created: agent_id={client.agent_id}')
+              print('  [PASS]')
+          except Exception as e:
+              print(f'  [FAIL] {e}')
+              return False
+          
+          # Test 2: Authentication
+          print('')
+          print('[Test 2] Authentication')
+          try:
+              result = await client.authenticate('test_verification_code')
+              print(f'  Authenticated: {result}')
+              print(f'  Verified: {client._verified}')
+              print('  [PASS]')
+          except Exception as e:
+              print(f'  [FAIL] {e}')
+              return False
+          
+          # Test 3: Create Post
+          print('')
+          print('[Test 3] Create Post')
+          try:
+              post = await client.create_post(
+                  content='Integration test post from Entity A',
+                  submolt='ai_agents'
+              )
+              print(f'  Post created: id={post.id}')
+              print(f'  Content: {post.content[:50]}...')
+              print('  [PASS]')
+          except Exception as e:
+              print(f'  [FAIL] {e}')
+              return False
+          
+          # Test 4: Get Feed
+          print('')
+          print('[Test 4] Get Feed')
+          try:
+              posts = await client.get_feed(limit=5)
+              print(f'  Posts retrieved: {len(posts)}')
+              if posts:
+                  print(f'  Latest: {posts[0].content[:50]}...')
+              print('  [PASS]')
+          except Exception as e:
+              print(f'  [FAIL] {e}')
+              return False
+          
+          # Test 5: Send Direct Message
+          print('')
+          print('[Test 5] Send Direct Message')
+          try:
+              msg = await client.send_direct_message(
+                  to_agent_id='entity_b',
+                  content='Hello from Entity A!'
+              )
+              print(f'  Message sent: id={msg.id}')
+              print('  [PASS]')
+          except Exception as e:
+              print(f'  [FAIL] {e}')
+              return False
+          
+          await client.close()
+          return True
+      
+      result = asyncio.run(run_tests())
+      
+      print('')
+      print('='*60)
+      if result:
+          print('All integration tests passed!')
+      else:
+          print('Some tests failed!')
+      print('='*60)
+      
+      sys.exit(0 if result else 1)
+      "
+    networks:
+      - moltbook-network
+    depends_on:
+      moltbook-mock:
+        condition: service_healthy
+
+networks:
+  moltbook-network:
+    driver: bridge

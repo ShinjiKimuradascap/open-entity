@@ -1,0 +1,66 @@
+name: API Documentation
+
+on:
+  push:
+    paths:
+      - 'services/api_server.py'
+      - 'services/**/models.py'
+      - 'services/token_system.py'
+    branches: [main, develop]
+  pull_request:
+    paths:
+      - 'services/api_server.py'
+      - 'services/**/models.py'
+      - 'services/token_system.py'
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Generate OpenAPI schema
+      run: |
+        python scripts/generate_api_docs.py --format openapi -o docs/openapi.json
+        
+    - name: Generate Markdown documentation
+      run: |
+        python scripts/generate_api_docs.py --format markdown -o docs/API_REFERENCE_AUTO.md
+        
+    - name: Validate OpenAPI schema
+      run: |
+        python -c "
+        import json
+        import sys
+        with open('docs/openapi.json') as f:
+            schema = json.load(f)
+        assert 'paths' in schema, 'Missing paths in OpenAPI schema'
+        assert 'components' in schema, 'Missing components in OpenAPI schema'
+        print(f'Schema validated: {len(schema[\"paths\"])} endpoints')
+        "
+        
+    - name: Upload documentation artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: api-docs
+        path: |
+          docs/openapi.json
+          docs/API_REFERENCE_AUTO.md
+        retention-days: 30
+        
+    - name: Check for undocumented changes
+      run: |
+        echo "Checking API changes..."
+        python scripts/check_api_changes.py || echo "Note: check_api_changes.py not found, skipping"

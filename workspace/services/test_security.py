@@ -10,6 +10,11 @@ import json
 import time
 from datetime import datetime, timezone, timedelta
 
+import pytest
+
+# Test markers for CI categorization
+pytestmark = [pytest.mark.unit, pytest.mark.security]
+
 # Import modules to test
 from crypto import (
     KeyPair, MessageSigner, SignatureVerifier, SecureMessage,

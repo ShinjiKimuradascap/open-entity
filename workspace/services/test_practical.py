@@ -71,23 +71,33 @@ class PracticalTestRunner:
             self.crypto_a.generate_x25519_keypair()
             self.crypto_b.generate_x25519_keypair()
             
-            # Pre-derive shared keys
-            self.crypto_a.derive_shared_key(
+            # Pre-derive shared keys for bidirectional communication
+            # A -> B communication: A encrypts with B's key, B decrypts with A's ID
+            shared_key_a = self.crypto_a.derive_shared_key(
                 self.crypto_b.get_x25519_public_key_b64(), 
                 TEST_ENTITY_B_ID
             )
-            self.crypto_b.derive_shared_key(
+            # B needs to derive the same shared key for decryption from A
+            shared_key_b = self.crypto_b.derive_shared_key(
                 self.crypto_a.get_x25519_public_key_b64(), 
                 TEST_ENTITY_A_ID
             )
             
+            # Verify shared keys match
+            if shared_key_a != shared_key_b:
+                print(f"✗ Shared keys don't match!")
+                return False
+            
             print(f"✓ CryptoManagers initialized")
             print(f"✓ X25519 keypairs generated and shared keys derived")
+            print(f"✓ Shared keys verified (match: {shared_key_a[:8].hex()}...)")
             
             return True
             
         except Exception as e:
             print(f"✗ Setup failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def log_result(self, test_name: str, passed: bool, details: str = ""):
@@ -147,6 +157,14 @@ class PracticalTestRunner:
                 "data": {"api_key": "sk-1234567890abcdef", "password": "secret123"}
             }
             
+            # Verify shared key exists for decryption
+            if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
+                # Re-derive if missing
+                self.crypto_b.derive_shared_key(
+                    self.crypto_a.get_x25519_public_key_b64(),
+                    TEST_ENTITY_A_ID
+                )
+            
             message = self.crypto_a.create_secure_message(
                 payload,
                 encrypt=True,
@@ -154,20 +172,26 @@ class PracticalTestRunner:
                 peer_id=TEST_ENTITY_B_ID
             )
             
+            print(f"  Message created: encrypted_payload length = {len(message.encrypted_payload) if message.encrypted_payload else 0}")
+            print(f"  Sender public key present: {bool(message.sender_public_key)}")
+            print(f"  B has shared key for A: {TEST_ENTITY_A_ID in self.crypto_b._shared_keys}")
+            
             # Entity B decrypts and verifies
             decrypted = self.crypto_b.verify_and_decrypt_message(
                 message,
                 peer_id=TEST_ENTITY_A_ID
             )
             
-            if decrypted and decrypted["data"]["api_key"] == "sk-1234567890abcdef":
+            if decrypted and decrypted.get("data", {}).get("api_key") == "sk-1234567890abcdef":
                 self.log_result("Normal Encrypted Message", True, "Encryption/decryption successful")
                 return True
             else:
-                self.log_result("Normal Encrypted Message", False, "Decryption failed")
+                self.log_result("Normal Encrypted Message", False, f"Decryption failed: decrypted={decrypted is not None}")
                 return False
                 
         except Exception as e:
+            import traceback
+            error_detail = f"{str(e)}\n{traceback.format_exc()}"
             self.log_result("Normal Encrypted Message", False, str(e))
             return False
     
@@ -176,6 +200,13 @@ class PracticalTestRunner:
         print("\n--- Test: Normal JWT Authenticated Message ---")
         
         try:
+            # Ensure shared key exists
+            if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
+                self.crypto_b.derive_shared_key(
+                    self.crypto_a.get_x25519_public_key_b64(),
+                    TEST_ENTITY_A_ID
+                )
+            
             # Entity A creates message with JWT
             payload = {
                 "from": TEST_ENTITY_A_ID,
@@ -193,6 +224,9 @@ class PracticalTestRunner:
                 jwt_audience=TEST_ENTITY_B_ID
             )
             
+            print(f"  JWT token present: {bool(message.jwt_token)}")
+            print(f"  Sender public key present: {bool(message.sender_public_key)}")
+            
             # Entity B verifies including JWT
             verified = self.crypto_b.verify_and_decrypt_message(
                 message,
@@ -201,14 +235,15 @@ class PracticalTestRunner:
                 jwt_audience=TEST_ENTITY_B_ID
             )
             
-            if verified and verified["data"]["action"] == "restart_service":
+            if verified and verified.get("data", {}).get("action") == "restart_service":
                 self.log_result("Normal JWT Authenticated Message", True, "JWT verification successful")
                 return True
             else:
-                self.log_result("Normal JWT Authenticated Message", False, "JWT verification failed")
+                self.log_result("Normal JWT Authenticated Message", False, f"JWT verification failed: verified={verified is not None}")
                 return False
                 
         except Exception as e:
+            import traceback
             self.log_result("Normal JWT Authenticated Message", False, str(e))
             return False
     
@@ -253,6 +288,7 @@ class PracticalTestRunner:
         try:
             import jwt as pyjwt
             from datetime import datetime, timedelta, timezone
+            from cryptography.hazmat.primitives import serialization
             
             # Create an already-expired JWT manually
             now = datetime.now(timezone.utc) - timedelta(minutes=10)  # 10 minutes ago
@@ -266,11 +302,11 @@ class PracticalTestRunner:
                 "aud": TEST_ENTITY_B_ID
             }
             
-            # Sign with Entity A's key
+            # Sign with Entity A's key using proper serialization
             private_key_pem = self.crypto_a._ed25519_private_key.private_bytes(
-                encoding=lambda: __import__('cryptography.hazmat.primitives.serialization', fromlist=['Encoding']).Encoding.PEM,
-                format=lambda: __import__('cryptography.hazmat.primitives.serialization', fromlist=['PrivateFormat']).PrivateFormat.PKCS8,
-                encryption_algorithm=lambda: __import__('cryptography.hazmat.primitives.serialization', fromlist=['NoEncryption']).NoEncryption()
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
             )
             
             expired_token = pyjwt.encode(payload, private_key_pem, algorithm="EdDSA")
@@ -591,6 +627,13 @@ class PracticalTestRunner:
         print("\n--- Test: Stress Test - Message Volume ---")
         
         try:
+            # Ensure shared key exists
+            if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
+                self.crypto_b.derive_shared_key(
+                    self.crypto_a.get_x25519_public_key_b64(),
+                    TEST_ENTITY_A_ID
+                )
+            
             success_count = 0
             fail_count = 0
             start_time = time.time()
@@ -615,10 +658,12 @@ class PracticalTestRunner:
                     peer_id=TEST_ENTITY_A_ID
                 )
                 
-                if verified and verified["data"]["seq"] == i:
+                if verified and verified.get("data", {}).get("seq") == i:
                     success_count += 1
                 else:
                     fail_count += 1
+                    if fail_count == 1:
+                        print(f"  First failure at message {i}")
             
             elapsed = time.time() - start_time
             throughput = STRESS_TEST_MESSAGE_COUNT / elapsed
@@ -640,7 +685,8 @@ class PracticalTestRunner:
                 return False
                 
         except Exception as e:
-            self.log_result("Stress Test - Volume", False, str(e))
+            import traceback
+            self.log_result("Stress Test - Volume", False, f"{str(e)}\n{traceback.format_exc()[:200]}")
             return False
     
     def test_stress_concurrent(self) -> bool:
@@ -648,27 +694,41 @@ class PracticalTestRunner:
         print("\n--- Test: Stress Test - Concurrent Processing ---")
         
         try:
+            # Ensure shared key exists before concurrent execution
+            if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
+                self.crypto_b.derive_shared_key(
+                    self.crypto_a.get_x25519_public_key_b64(),
+                    TEST_ENTITY_A_ID
+                )
+            
+            # Get X25519 public keys once (thread-safe)
+            crypto_b_x25519_pub = self.crypto_b.get_x25519_public_key_b64()
+            crypto_a_x25519_pub = self.crypto_a.get_x25519_public_key_b64()
+            
             def process_single_message(seq: int) -> bool:
-                payload = {
-                    "from": TEST_ENTITY_A_ID,
-                    "to": TEST_ENTITY_B_ID,
-                    "type": "concurrent_test",
-                    "data": {"seq": seq}
-                }
-                
-                message = self.crypto_a.create_secure_message(
-                    payload,
-                    encrypt=True,
-                    peer_public_key_b64=self.crypto_b.get_x25519_public_key_b64(),
-                    peer_id=TEST_ENTITY_B_ID
-                )
-                
-                verified = self.crypto_b.verify_and_decrypt_message(
-                    message,
-                    peer_id=TEST_ENTITY_A_ID
-                )
-                
-                return verified is not None and verified["data"]["seq"] == seq
+                try:
+                    payload = {
+                        "from": TEST_ENTITY_A_ID,
+                        "to": TEST_ENTITY_B_ID,
+                        "type": "concurrent_test",
+                        "data": {"seq": seq}
+                    }
+                    
+                    message = self.crypto_a.create_secure_message(
+                        payload,
+                        encrypt=True,
+                        peer_public_key_b64=crypto_b_x25519_pub,
+                        peer_id=TEST_ENTITY_B_ID
+                    )
+                    
+                    verified = self.crypto_b.verify_and_decrypt_message(
+                        message,
+                        peer_id=TEST_ENTITY_A_ID
+                    )
+                    
+                    return verified is not None and verified.get("data", {}).get("seq") == seq
+                except Exception:
+                    return False
             
             start_time = time.time()
             
@@ -698,7 +758,8 @@ class PracticalTestRunner:
                 return False
                 
         except Exception as e:
-            self.log_result("Stress Test - Concurrent", False, str(e))
+            import traceback
+            self.log_result("Stress Test - Concurrent", False, f"{str(e)}\n{traceback.format_exc()[:200]}")
             return False
     
     def run_all_tests(self) -> Dict[str, Any]:

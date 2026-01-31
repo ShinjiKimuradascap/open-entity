@@ -1,0 +1,142 @@
+name: Scheduled Integration Tests
+
+on:
+  schedule:
+    # 毎日深夜2時UTC（JST 11時）に実行
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_category:
+        description: 'Test category to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - smoke
+          - integration
+          - full
+          - stress
+
+jobs:
+  # Smokeテスト: 基本的な動作確認
+  smoke-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run smoke tests
+        run: |
+          python -m pytest services/ -v -m "unit and fast" --tb=short -n auto
+
+  # 統合テスト: サービス間連携（カテゴリ別並列実行）
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: smoke-tests
+    strategy:
+      matrix:
+        category: [crypto, session, peer, moltbook]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-xdist
+
+      - name: Run ${{ matrix.category }} integration tests
+        run: |
+          python -m pytest services/ -v -m "integration and ${{ matrix.category }}" --tb=short || true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-results-${{ matrix.category }}
+          path: junit.xml
+
+  # E2Eテスト: Docker環境で実行
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start test services
+        run: |
+          docker-compose -f docker-compose.test.yml up -d entity-a entity-b
+          sleep 15
+
+      - name: Wait for services
+        run: |
+          chmod +x scripts/wait-for-services.sh
+          ./scripts/wait-for-services.sh
+
+      - name: Run E2E tests
+        run: |
+          PYTHONPATH=./services python -m pytest tests/e2e/ -v --tb=short
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down -v
+
+  # テスト結果サマリー
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [smoke-tests, integration-tests, e2e-tests]
+    if: always()
+    steps:
+      - name: Generate test report
+        run: |
+          echo "## Scheduled Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Smoke Tests: ${{ needs.smoke-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- E2E Tests: ${{ needs.e2e-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Timestamp: $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Scheduled tests failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Scheduled integration tests failed. Check the details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

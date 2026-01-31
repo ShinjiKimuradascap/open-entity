@@ -28,6 +28,7 @@ import sys
 import os
 import time
 import secrets
+import pytest
 from datetime import datetime, timezone, timedelta
 
 # servicesディレクトリをパスに追加（複数パターン対応）
@@ -51,7 +52,7 @@ except ImportError as e1:
     try:
         # パターン2: スクリプトとして直接実行（python services/test_peer_service.py）
         from peer_service import init_service, create_server, PeerService
-        from crypto import WalletManager, generate_keypair, CryptoManager, SecureMessage
+        from crypto import WalletManager, generate_entity_keypair, CryptoManager, SecureMessage
         print("✅ Imported using direct pattern (xxx)")
         IMPORT_SUCCESS = True
     except ImportError as e2:
@@ -60,7 +61,7 @@ except ImportError as e1:
             # パターン3: workspaceから実行（python services/test_peer_service.py）
             sys.path.insert(0, os.path.join(WORKSPACE_DIR, 'services'))
             from peer_service import init_service, create_server, PeerService
-            from crypto import WalletManager, generate_keypair, CryptoManager, SecureMessage
+            from crypto import WalletManager, generate_entity_keypair, CryptoManager, SecureMessage
             print("✅ Imported using workspace pattern")
             IMPORT_SUCCESS = True
         except ImportError as e3:
@@ -1022,7 +1023,7 @@ async def test_auto_chunking():
     service_a = PeerService("entity-a", 8001, private_key_hex=priv_a_hex)
     
     # 受信側サービス（chunk受信用）
-    priv_b, pub_b = generate_keypair()
+    priv_b, pub_b = generate_entity_keypair()
     service_b = PeerService("entity-b", 8002, private_key_hex=priv_b)
     
     # ピア登録（実際のHTTP通信はしないためモック）
@@ -1477,6 +1478,8 @@ async def test_e2e_encryption():
     print("\n✅ E2E encryption tests completed")
 
 
+@pytest.mark.integration
+@pytest.mark.peer
 async def main():
     """全テスト実行"""
     print("=" * 60)

@@ -14,7 +14,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
@@ -81,7 +81,7 @@ class IdentityToken:
     expires_at: datetime
     
     def is_valid(self) -> bool:
-        """トークンが有効かチェック（有効期限1時間）"""
+        """トークンが有効かチェック(有効期限1時間)"""
         return datetime.now(timezone.utc) < self.expires_at
 
 
@@ -126,8 +126,11 @@ class ExponentialBackoff:
 class MoltbookAgentClient:
     """Moltbook APIクライアント
     
-    AIエージェントがMoltbookと通信するためのクライアント。
-    投稿、返信、DM、フィード取得などの機能を提供。
+    AIエージェントがMoltbookと通信するためのクライアント.
+    投稿,返信,DM,フィード取得などの機能を提供.
+    
+    Note: Also available as MoltbookClient for backward compatibility.
+    """
     
     Example:
         client = MoltbookAgentClient(api_key="xxx", agent_id="agent_123")
@@ -148,7 +151,7 @@ class MoltbookAgentClient:
             api_key: Moltbook APIキー
             agent_id: このエージェントの一意ID
             base_url: APIベースURL
-            timeout: リクエストタイムアウト（秒）
+            timeout: リクエストタイムアウト(秒)
         """
         self.api_key = api_key
         self.agent_id = agent_id
@@ -170,7 +173,7 @@ class MoltbookAgentClient:
         self._dm_handlers: List[Callable[[MoltbookMessage], None]] = []
     
     async def _get_session(self) -> aiohttp.ClientSession:
-        """HTTPセッションを取得（必要に応じて作成）"""
+        """HTTPセッションを取得(必要に応じて作成)"""
         if self._session is None or self._session.closed:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -199,11 +202,11 @@ class MoltbookAgentClient:
         endpoint: str,
         **kwargs
     ) -> Dict[str, Any]:
-        """APIリクエストを実行（リトライ付き）
+        """APIリクエストを実行(リトライ付き)
         
         Args:
             method: HTTPメソッド
-            endpoint: APIエンドポイント（/v1以降）
+            endpoint: APIエンドポイント(/v1以降)
             **kwargs: aiohttpに渡す追加引数
             
         Returns:
@@ -222,10 +225,13 @@ class MoltbookAgentClient:
                 async with session.request(method, url, **kwargs) as response:
                     if response.status == 429:
                         # レート制限 - Retry-Afterヘッダーに従う
-                        retry_after = int(response.headers.get("Retry-After", 60))
+                        try:
+                            retry_after = int(response.headers.get("Retry-After", 60))
+                        except (ValueError, TypeError):
+                            retry_after = 60
                         logger.warning(f"Rate limited. Waiting {retry_after}s")
                         await asyncio.sleep(retry_after)
-                        # バックオフはリセットせず、Retry-Afterのみ使用
+                        # バックオフはリセットせず,Retry-Afterのみ使用
                         continue
                     
                     if response.status == 401:
@@ -256,7 +262,8 @@ class MoltbookAgentClient:
                 raise
         
         # リトライ回数使い果たし
-        raise MoltbookError(f"Request failed after retries: {last_error}")
+        error_msg = str(last_error) if last_error else "Unknown error"
+        raise MoltbookError(f"Request failed after retries: {error_msg}")
     
     async def authenticate(self, x_verification_code: str) -> bool:
         """X(Twitter)認証コードで検証
@@ -294,7 +301,7 @@ class MoltbookAgentClient:
         return True
     
     def _parse_datetime(self, iso_string: str) -> datetime:
-        """ISO形式の日時文字列をパース（Python 3.7互換）"""
+        """ISO形式の日時文字列をパース(Python 3.7互換)"""
         # Python 3.7ではZサフィックスに対応していないため置換
         if iso_string.endswith('Z'):
             iso_string = iso_string.replace('Z', '+00:00')
@@ -309,7 +316,7 @@ class MoltbookAgentClient:
         
         Args:
             content: 投稿内容
-            submolt: 投稿先submolt（省略時は一般フィード）
+            submolt: 投稿先submolt(省略時は一般フィード)
             
         Returns:
             作成された投稿
@@ -383,9 +390,9 @@ class MoltbookAgentClient:
         """フィードを取得
         
         Args:
-            submolt: 特定のsubmoltのフィード（Noneで一般フィード）
-            limit: 取得件数（最大100）
-            before_id: このIDより前の投稿を取得（ページネーション）
+            submolt: 特定のsubmoltのフィード(Noneで一般フィード)
+            limit: 取得件数(最大100)
+            before_id: このIDより前の投稿を取得(ページネーション)
             
         Returns:
             投稿リスト
@@ -565,7 +572,7 @@ class MoltbookAgentClient:
     async def process_incoming_message(self, message: Dict[str, Any]):
         """受信メッセージを処理
         
-        登録されたハンドラにメッセージを配信します。
+        登録されたハンドラにメッセージを配信します.
         
         Args:
             message: 受信メッセージ
@@ -612,11 +619,11 @@ class MoltbookAgentClient:
     async def generate_identity_token(self) -> Optional[IdentityToken]:
         """Identity Tokenを生成
         
-        API KeyからIdentity Tokenを生成します。
-        生成されたトークンは1時間有効です。
+        API KeyからIdentity Tokenを生成します.
+        生成されたトークンは1時間有効です.
         
         Returns:
-            IdentityTokenまたはNone（APIキーがない場合）
+            IdentityTokenまたはNone(APIキーがない場合)
         """
         if not self.api_key:
             logger.error("Cannot generate token: API key not available")
@@ -633,7 +640,10 @@ class MoltbookAgentClient:
             async with session.post(url, headers=headers) as response:
                 if response.status == 429:
                     # レート制限エラー
-                    retry_after = int(response.headers.get("Retry-After", 60))
+                    try:
+                        retry_after = int(response.headers.get("Retry-After", 60))
+                    except (ValueError, TypeError):
+                        retry_after = 60
                     logger.warning(f"Rate limited. Waiting {retry_after}s")
                     await asyncio.sleep(retry_after)
                     return None
@@ -662,7 +672,7 @@ class MoltbookAgentClient:
             token: 検証するIdentity Token
             
         Returns:
-            Agent情報の辞書またはNone（無効なトークンの場合）
+            Agent情報の辞書またはNone(無効なトークンの場合)
             辞書には以下のキーが含まれます:
             - id: Agent ID
             - name: Agent名
@@ -697,10 +707,10 @@ class MoltbookAgentClient:
             return None
     
     async def get_valid_identity_token(self) -> Optional[str]:
-        """有効なIdentity Tokenを取得（キャッシュ対応）
+        """有効なIdentity Tokenを取得(キャッシュ対応)
         
-        キャッシュされたトークンが有効な場合はそれを返し、
-        無効または存在しない場合は新しいトークンを生成します。
+        キャッシュされたトークンが有効な場合はそれを返し,
+        無効または存在しない場合は新しいトークンを生成します.
         
         Returns:
             有効なIdentity Token文字列またはNone
@@ -733,7 +743,7 @@ class MoltbookAgentClient:
 class MoltbookPeerBridge:
     """PeerServiceとMoltbookのブリッジ
     
-    PeerServiceからMoltbookへのメッセージ中継を実現。
+    PeerServiceからMoltbookへのメッセージ中継を実現.
     
     Example:
         bridge = MoltbookPeerBridge(peer_service, moltbook_client)
@@ -742,7 +752,7 @@ class MoltbookPeerBridge:
     
     def __init__(
         self,
-        peer_service: Any,  # PeerService型（循環インポート回避のためAny）
+        peer_service: Any,  # PeerService型(循環インポート回避のためAny)
         moltbook_client: MoltbookAgentClient,
         forward_submolt: Optional[str] = None
     ):
@@ -758,7 +768,7 @@ class MoltbookPeerBridge:
         self.forward_submolt = forward_submolt
         self._running = False
         self._poll_task: Optional[asyncio.Task] = None
-        self._poll_interval = 30.0  # ポーリング間隔（秒）
+        self._poll_interval = 30.0  # ポーリング間隔(秒)
     
     async def start(self):
         """ブリッジを開始"""
@@ -827,10 +837,10 @@ class MoltbookPeerBridge:
         
         Args:
             peer_message: PeerServiceからのメッセージ
-            format_template: 投稿フォーマット（Noneでデフォルト）
+            format_template: 投稿フォーマット(Noneでデフォルト)
             
         Returns:
-            作成された投稿（Noneの場合は投稿されなかった）
+            作成された投稿(Noneの場合は投稿されなかった)
         """
         if not self.forward_submolt:
             return None
@@ -867,11 +877,11 @@ def create_moltbook_agent_client(
     agent_id: Optional[str] = None,
     **kwargs
 ) -> MoltbookAgentClient:
-    """MoltbookAgentClientを作成（環境変数からも読み込み）
+    """MoltbookAgentClientを作成(環境変数からも読み込み)
     
     Args:
-        api_key: APIキー（NoneでMOLTBOOK_API_KEY環境変数）
-        agent_id: エージェントID（NoneでMOLTBOOK_AGENT_ID環境変数）
+        api_key: APIキー(NoneでMOLTBOOK_API_KEY環境変数)
+        agent_id: エージェントID(NoneでMOLTBOOK_AGENT_ID環境変数)
         **kwargs: MoltbookAgentClientに渡す追加引数
         
     Returns:
@@ -888,3 +898,7 @@ def create_moltbook_agent_client(
         raise ValueError("Agent ID required (param or MOLTBOOK_AGENT_ID env var)")
     
     return MoltbookAgentClient(api_key=api_key, agent_id=agent_id, **kwargs)
+
+
+# Backward compatibility alias
+MoltbookClient = MoltbookAgentClient

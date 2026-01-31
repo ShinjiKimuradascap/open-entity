@@ -19,6 +19,8 @@ async def session_manager():
     await sm.stop()
 
 
+@pytest.mark.unit
+@pytest.mark.session
 @pytest.mark.asyncio
 async def test_create_session():
     """Test session creation"""

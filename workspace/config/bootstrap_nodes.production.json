@@ -1,0 +1,69 @@
+{
+  "bootstrap_servers": [
+    {
+      "node_id": "bootstrap-001.prod",
+      "endpoint": "https://bootstrap-001.ai-network.dev",
+      "dht_endpoint": "bootstrap-001.ai-network.dev:8468",
+      "public_key": "${BOOTSTRAP_001_PUBLIC_KEY}",
+      "region": "asia-northeast1",
+      "priority": 1,
+      "capabilities": ["discovery", "relay", "registry", "dht", "auth"],
+      "description": "Primary production bootstrap server",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap-001.ai-network.dev/health",
+      "reliability_score": 0.99,
+      "max_connections": 10000,
+      "rate_limit": 1000
+    },
+    {
+      "node_id": "bootstrap-002.prod",
+      "endpoint": "https://bootstrap-002.ai-network.dev",
+      "dht_endpoint": "bootstrap-002.ai-network.dev:8468",
+      "public_key": "${BOOTSTRAP_002_PUBLIC_KEY}",
+      "region": "us-central1",
+      "priority": 2,
+      "capabilities": ["discovery", "relay", "dht", "auth"],
+      "description": "Secondary production bootstrap server",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap-002.ai-network.dev/health",
+      "reliability_score": 0.99,
+      "max_connections": 10000,
+      "rate_limit": 1000
+    },
+    {
+      "node_id": "bootstrap-003.prod",
+      "endpoint": "https://bootstrap-003.ai-network.dev",
+      "dht_endpoint": "bootstrap-003.ai-network.dev:8468",
+      "public_key": "${BOOTSTRAP_003_PUBLIC_KEY}",
+      "region": "europe-west1",
+      "priority": 3,
+      "capabilities": ["discovery", "relay", "dht", "auth"],
+      "description": "Tertiary production bootstrap server (failover)",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap-003.ai-network.dev/health",
+      "reliability_score": 0.95,
+      "max_connections": 5000,
+      "rate_limit": 500
+    }
+  ],
+  "network_config": {
+    "network_id": "ai-collaboration-network-prod",
+    "min_protocol_version": "1.2",
+    "required_capabilities": ["discovery", "auth"],
+    "auto_discovery_enabled": true,
+    "max_hops": 5,
+    "default_ttl": 86400
+  },
+  "security": {
+    "require_ssl": true,
+    "verify_signatures": true,
+    "max_message_size": 1048576,
+    "rate_limit_window": 60
+  },
+  "metadata": {
+    "version": "1.2",
+    "environment": "production",
+    "updated_at": "2026-02-01T01:20:00",
+    "deployment_guide": "docs/BOOTSTRAP_DEPLOYMENT.md"
+  }
+}

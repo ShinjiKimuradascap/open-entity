@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-AI Agent API Server v0.4.0
-Security-enhanced version with Ed25519 signatures, JWT authentication, and replay protection
+AI Agent API Server v0.5.1
+Security-enhanced version with Ed25519 signatures, JWT authentication, replay protection,
+DHT peer discovery, governance system, and rate limiting
 """
 
 from fastapi import FastAPI, HTTPException, Header, Request, Depends, WebSocket, WebSocketDisconnect
@@ -12,6 +13,9 @@ from datetime import datetime, timezone
 import uvicorn
 import os
 import logging
+import json
+
+logger = logging.getLogger(__name__)
 
 # Import with fallback patterns (for different execution contexts)
 try:
@@ -53,6 +57,7 @@ try:
         init_rate_limiters, shutdown_rate_limiters
     )
     from services.moltbook_identity_client import init_client as init_moltbook_client, get_client as get_moltbook_client
+    from services.marketplace import ServiceRegistry, ServiceListing, ServiceType, PricingModel
 except ImportError:
     # Pattern 2: When run directly from services directory
     from crypto import (
@@ -72,6 +77,7 @@ except ImportError:
         init_rate_limiters, shutdown_rate_limiters
     )
     from moltbook_identity_client import init_client as init_moltbook_client, get_client as get_moltbook_client
+    from marketplace import ServiceRegistry, ServiceListing, ServiceType, PricingModel
 
 # Import peer communication tools with fallback patterns
 try:
@@ -92,8 +98,8 @@ except ImportError:
 # Initialize FastAPI app
 app = FastAPI(
     title="AI Collaboration API",
-    version="0.4.0",
-    description="Security-enhanced API with Ed25519 signatures and JWT authentication"
+    version="0.5.1",
+    description="Security-enhanced API with Ed25519 signatures, JWT authentication, and Governance"
 )
 
 # Initialize rate limiter with endpoint-specific limits
@@ -121,6 +127,22 @@ peer_service = init_peer_service(entity_id="api-server", port=8000)
 # Initialize Token Economy and Persistence Manager
 token_economy = get_token_economy()
 persistence_mgr = get_persistence()
+
+# Initialize Marketplace components
+try:
+    from services.marketplace import ServiceRegistry, OrderBook
+    marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
+    marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
+    logger.info("Marketplace components initialized")
+except ImportError:
+    from marketplace import ServiceRegistry, OrderBook
+    marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
+    marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
+    logger.info("Marketplace components initialized (fallback)")
+except Exception as e:
+    logger.warning(f"Failed to initialize marketplace components: {e}")
+    marketplace_registry = None
+    marketplace_orderbook = None
 
 # Initialize Moltbook Client
 moltbook_client: Optional[Any] = None
@@ -263,9 +285,9 @@ class WalletBalanceResponse(BaseModel):
 
 
 class TransferRequest(BaseModel):
-    to_entity_id: str
-    amount: float
-    description: str = ""
+    to_entity_id: str = Field(..., description="Destination entity ID to receive the transfer", example="entity_b")
+    amount: float = Field(..., gt=0, description="Amount to transfer (must be positive)", example=100.0)
+    description: str = Field(default="", description="Optional transfer description", example="Payment for task completion")
 
 
 class TransferResponse(BaseModel):
@@ -293,11 +315,11 @@ class TransactionHistoryResponse(BaseModel):
 
 
 class TaskCreateRequest(BaseModel):
-    task_id: str
-    agent_id: str
-    amount: float
-    description: str = ""
-    expires_at: Optional[str] = None
+    task_id: str = Field(..., description="Unique identifier for the task", example="task_001")
+    agent_id: str = Field(..., description="ID of the agent assigned to the task", example="agent_001")
+    amount: float = Field(..., gt=0, description="Task reward amount (must be positive)", example=50.0)
+    description: str = Field(default="", description="Optional task description", example="Review code changes")
+    expires_at: Optional[str] = Field(default=None, description="Task expiration timestamp (ISO format)", example="2026-02-02T12:00:00Z")
 
 
 class TaskCreateResponse(BaseModel):
@@ -336,10 +358,10 @@ class TaskStatusResponse(BaseModel):
 
 
 class RatingSubmitRequest(BaseModel):
-    to_entity_id: str
-    task_id: str
-    score: float = Field(..., ge=1, le=5, description="Rating score from 1 to 5")
-    comment: str = ""
+    to_entity_id: str = Field(..., description="Entity ID to rate", example="entity_b")
+    task_id: str = Field(..., description="Associated task ID", example="task_001")
+    score: float = Field(..., ge=1, le=5, description="Rating score from 1 to 5", example=5)
+    comment: str = Field(default="", description="Optional rating comment", example="Excellent work!")
 
 
 class RatingSubmitResponse(BaseModel):
@@ -359,8 +381,8 @@ class RatingInfoResponse(BaseModel):
 
 
 class WalletCreateRequest(BaseModel):
-    entity_id: str
-    initial_balance: float = 0.0
+    entity_id: str = Field(..., description="Unique entity ID for the wallet", example="entity_001")
+    initial_balance: float = Field(default=0.0, ge=0, description="Initial wallet balance (non-negative)", example=1000.0)
 
 
 class WalletCreateResponse(BaseModel):
@@ -561,6 +583,17 @@ class GovernanceResultsResponse(BaseModel):
     against_percentage: float
     abstain_percentage: float
     passed: bool
+
+
+# Marketplace Registry singleton
+_marketplace_registry: Optional[ServiceRegistry] = None
+
+async def get_marketplace_registry() -> ServiceRegistry:
+    """Get or create singleton ServiceRegistry instance"""
+    global _marketplace_registry
+    if _marketplace_registry is None:
+        _marketplace_registry = ServiceRegistry(storage_path="data/marketplace_registry.json")
+    return _marketplace_registry
 
 
 # Authentication dependencies
@@ -960,26 +993,6 @@ except ImportError:
         MOLTBOOK_AVAILABLE = False
         logger = logging.getLogger(__name__)
         logger.warning("Moltbook client not available")
-
-
-@app.get("/moltbook/status")
-async def get_moltbook_status():
-    """Check Moltbook connection status"""
-    if not MOLTBOOK_AVAILABLE:
-        return {"status": "unavailable", "message": "Moltbook client not installed"}
-    
-    client = init_moltbook_client()
-    try:
-        status = await client.heartbeat()
-        return {
-            "status": "connected" if status["connected"] else "disconnected",
-            "agent": status.get("agent"),
-            "timestamp": status["timestamp"]
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-    finally:
-        await client.close()
 
 
 @app.get("/moltbook/auth-url")
@@ -2554,10 +2567,9 @@ class PeerAliveResponse(BaseModel):
 
 @app.get("/admin/rate-limits", response_model=RateLimitStatsResponse)
 async def get_rate_limit_stats(
-    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+    admin: str = Depends(require_admin)
 ):
     """Get rate limiting statistics (admin only)"""
-    # TODO: Add admin authorization check
     limiter = get_rate_limiter()
     stats = await limiter.get_stats()
     return RateLimitStatsResponse(**stats)
@@ -2566,10 +2578,9 @@ async def get_rate_limit_stats(
 @app.post("/admin/rate-limits/reset")
 async def reset_rate_limits(
     key: Optional[str] = None,
-    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+    admin: str = Depends(require_admin)
 ):
     """Reset rate limits for a specific key or all keys (admin only)"""
-    # TODO: Add admin authorization check
     limiter = get_rate_limiter()
     await limiter.reset(key)
     return {
@@ -3112,60 +3123,6 @@ class WebSocketMessage(BaseModel):
     sender: Optional[str] = Field(default=None, description="Sender entity ID")
 
 
-class WebSocketConnectionManager:
-    """Manage WebSocket connections for peers"""
-    
-    def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
-        self.connection_metadata: Dict[str, Dict[str, Any]] = {}
-    
-    async def connect(self, websocket: WebSocket, entity_id: str):
-        """Accept and store a new WebSocket connection"""
-        await websocket.accept()
-        self.active_connections[entity_id] = websocket
-        self.connection_metadata[entity_id] = {
-            "connected_at": datetime.now(timezone.utc).isoformat(),
-            "last_ping": None,
-            "message_count": 0
-        }
-        logging.info(f"WebSocket connected: {entity_id}")
-    
-    def disconnect(self, entity_id: str):
-        """Remove a WebSocket connection"""
-        if entity_id in self.active_connections:
-            del self.active_connections[entity_id]
-        if entity_id in self.connection_metadata:
-            del self.connection_metadata[entity_id]
-        logging.info(f"WebSocket disconnected: {entity_id}")
-    
-    async def send_message(self, entity_id: str, message: Dict[str, Any]):
-        """Send a message to a specific peer"""
-        if entity_id in self.active_connections:
-            await self.active_connections[entity_id].send_json(message)
-            return True
-        return False
-    
-    async def broadcast(self, message: Dict[str, Any], exclude: Optional[str] = None):
-        """Broadcast a message to all connected peers"""
-        for entity_id, connection in self.active_connections.items():
-            if entity_id != exclude:
-                try:
-                    await connection.send_json(message)
-                except Exception as e:
-                    logging.warning(f"Failed to send to {entity_id}: {e}")
-    
-    def get_connected_peers(self) -> List[str]:
-        """Get list of connected peer entity IDs"""
-        return list(self.active_connections.keys())
-    
-    def is_connected(self, entity_id: str) -> bool:
-        """Check if a peer is connected"""
-        return entity_id in self.active_connections
-
-
-# Global connection manager
-ws_manager = WebSocketConnectionManager()
-
 # Import WebSocket connection pool
 try:
     from services.connection_pool import (
@@ -3196,6 +3153,7 @@ async def websocket_endpoint(websocket: WebSocket):
     WebSocket endpoint for real-time peer communication.
     
     Authentication: Pass JWT token as query parameter: ?token=<jwt_token>
+    Optional: Ed25519 signature verification via X-Signature header in initial message
     
     Message Types:
     - ping: Heartbeat request (server responds with pong)
@@ -3203,8 +3161,10 @@ async def websocket_endpoint(websocket: WebSocket):
     - message: General message between peers
     - task: Task-related communication
     - status: Status update broadcast
+    - auth: Authentication with Ed25519 signature
     """
     entity_id: Optional[str] = None
+    ws_pool = await get_ws_pool()
     
     try:
         # Authenticate using query parameter token
@@ -3224,8 +3184,32 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008, reason=f"Authentication failed: {str(e)}")
             return
         
-        # Accept connection
-        await ws_manager.connect(websocket, entity_id)
+        # Register peer with WebSocket connection pool if not already registered
+        if entity_id not in ws_pool._configs:
+            ws_pool.register_peer(
+                peer_id=entity_id,
+                endpoint_url=f"ws://{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown",
+                reconnect_interval=5.0,
+                heartbeat_interval=30.0
+            )
+        
+        # Check for existing connection (prevent duplicate connections)
+        if entity_id in ws_pool.get_connected_peers():
+            await websocket.close(code=1008, reason="Duplicate connection - peer already connected")
+            return
+        
+        # Accept connection via connection pool (with circuit breaker check)
+        connection_accepted = await ws_pool.accept_connection(entity_id, websocket)
+        if not connection_accepted:
+            await websocket.close(code=1013, reason="Service unavailable - circuit breaker open")
+            return
+        
+        # Initialize connection metadata
+        connection_metadata = {
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "last_ping": None,
+            "message_count": 0
+        }
         
         # Send welcome message
         await websocket.send_json({
@@ -3247,12 +3231,46 @@ async def websocket_endpoint(websocket: WebSocket):
                 msg_payload = data.get("payload", {})
                 
                 # Update metadata
-                ws_manager.connection_metadata[entity_id]["message_count"] += 1
+                connection_metadata["message_count"] += 1
+                
+                # Update connection pool metrics
+                metrics = ws_pool._metrics.get(entity_id)
+                if metrics:
+                    metrics.record_message(sent=False)
+                
+                # Verify Ed25519 signature if provided (for enhanced security)
+                signature = data.get("signature")
+                if signature and msg_payload:
+                    try:
+                        # Get sender's public key from registry or payload
+                        sender_pubkey = msg_payload.get("public_key")
+                        if sender_pubkey:
+                            # Verify signature over the payload
+                            message_bytes = json.dumps(msg_payload, sort_keys=True).encode()
+                            sig_bytes = bytes.fromhex(signature)
+                            pubkey_bytes = bytes.fromhex(sender_pubkey)
+                            
+                            # Use crypto module for verification
+                            from crypto import verify_signature
+                            if not verify_signature(message_bytes, sig_bytes, pubkey_bytes):
+                                await websocket.send_json({
+                                    "type": "status",
+                                    "payload": {
+                                        "event": "error",
+                                        "message": "Invalid Ed25519 signature"
+                                    },
+                                    "timestamp": datetime.now(timezone.utc).isoformat()
+                                })
+                                continue
+                    except Exception as e:
+                        logging.warning(f"Signature verification error for {entity_id}: {e}")
+                        # Continue processing even if signature verification fails
+                        # (JWT auth is the primary authentication method)
                 
                 # Handle different message types
                 if msg_type == "ping":
                     # Respond with pong
-                    ws_manager.connection_metadata[entity_id]["last_ping"] = datetime.now(timezone.utc).isoformat()
+                    connection_metadata["last_ping"] = datetime.now(timezone.utc).isoformat()
                     await websocket.send_json({
                         "type": "pong",
                         "payload": {"timestamp": datetime.now(timezone.utc).isoformat()},
@@ -3279,7 +3297,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     if target and target != "broadcast":
                         # Send to specific target
-                        sent = await ws_manager.send_message(target, message_data)
+                        sent = await ws_pool.send_message(target, message_data)
                         await websocket.send_json({
                             "type": "status",
                             "payload": {
@@ -3291,7 +3309,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         })
                     else:
                         # Broadcast to all except sender
-                        await ws_manager.broadcast(message_data, exclude=entity_id)
+                        await ws_pool.broadcast(message_data, exclude=entity_id)
                 
                 elif msg_type == "task":
                     # Task-related message
@@ -3318,7 +3336,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     # If target specified, forward to target
                     target = msg_payload.get("target")
                     if target:
-                        await ws_manager.send_message(target, response)
+                        await ws_pool.send_message(target, response)
                 
                 elif msg_type == "status":
                     # Status update request
@@ -3326,7 +3344,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     if status_type == "peers":
                         # Return list of connected peers
-                        connected_peers = ws_manager.get_connected_peers()
+                        connected_peers = ws_pool.get_connected_peers()
                         await websocket.send_json({
                             "type": "status",
                             "payload": {
@@ -3382,7 +3400,7 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         # Cleanup on disconnect
         if entity_id:
-            ws_manager.disconnect(entity_id)
+            await ws_pool.disconnect(entity_id)
 
 
 @app.get("/ws/peers")
@@ -3393,12 +3411,492 @@ async def get_connected_websocket_peers(
     Get list of peers connected via WebSocket.
     Requires JWT authentication.
     """
-    connected_peers = ws_manager.get_connected_peers()
+    ws_pool = await get_ws_pool()
+    connected_peers = ws_pool.get_connected_peers()
     return {
         "peers": connected_peers,
         "count": len(connected_peers),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+@app.get("/ws/metrics")
+async def get_websocket_metrics(
+    peer_id: Optional[str] = None,
+    current_entity: str = Depends(get_current_entity_id)
+) -> Dict[str, Any]:
+    """
+    Get WebSocket connection pool metrics.
+    Requires JWT authentication.
+    
+    Args:
+        peer_id: Optional specific peer ID to get metrics for
+    """
+    ws_pool = await get_ws_pool()
+    metrics = await ws_pool.get_metrics(peer_id)
+    circuit_states = await ws_pool.get_circuit_states()
+    connected_peers = ws_pool.get_connected_peers()
+    
+    return {
+        "metrics": metrics,
+        "circuit_states": circuit_states,
+        "connected_peers": connected_peers,
+        "total_connected": len(connected_peers),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+@app.get("/ws/health")
+async def get_websocket_health(
+    current_entity: str = Depends(get_current_entity_id)
+) -> Dict[str, Any]:
+    """
+    Get WebSocket connection pool health status.
+    Requires JWT authentication.
+    """
+    ws_pool = await get_ws_pool()
+    circuit_states = await ws_pool.get_circuit_states()
+    
+    # Count open circuits (unhealthy peers)
+    open_circuits = [
+        peer_id for peer_id, state in circuit_states.items()
+        if state == "open"
+    ]
+    
+    return {
+        "status": "healthy" if len(open_circuits) == 0 else "degraded",
+        "connected_peers": len(ws_pool.get_connected_peers()),
+        "registered_peers": len(ws_pool._configs),
+        "open_circuits": open_circuits,
+        "open_circuit_count": len(open_circuits),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+
+# ============ Marketplace API Endpoints ============
+
+class ServiceListingRequest(BaseModel):
+    """Request model for registering a service listing"""
+    provider_id: str = Field(..., description="ID of the service provider")
+    service_type: str = Field(..., description="Service type (compute, storage, data, analysis, llm, vision, audio)")
+    description: str = Field(..., min_length=1, max_length=2000, description="Service description")
+    pricing_model: str = Field(..., description="Pricing model (per_request, per_hour, per_gb, fixed)")
+    price: float = Field(..., ge=0, description="Service price")
+    capabilities: List[str] = Field(default=[], description="List of service capabilities")
+    endpoint: str = Field(..., description="Service endpoint URL")
+    terms_hash: str = Field(..., description="Hash of service terms")
+
+
+class ServiceListingResponse(BaseModel):
+    """Response model for service listing operations"""
+    success: bool
+    service_id: Optional[str] = None
+    listing: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class ServiceListResponse(BaseModel):
+    """Response model for service list"""
+    services: List[Dict[str, Any]]
+    total: int
+    filters: Dict[str, Any]
+
+
+class ServiceDetailResponse(BaseModel):
+    """Response model for service details"""
+    service: Dict[str, Any]
+
+
+class OrderCreateRequest(BaseModel):
+    """Request model for creating an order"""
+    buyer_id: str = Field(..., description="ID of the buyer")
+    service_id: str = Field(..., description="ID of the service to order")
+    quantity: int = Field(default=1, ge=1, description="Quantity to order")
+    max_price: float = Field(..., ge=0, description="Maximum price willing to pay")
+    requirements: Optional[Dict[str, Any]] = Field(default={}, description="Specific requirements")
+    expiry_hours: int = Field(default=24, ge=1, le=168, description="Order expiry in hours (1-168)")
+
+
+class OrderResponse(BaseModel):
+    """Response model for order operations"""
+    success: bool
+    order_id: Optional[str] = None
+    order: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class OrderMatchRequest(BaseModel):
+    """Request model for matching an order"""
+    provider_id: str = Field(..., description="ID of the provider accepting the order")
+
+
+class OrderMatchResponse(BaseModel):
+    """Response model for order match"""
+    success: bool
+    order_id: str
+    matched_provider_id: Optional[str] = None
+    escrow_id: Optional[str] = None
+    message: str
+
+
+class OrderActionResponse(BaseModel):
+    """Response model for order actions (start, complete, cancel)"""
+    success: bool
+    order_id: str
+    new_status: Optional[str] = None
+    message: str
+
+
+class MarketplaceStatsResponse(BaseModel):
+    """Response model for marketplace statistics"""
+    registry_stats: Dict[str, Any]
+    orderbook_stats: Dict[str, Any]
+    timestamp: str
+
+
+@app.get("/marketplace/services", response_model=ServiceListResponse)
+async def list_services(
+    service_type: Optional[str] = None,
+    capabilities: Optional[str] = None,
+    min_reputation: float = 0.0,
+    max_price: Optional[float] = None,
+    limit: int = 100
+):
+    """
+    List available services with optional filtering.
+    
+    Query parameters:
+    - service_type: Filter by service type (compute, storage, data, analysis, llm, vision, audio)
+    - capabilities: Comma-separated list of required capabilities
+    - min_reputation: Minimum reputation score (0-5)
+    - max_price: Maximum price
+    - limit: Maximum number of results (default: 100)
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    try:
+        from services.marketplace import ServiceType
+    except ImportError:
+        from marketplace import ServiceType
+    
+    # Parse service type
+    type_enum = None
+    if service_type:
+        try:
+            type_enum = ServiceType(service_type.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid service_type: {service_type}")
+    
+    # Parse capabilities
+    cap_list = None
+    if capabilities:
+        cap_list = [c.strip() for c in capabilities.split(",") if c.strip()]
+    
+    # Search services
+    from decimal import Decimal
+    max_price_decimal = Decimal(str(max_price)) if max_price is not None else None
+    
+    results = await marketplace_registry.search_services(
+        service_type=type_enum,
+        capabilities=cap_list,
+        min_reputation=min_reputation,
+        max_price=max_price_decimal,
+        limit=limit
+    )
+    
+    return ServiceListResponse(
+        services=[s.to_dict() for s in results],
+        total=len(results),
+        filters={
+            "service_type": service_type,
+            "capabilities": cap_list,
+            "min_reputation": min_reputation,
+            "max_price": max_price
+        }
+    )
+
+
+@app.post("/marketplace/services", response_model=ServiceListingResponse)
+async def register_service(req: ServiceListingRequest):
+    """
+    Register a new service listing.
+    
+    TODO: Add authentication check for provider_id
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    try:
+        from services.marketplace import ServiceListing, ServiceType, PricingModel
+    except ImportError:
+        from marketplace import ServiceListing, ServiceType, PricingModel
+    
+    from decimal import Decimal
+    import uuid
+    
+    # Validate service type
+    try:
+        svc_type = ServiceType(req.service_type.lower())
+    except ValueError:
+        valid_types = [t.value for t in ServiceType]
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid service_type. Valid types: {', '.join(valid_types)}"
+        )
+    
+    # Validate pricing model
+    try:
+        pricing = PricingModel(req.pricing_model.lower())
+    except ValueError:
+        valid_models = [m.value for m in PricingModel]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid pricing_model. Valid models: {', '.join(valid_models)}"
+        )
+    
+    # Create service listing
+    service_id = str(uuid.uuid4())
+    listing = ServiceListing(
+        service_id=service_id,
+        provider_id=req.provider_id,
+        service_type=svc_type,
+        description=req.description,
+        pricing_model=pricing,
+        price=Decimal(str(req.price)),
+        capabilities=req.capabilities,
+        endpoint=req.endpoint,
+        terms_hash=req.terms_hash
+    )
+    
+    success = await marketplace_registry.register_service(listing)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to register service")
+    
+    return ServiceListingResponse(
+        success=True,
+        service_id=service_id,
+        listing=listing.to_dict()
+    )
+
+
+@app.get("/marketplace/services/{service_id}", response_model=ServiceDetailResponse)
+async def get_service(service_id: str):
+    """Get detailed information about a specific service."""
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    listing = await marketplace_registry.get_service(service_id)
+    
+    if listing is None:
+        raise HTTPException(status_code=404, detail=f"Service {service_id} not found")
+    
+    return ServiceDetailResponse(service=listing.to_dict())
+
+
+@app.delete("/marketplace/services/{service_id}")
+async def delete_service(service_id: str, provider_id: str):
+    """
+    Unregister a service listing.
+    
+    TODO: Add authentication check for provider_id
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    success = await marketplace_registry.unregister_service(service_id, provider_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Service {service_id} not found or provider_id mismatch"
+        )
+    
+    return {
+        "success": True,
+        "message": f"Service {service_id} unregistered successfully"
+    }
+
+
+@app.post("/marketplace/orders", response_model=OrderResponse)
+async def create_order(req: OrderCreateRequest):
+    """
+    Create a new service order.
+    
+    TODO: Add authentication check for buyer_id
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    from decimal import Decimal
+    
+    order = await marketplace_orderbook.create_order(
+        buyer_id=req.buyer_id,
+        service_id=req.service_id,
+        quantity=req.quantity,
+        max_price=Decimal(str(req.max_price)),
+        requirements=req.requirements,
+        expiry_hours=req.expiry_hours
+    )
+    
+    if order is None:
+        raise HTTPException(status_code=400, detail="Failed to create order")
+    
+    return OrderResponse(
+        success=True,
+        order_id=order.order_id,
+        order=order.to_dict()
+    )
+
+
+@app.get("/marketplace/orders/{order_id}", response_model=OrderResponse)
+async def get_order(order_id: str):
+    """Get detailed information about a specific order."""
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    order = await marketplace_orderbook.get_order(order_id)
+    
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+    
+    return OrderResponse(
+        success=True,
+        order_id=order_id,
+        order=order.to_dict()
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/match", response_model=OrderMatchResponse)
+async def match_order(order_id: str, req: OrderMatchRequest):
+    """
+    Match a pending order with a provider.
+    
+    TODO: Add authentication check for provider_id
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    result = await marketplace_orderbook.match_order(
+        order_id=order_id,
+        provider_id=req.provider_id
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+    
+    return OrderMatchResponse(
+        success=True,
+        order_id=order_id,
+        matched_provider_id=result.matched_provider_id,
+        escrow_id=result.escrow_id,
+        message=result.message
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/start", response_model=OrderActionResponse)
+async def start_service(order_id: str):
+    """
+    Mark an order as in progress (service started).
+    
+    TODO: Add authentication check (provider only)
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    success = await marketplace_orderbook.start_service(order_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Failed to start service for order {order_id}. Order must be in 'matched' status."
+        )
+    
+    return OrderActionResponse(
+        success=True,
+        order_id=order_id,
+        new_status="in_progress",
+        message="Service started successfully"
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/complete", response_model=OrderActionResponse)
+async def complete_order(order_id: str):
+    """
+    Mark an order as completed.
+    
+    TODO: Add authentication check (buyer or provider)
+    TODO: Trigger reputation update and payment release
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    success = await marketplace_orderbook.complete_order(order_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to complete order {order_id}. Order must be 'in_progress'."
+        )
+    
+    # Get order details for potential reputation update
+    order = await marketplace_orderbook.get_order(order_id)
+    
+    # TODO: Update service reputation
+    # if order and marketplace_registry:
+    #     await marketplace_registry.update_reputation(
+    #         order.service_id, rating=5.0, transaction_success=True
+    #     )
+    
+    return OrderActionResponse(
+        success=True,
+        order_id=order_id,
+        new_status="completed",
+        message="Order completed successfully"
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/cancel", response_model=OrderActionResponse)
+async def cancel_order(order_id: str, buyer_id: str):
+    """
+    Cancel a pending order.
+    
+    TODO: Add authentication check for buyer_id
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    success = await marketplace_orderbook.cancel_order(order_id, buyer_id)
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to cancel order {order_id}. Order not found or not cancellable."
+        )
+    
+    return OrderActionResponse(
+        success=True,
+        order_id=order_id,
+        new_status="cancelled",
+        message="Order cancelled successfully"
+    )
+
+
+@app.get("/marketplace/stats", response_model=MarketplaceStatsResponse)
+async def get_marketplace_stats():
+    """Get marketplace statistics."""
+    if marketplace_registry is None or marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace services unavailable")
+    
+    registry_stats = await marketplace_registry.get_stats()
+    orderbook_stats = await marketplace_orderbook.get_stats()
+    
+    return MarketplaceStatsResponse(
+        registry_stats=registry_stats,
+        orderbook_stats=orderbook_stats,
+        timestamp=datetime.now(timezone.utc).isoformat()
+    )
 
 
 if __name__ == "__main__":

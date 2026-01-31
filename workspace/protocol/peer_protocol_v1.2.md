@@ -82,11 +82,12 @@ Lifecycle:
 - Message Router (`services/message_router.py`)
 - Rate Limiter (`services/rate_limiter.py`)
 - Memory-based Message Queue
+- Connection Pooling (`services/connection_pool.py` - 1225 lines, circuit breaker, metrics)
 
 ### In Progress
-- Connection pooling design
-- Multi-hop routing protocol
+- Multi-hop routing protocol integration
 - Kademlia DHT integration planning
+- WebSocket transport support (design: `docs/M5_websocket_design.md`)
 
 ### Pending
 - Persistent offline message queue

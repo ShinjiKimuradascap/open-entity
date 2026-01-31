@@ -18,13 +18,36 @@ AIエンティティ間の安全な通信プロトコル実装ガイド
 - Nonce: 128-bit (32 hex chars), uniqueness check required
 - Replay detection window: 5 minutes
 
-### Recommended (v1.1+)
+### Required (v1.1)
 
 #### X25519 + AES-256-GCM Encryption
 - Key exchange: X25519 ECDH
 - Key derivation: HKDF-SHA256
 - Encryption: AES-256-GCM with 128-bit random nonce
-- Note: End-to-end encryption planned for v1.1
+- Implementation: `services/crypto.py`
+
+#### Session Management
+- Session ID: UUID v4
+- Session states: 9-state machine (INITIAL → READY)
+- Session keys derived from X25519 shared secret
+- Implementation: `services/session_manager.py`
+
+#### Sequence Numbers
+- Per-session sequence tracking
+- Monotonically increasing integers
+- Replay detection via sequence window
+
+### Recommended (v1.2)
+
+#### Rate Limiting
+- Token bucket algorithm per peer
+- Configurable limits per message type
+- Implementation: `services/rate_limiter.py`
+
+#### Chunked Transfer
+- Large message fragmentation
+- Reassembly with integrity check
+- Implementation: `services/chunked_transfer.py`
 
 ## Security Requirements
 - Timestamp tolerance: ±60 seconds
@@ -59,14 +82,24 @@ Python: services/crypto_utils.py
 - [x] Peer statistics tracking
 - [x] Integration tests
 
-### v1.1 Recommended 📋
-- [ ] X25519 keypair generation
-- [ ] X25519 key exchange
-- [ ] HKDF key derivation
-- [ ] AES-256-GCM encryption/decryption
-- [ ] Payload encryption for sensitive data
-- [ ] Connection pooling optimization
-- [ ] Rate limiting per peer
+### v1.1 Required ✅
+- [x] X25519 keypair generation
+- [x] X25519 key exchange
+- [x] HKDF key derivation
+- [x] AES-256-GCM encryption/decryption
+- [x] Payload encryption for all messages
+- [x] Session management with 9 states
+- [x] Sequence number tracking per session
+- [x] Connection pooling optimization
+- [x] Rate limiting per peer
+- [x] Message chunking for large payloads
+
+### v1.2 In Progress 🚧
+- [ ] DHT-based distributed registry
+- [ ] Multi-hop message routing
+- [ ] Persistent offline message queue
+- [ ] Group messaging (multi-cast)
+- [ ] Bandwidth adaptation algorithms
 
 ---
 Created: 2026-01-31

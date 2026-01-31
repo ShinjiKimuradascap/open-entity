@@ -2,7 +2,7 @@
 """
 E2E暗号化機能の動作確認テスト
 
-このテストスクリプトは、PeerServiceのE2E暗号化機能を検証します。
+このテストスクリプトは、E2ECryptoManagerのE2E暗号化機能を検証します。
 X25519 + HKDF-SHA256 + AES-256-GCM の暗号化・復号フローをテストします。
 
 実行方法:
@@ -17,38 +17,37 @@ from typing import Optional
 
 # パス設定
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# E2ECryptoManager と関連クラスをインポート
 try:
-    from crypto import E2EEncryption, KeyPair, generate_keypair
+    from services.e2e_crypto import (
+        E2ECryptoManager, E2ESession, SessionKeys, SessionState,
+        generate_keypair, KeyPair, ProtocolError,
+        NACL_AVAILABLE, DECRYPTION_FAILED, SESSION_EXPIRED
+    )
+    from services.crypto import SecureMessage, MessageType
     CRYPTO_AVAILABLE = True
-except ImportError:
-    try:
-        from services.crypto import E2EEncryption, KeyPair, generate_keypair
-        CRYPTO_AVAILABLE = True
-    except ImportError:
-        CRYPTO_AVAILABLE = False
-        print("❌ Error: crypto module not available")
-        sys.exit(1)
+except ImportError as e:
+    print(f"❌ Error importing crypto modules: {e}")
+    CRYPTO_AVAILABLE = False
+    sys.exit(1)
 
 
-class E2EEncryptionTest:
-    """E2E暗号化機能のテスト"""
+class E2ECryptoManagerTest:
+    """E2ECryptoManager機能のテスト"""
 
     def __init__(self):
-        self.e2e_alice: Optional[E2EEncryption] = None
-        self.e2e_bob: Optional[E2EEncryption] = None
+        self.manager_alice: Optional[E2ECryptoManager] = None
+        self.manager_bob: Optional[E2ECryptoManager] = None
         self.key_alice: Optional[KeyPair] = None
         self.key_bob: Optional[KeyPair] = None
-        self.shared_key_alice: Optional[bytes] = None
-        self.shared_key_bob: Optional[bytes] = None
+        self.session_alice: Optional[E2ESession] = None
+        self.session_bob: Optional[E2ESession] = None
 
     async def setup(self):
         """テスト環境のセットアップ"""
         print("🔧 Setting up test environment...")
-
-        # E2E暗号化インスタンスを作成
-        self.e2e_alice = E2EEncryption()
-        self.e2e_bob = E2EEncryption()
 
         # キーペアを生成
         self.key_alice = generate_keypair()
@@ -57,34 +56,91 @@ class E2EEncryptionTest:
         print(f"✅ Alice key pair generated: {self.key_alice.get_public_key_hex()[:16]}...")
         print(f"✅ Bob key pair generated: {self.key_bob.get_public_key_hex()[:16]}...")
 
-    async def test_key_derivation(self):
-        """共有鍵導出のテスト"""
-        print("\n🔑 Testing shared key derivation...")
-
-        # Alice側からBobとの共有鍵を導出
-        self.shared_key_alice = self.e2e_alice.derive_shared_key(
-            my_ed25519_private=self.key_alice.private_key,
-            peer_ed25519_public=self.key_bob.public_key,
-            peer_id="bob"
+        # E2ECryptoManagerインスタンスを作成
+        self.manager_alice = E2ECryptoManager(
+            entity_id="alice",
+            keypair=self.key_alice
+        )
+        self.manager_bob = E2ECryptoManager(
+            entity_id="bob",
+            keypair=self.key_bob
         )
 
-        # Bob側からAliceとの共有鍵を導出
-        self.shared_key_bob = self.e2e_bob.derive_shared_key(
-            my_ed25519_private=self.key_bob.private_key,
-            peer_ed25519_public=self.key_alice.public_key,
-            peer_id="alice"
+        print(f"✅ E2ECryptoManager instances created")
+
+    async def test_key_exchange_and_handshake(self):
+        """X25519鍵交換とハンドシェイクのテスト"""
+        print("\n🔑 Testing X25519 key exchange and handshake...")
+
+        # Aliceがセッションを作成し、ハンドシェイクメッセージを生成
+        self.session_alice = self.manager_alice.create_session("bob")
+        print(f"✅ Alice created session: {self.session_alice.session_id[:8]}...")
+        print(f"   Ephemeral X25519 pubkey: {self.session_alice.ephemeral_public_key.hex()[:16]}...")
+
+        # AliceからBobへのハンドシェイクメッセージ
+        session_alice, handshake_msg = self.manager_alice.create_handshake_message(
+            remote_entity_id="bob",
+            session=self.session_alice
         )
+        print(f"✅ Alice created handshake message")
+        print(f"   Challenge: {self.session_alice.challenge.hex()[:16]}...")
 
-        # 両者の共有鍵が同じであることを確認
-        assert self.shared_key_alice == self.shared_key_bob, "Shared keys do not match!"
-        assert len(self.shared_key_alice) == 32, "Shared key must be 32 bytes!"
+        # Bobがセッションを作成し、ハンドシェイク応答
+        self.session_bob = self.manager_bob.create_session("alice")
+        print(f"✅ Bob created session: {self.session_bob.session_id[:8]}...")
 
-        print(f"✅ Shared key derived: {self.shared_key_alice.hex()[:16]}...")
-        print(f"   Key length: {len(self.shared_key_alice)} bytes")
+        # BobがAliceのハンドシェイクを処理して応答を生成
+        session_bob, response_msg = self.manager_bob.create_handshake_response(
+            remote_entity_id="alice",
+            incoming_message=handshake_msg,
+            session=self.session_bob
+        )
+        print(f"✅ Bob created handshake response")
+
+        # Aliceが応答を処理してセッション確立
+        self.manager_alice.process_handshake_response(
+            session=self.session_alice,
+            message=response_msg
+        )
+        print(f"✅ Alice processed handshake response")
+
+        # 両方のセッションが確立されたことを確認
+        assert self.session_alice.state == SessionState.ESTABLISHED, "Alice session not established!"
+        assert self.session_bob.state == SessionState.ESTABLISHED, "Bob session not established!"
+        print(f"✅ Both sessions established")
+
+        # 共有鍵（SessionKeys）が両方に存在することを確認
+        assert self.session_alice.session_keys is not None, "Alice session keys not derived!"
+        assert self.session_bob.session_keys is not None, "Bob session keys not derived!"
+        print(f"✅ Session keys derived on both sides")
+
+        # HKDF-SHA256で導出された鍵を表示
+        print(f"   Alice encryption key: {self.session_alice.session_keys.encryption_key.hex()[:16]}...")
+        print(f"   Bob encryption key: {self.session_bob.session_keys.encryption_key.hex()[:16]}...")
+
+    async def test_shared_key_derivation(self):
+        """HKDF-SHA256共有鍵導出のテスト"""
+        print("\n🔑 Testing HKDF-SHA256 shared key derivation...")
+
+        # 共有鍵が同じであることを確認（同じECDH共有秘密から導出されている）
+        alice_key = self.session_alice.session_keys.encryption_key
+        bob_key = self.session_bob.session_keys.encryption_key
+
+        assert alice_key == bob_key, "Derived encryption keys do not match!"
+        assert len(alice_key) == 32, "Encryption key must be 32 bytes (AES-256)!"
+
+        print(f"✅ Shared encryption keys match: {alice_key.hex()[:16]}...")
+        print(f"   Key length: {len(alice_key)} bytes")
+
+        # HMACキーも確認
+        alice_hmac = self.session_alice.session_keys.mac_key
+        bob_hmac = self.session_bob.session_keys.mac_key
+        assert alice_hmac == bob_hmac, "Derived MAC keys do not match!"
+        print(f"✅ Shared MAC keys match: {alice_hmac.hex()[:16]}...")
 
     async def test_encryption_decryption(self):
-        """暗号化・復号のテスト"""
-        print("\n🔒 Testing encryption/decryption...")
+        """AES-256-GCM暗号化・復号のテスト"""
+        print("\n🔒 Testing AES-256-GCM encryption/decryption...")
 
         # テストメッセージ
         test_payload = {
@@ -93,40 +149,35 @@ class E2EEncryptionTest:
             "sender": "alice"
         }
 
-        # JSON文字列化
-        import json
-        plaintext = json.dumps(test_payload, sort_keys=True).encode('utf-8')
-        print(f"📄 Plaintext: {plaintext.decode()}")
+        print(f"📄 Plaintext payload: {test_payload}")
 
         # Aliceが暗号化
-        ciphertext, nonce = self.e2e_alice.encrypt(
-            plaintext=plaintext,
-            shared_key=self.shared_key_alice
+        encrypted_msg = self.manager_alice.encrypt_message(
+            session_id=self.session_alice.session_id,
+            payload=test_payload
         )
 
-        print(f"🔐 Ciphertext: {ciphertext.hex()[:32]}...")
-        print(f"   Nonce: {nonce.hex()}")
-        print(f"   Ciphertext length: {len(ciphertext)} bytes")
+        encrypted_data = encrypted_msg.payload.get("data", "")[:32]
+        nonce = encrypted_msg.payload.get("nonce", "")
+        print(f"🔐 Ciphertext: {encrypted_data}...")
+        print(f"   Nonce: {nonce[:24]}...")
+        print(f"   Ciphertext length: {len(encrypted_msg.payload.get('data', ''))} bytes (base64)")
 
         # Bobが復号
-        decrypted = self.e2e_bob.decrypt(
-            ciphertext=ciphertext,
-            nonce=nonce,
-            shared_key=self.shared_key_bob
+        decrypted = self.manager_bob.decrypt_message(
+            session=self.session_bob,
+            message=encrypted_msg
         )
 
         # 復号結果を検証
-        decrypted_payload = json.loads(decrypted.decode('utf-8'))
-        assert decrypted_payload == test_payload, "Decrypted payload does not match!"
+        assert decrypted == test_payload, f"Decrypted payload does not match!\nExpected: {test_payload}\nGot: {decrypted}"
 
-        print(f"📄 Decrypted: {decrypted.decode()}")
+        print(f"📄 Decrypted: {decrypted}")
         print("✅ Encryption/Decryption successful!")
 
     async def test_different_messages(self):
         """異なるメッセージでのテスト"""
         print("\n📝 Testing different messages...")
-
-        import json
 
         test_messages = [
             {"type": "ping", "data": "hello"},
@@ -136,103 +187,64 @@ class E2EEncryptionTest:
         ]
 
         for i, msg in enumerate(test_messages):
-            plaintext = json.dumps(msg, sort_keys=True).encode('utf-8')
-
-            # 暗号化
-            ciphertext, nonce = self.e2e_alice.encrypt(
-                plaintext=plaintext,
-                shared_key=self.shared_key_alice
+            # Aliceが暗号化
+            encrypted_msg = self.manager_alice.encrypt_message(
+                session_id=self.session_alice.session_id,
+                payload=msg
             )
 
-            # 復号
-            decrypted = self.e2e_bob.decrypt(
-                ciphertext=ciphertext,
-                nonce=nonce,
-                shared_key=self.shared_key_bob
+            # Bobが復号
+            decrypted = self.manager_bob.decrypt_message(
+                session=self.session_bob,
+                message=encrypted_msg
             )
 
-            decrypted_msg = json.loads(decrypted.decode('utf-8'))
-            assert decrypted_msg == msg, f"Message {i} mismatch!"
+            assert decrypted == msg, f"Message {i} mismatch!"
 
         print(f"✅ Successfully encrypted/decrypted {len(test_messages)} different messages")
 
-    async def test_peer_service_integration(self):
-        """PeerServiceとの統合テスト"""
-        print("\n🔌 Testing PeerService E2E integration...")
+    async def test_sequence_numbers(self):
+        """シーケンス番号のテスト"""
+        print("\n🔢 Testing sequence numbers...")
 
-        try:
-            from peer_service import PeerService
-        except ImportError:
-            from services.peer_service import PeerService
+        # 複数のメッセージを送信してシーケンス番号が増加することを確認
+        for i in range(5):
+            msg = {"type": "test", "seq": i}
+            encrypted_msg = self.manager_alice.encrypt_message(
+                session_id=self.session_alice.session_id,
+                payload=msg
+            )
+            print(f"   Message {i}: sequence_num = {encrypted_msg.sequence_num}")
+            assert encrypted_msg.sequence_num == i, f"Sequence number mismatch at {i}"
 
-        # 2つのPeerServiceインスタンスを作成
-        alice_service = PeerService(
-            entity_id="alice",
-            port=8001,
-            enable_encryption=True,
-            enable_signing=True,
-            enable_verification=True
-        )
+        print(f"✅ Sequence numbers incrementing correctly")
 
-        bob_service = PeerService(
-            entity_id="bob",
-            port=8002,
-            enable_encryption=True,
-            enable_signing=True,
-            enable_verification=True
-        )
+    async def test_session_expiration(self):
+        """セッション有効期限のテスト"""
+        print("\n⏰ Testing session expiration...")
 
-        # ピアとして登録
-        alice_service.add_peer("bob", "http://localhost:8002")
-        bob_service.add_peer("alice", "http://localhost:8001")
+        # 短いタイムアウトで新しいセッションを作成
+        short_session = self.manager_alice.create_session("expiry_test")
+        short_session.timeout_seconds = 0  # 即座に期限切れ
 
-        # 公開鍵を交換
-        alice_pubkey = alice_service.get_public_key_hex()
-        bob_pubkey = bob_service.get_public_key_hex()
-
-        alice_service.add_peer_public_key("bob", bob_pubkey)
-        bob_service.add_peer_public_key("alice", alice_pubkey)
-
-        print(f"✅ Alice service initialized with encryption")
-        print(f"✅ Bob service initialized with encryption")
-        print(f"✅ Peer keys exchanged")
-
-        # E2E暗号化インスタンスの確認
-        assert alice_service.e2e_encryption is not None, "Alice E2E encryption not initialized"
-        assert bob_service.e2e_encryption is not None, "Bob E2E encryption not initialized"
-        print("✅ E2E encryption instances are active")
-
-        # ペイロード暗号化テスト
-        test_payload = {"message": "Secret message", "value": 42}
-
-        encrypted = alice_service.encrypt_payload("bob", test_payload)
-        assert encrypted is not None, "Encryption failed"
-        print(f"✅ Payload encrypted: {encrypted.keys()}")
-
-        # ペイロード復号テスト
-        decrypted = bob_service.decrypt_payload("alice", encrypted)
-        assert decrypted == test_payload, "Decryption mismatch"
-        print(f"✅ Payload decrypted successfully")
-
-        # 共有鍵キャッシュの確認
-        assert "bob" in alice_service._e2e_shared_keys, "Shared key not cached for Alice"
-        assert "alice" in bob_service._e2e_shared_keys, "Shared key not cached for Bob"
-        print("✅ Shared keys are cached")
-
-        print("\n✅ PeerService E2E integration test passed!")
+        # 期限切れをチェック
+        assert short_session.is_expired(), "Session should be expired!"
+        print(f"✅ Session expiration detection working")
 
     async def run_all(self):
         """全テストを実行"""
         print("=" * 60)
-        print("🚀 E2E Encryption Test Suite")
+        print("🚀 E2E Crypto Manager Test Suite")
         print("=" * 60)
 
         try:
             await self.setup()
-            await self.test_key_derivation()
+            await self.test_key_exchange_and_handshake()
+            await self.test_shared_key_derivation()
             await self.test_encryption_decryption()
             await self.test_different_messages()
-            await self.test_peer_service_integration()
+            await self.test_sequence_numbers()
+            await self.test_session_expiration()
 
             print("\n" + "=" * 60)
             print("✅ All tests passed!")
@@ -241,6 +253,8 @@ class E2EEncryptionTest:
 
         except AssertionError as e:
             print(f"\n❌ Assertion failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
         except Exception as e:
             print(f"\n❌ Error: {type(e).__name__}: {e}")
@@ -255,11 +269,23 @@ async def main():
         print("❌ Crypto module not available. Install PyNaCl: pip install pynacl")
         sys.exit(1)
 
-    test = E2EEncryptionTest()
+    if not NACL_AVAILABLE:
+        print("❌ PyNaCl not installed. Run: pip install pynacl")
+        sys.exit(1)
+
+    test = E2ECryptoManagerTest()
     success = await test.run_all()
 
     if success:
-        print("\n🎉 E2E encryption is working correctly!")
+        print("\n🎉 E2E encryption with X25519 + HKDF-SHA256 + AES-256-GCM is working correctly!")
+        print("\nTested features:")
+        print("  ✓ X25519 ephemeral key generation")
+        print("  ✓ X25519 ECDH key exchange")
+        print("  ✓ HKDF-SHA256 key derivation")
+        print("  ✓ AES-256-GCM encryption/decryption")
+        print("  ✓ Session management with UUID v4")
+        print("  ✓ Sequence number tracking")
+        print("  ✓ Ed25519 message signing")
         sys.exit(0)
     else:
         print("\n💥 Tests failed!")

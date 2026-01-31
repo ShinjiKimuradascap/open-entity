@@ -6,6 +6,9 @@ E2ECryptoManagerとPeerServiceの統合をテスト
 
 import asyncio
 import pytest
+
+pytestmark = pytest.mark.integration
+
 from typing import Optional
 from datetime import datetime, timezone
 

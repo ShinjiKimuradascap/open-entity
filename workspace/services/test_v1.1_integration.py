@@ -18,7 +18,9 @@ import os
 import time
 import json
 import secrets
+import socket
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 # servicesディレクトリをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +30,15 @@ from peer_service import (
     RateLimiter, RateLimitConfig
 )
 from crypto import CryptoManager, generate_entity_keypair
+
+
+def get_free_port() -> int:
+    """利用可能なポート番号を動的に取得"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return port
 
 
 def setup_test_keys():
@@ -42,14 +53,15 @@ async def test_chunked_message_transfer():
     print("\n=== Chunked Message Transfer (v1.1) ===\n")
     
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
-    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    port = get_free_port()
     
-    # PeerService初期化（chunk機能はデフォルトで有効）
-    service = PeerService(
-        "entity-a",
-        8001,
-        private_key_hex=priv_a
-    )
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # PeerService初期化（chunk機能はデフォルトで有効）
+        service = PeerService(
+            "entity-a",
+            port,
+            private_key_hex=priv_a
+        )
     
     # 大きなペイロードを作成（chunkingが必要なサイズ）
     large_payload = {
@@ -77,10 +89,10 @@ async def test_chunked_message_transfer():
     assert reconstructed is not None
     print("✓ Payload reconstructed")
     
-    # cleanup_old_chunksテスト
-    service._chunk_buffer["old-chunk"] = chunk_info
-    cleaned = await service.cleanup_old_chunks(max_age_seconds=0)  # 即時クリーンアップ
-    print(f"✓ Cleanup completed: {cleaned} chunks removed")
+        # cleanup_old_chunksテスト
+        service._chunk_buffer["old-chunk"] = chunk_info
+        cleaned = await service.cleanup_old_chunks(max_age_seconds=0)  # 即時クリーンアップ
+        print(f"✓ Cleanup completed: {cleaned} chunks removed")
     
     print("\n✅ Chunked message transfer tests passed")
 
@@ -139,22 +151,23 @@ async def test_rate_limiting():
     print("\n=== Rate Limiting (Token Bucket) ===\n")
     
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
-    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    port = get_free_port()
     
-    # PeerService初期化（rate limiting有効）
-    service = PeerService(
-        "entity-a",
-        8001,
-        rate_limit_requests=60,
-        rate_limit_window=60,
-        private_key_hex=priv_a
-    )
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # PeerService初期化（rate limiting有効）
+        service = PeerService(
+            "entity-a",
+            port,
+            rate_limit_requests=60,
+            rate_limit_window=60,
+            private_key_hex=priv_a
+        )
+        
+        # RateLimiter初期化確認
+        assert service._rate_limiter is not None
+        print("✓ RateLimiter initialized")
     
-    # RateLimiter初期化確認
-    assert service._rate_limiter is not None
-    print("✓ RateLimiter initialized")
-    
-    # カスタムコンフィグテスト
+    # カスタムコンフィグテスト（環境変数不要）
     config = RateLimitConfig(
         requests_per_minute=10,
         requests_per_hour=100,
@@ -180,22 +193,23 @@ async def test_session_management():
     print("\n=== Session Management (UUID) ===\n")
     
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
-    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    port = get_free_port()
     
-    # PeerService初期化（session management有効）
-    service = PeerService(
-        "entity-a",
-        8001,
-        enable_session_management=True,
-        session_ttl_seconds=3600,
-        private_key_hex=priv_a
-    )
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # PeerService初期化（session management有効）
+        service = PeerService(
+            "entity-a",
+            port,
+            enable_session_management=True,
+            session_ttl_seconds=3600,
+            private_key_hex=priv_a
+        )
+        
+        # SessionManager初期化確認
+        assert service._session_manager is not None
+        print("✓ SessionManager initialized")
     
-    # SessionManager初期化確認
-    assert service._session_manager is not None
-    print("✓ SessionManager initialized")
-    
-    # SessionInfoのテスト
+    # SessionInfoのテスト（環境変数不要）
     session = SessionInfo(
         session_id="test-session-uuid-123",
         peer_id="peer-b",
@@ -225,18 +239,20 @@ async def test_sequence_numbers():
     print("\n=== Sequence Numbers for Ordering ===\n")
     
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
-    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    port_a = get_free_port()
+    port_b = get_free_port()
     
-    # PeerService初期化（sequence tracking有効）
-    service = PeerService(
-        "entity-a",
-        8001,
-        enable_session_management=True,
-        private_key_hex=priv_a
-    )
-    
-    # セッション作成
-    service.add_peer("peer-b", "http://localhost:8002", public_key_hex=pub_b)
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # PeerService初期化（sequence tracking有効）
+        service = PeerService(
+            "entity-a",
+            port_a,
+            enable_session_management=True,
+            private_key_hex=priv_a
+        )
+        
+        # セッション作成
+        service.add_peer("peer-b", f"http://localhost:{port_b}", public_key_hex=pub_b)
     
     # メッセージ送信時のシーケンス番号付与をテスト
     # （実際の送信はモック）
@@ -269,41 +285,42 @@ async def test_v1_1_protocol_compliance():
     print("\n=== v1.1 Protocol Compliance ===\n")
     
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
-    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    port = get_free_port()
     
-    # 完全なv1.1設定で初期化
-    service = PeerService(
-        "entity-a",
-        8001,
-        enable_encryption=True,
-        enable_chunking=True,
-        enable_rate_limiting=True,
-        enable_sessions=True,
-        require_signatures=True,
-        private_key_hex=priv_a
-    )
-    
-    # カパシティ取得
-    health = await service.health_check()
-    
-    # v1.1機能が有効かチェック
-    assert health["crypto_available"] is True
-    assert health["signing_enabled"] is True
-    print("✓ Encryption and signing enabled")
-    
-    # メッセージハンドラチェック
-    required_handlers = [
-        "ping", "status", "heartbeat", "capability_query",
-        "task_delegate", "chunk"  # v1.1で追加
-    ]
-    for handler in required_handlers:
-        assert handler in service.message_handlers
-    print(f"✓ All v1.1 message handlers registered: {required_handlers}")
-    
-    # 公開鍵取得
-    pub_keys = service.get_public_keys()
-    assert "ed25519" in pub_keys
-    print("✓ Public keys available")
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # 完全なv1.1設定で初期化
+        service = PeerService(
+            "entity-a",
+            port,
+            enable_encryption=True,
+            enable_chunking=True,
+            enable_rate_limiting=True,
+            enable_sessions=True,
+            require_signatures=True,
+            private_key_hex=priv_a
+        )
+        
+        # カパシティ取得
+        health = await service.health_check()
+        
+        # v1.1機能が有効かチェック
+        assert health["crypto_available"] is True
+        assert health["signing_enabled"] is True
+        print("✓ Encryption and signing enabled")
+        
+        # メッセージハンドラチェック
+        required_handlers = [
+            "ping", "status", "heartbeat", "capability_query",
+            "task_delegate", "chunk"  # v1.1で追加
+        ]
+        for handler in required_handlers:
+            assert handler in service.message_handlers
+        print(f"✓ All v1.1 message handlers registered: {required_handlers}")
+        
+        # 公開鍵取得
+        pub_keys = service.get_public_keys()
+        assert "ed25519" in pub_keys
+        print("✓ Public keys available")
     
     print("\n✅ v1.1 Protocol compliance verified")
 

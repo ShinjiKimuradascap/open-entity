@@ -22,14 +22,13 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.serialization import NoEncryption
 
 # Import from crypto module with fallback
 try:
-    from crypto import (
+    from services.crypto import (
         KeyPair, MessageSigner, SignatureVerifier,
-        EncryptedMessage, SecureMessage, MessageType,
-        ProtocolError, DECRYPTION_FAILED, SESSION_EXPIRED,
-        SEQUENCE_ERROR, REPLAY_DETECTED, NACL_AVAILABLE
+        SecureMessage, MessageType,
     )
 except ImportError:
     # Fallback for running within services directory
@@ -38,10 +37,40 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from crypto import (
         KeyPair, MessageSigner, SignatureVerifier,
-        EncryptedMessage, SecureMessage, MessageType,
-        ProtocolError, DECRYPTION_FAILED, SESSION_EXPIRED,
-        SEQUENCE_ERROR, REPLAY_DETECTED, NACL_AVAILABLE
+        SecureMessage, MessageType,
     )
+
+# Check if PyNaCl is available for Ed25519->X25519 conversion
+try:
+    import nacl.bindings
+    NACL_AVAILABLE = True
+except ImportError:
+    NACL_AVAILABLE = False
+
+# Error code constants
+DECRYPTION_FAILED = "DECRYPTION_FAILED"
+SESSION_EXPIRED = "SESSION_EXPIRED"
+SEQUENCE_ERROR = "SEQUENCE_ERROR"
+REPLAY_DETECTED = "REPLAY_DETECTED"
+
+
+class ProtocolError(Exception):
+    """Protocol error with error code"""
+    def __init__(self, message: str, code: str = None, details: Dict[str, Any] = None):
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "error": str(self),
+            "code": self.code,
+            "details": self.details
+        }
+
+
+# EncryptedMessage is an alias for SecureMessage for backward compatibility
+EncryptedMessage = SecureMessage
 
 
 # Extended MessageType for v1.1 6-step handshake
@@ -182,7 +211,8 @@ class E2ESession:
             priv_key = X25519PrivateKey.generate()
             self.ephemeral_private_key = priv_key.private_bytes(
                 encoding=serialization.Encoding.Raw,
-                format=serialization.PrivateFormat.Raw
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=NoEncryption()
             )
             pub_key = priv_key.public_key()
             self.ephemeral_public_key = pub_key.public_bytes(

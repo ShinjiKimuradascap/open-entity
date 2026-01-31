@@ -16,7 +16,7 @@ services:
     volumes:
       - ./services:/app/services
       - registry-data:/app/data
-    command: python -m uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - ai-collab-network
     depends_on:

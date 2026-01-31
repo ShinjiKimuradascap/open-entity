@@ -121,6 +121,30 @@ except ImportError:
     except ImportError:
         pass  # CONNECTION_POOL_AVAILABLE = False
 
+# Chunked Transferのインポート（Chunk Management Unification）
+CHUNKED_TRANSFER_AVAILABLE = False
+try:
+    from services.chunked_transfer import ChunkInfo, ChunkManager
+    CHUNKED_TRANSFER_AVAILABLE = True
+except ImportError:
+    try:
+        from chunked_transfer import ChunkInfo, ChunkManager
+        CHUNKED_TRANSFER_AVAILABLE = True
+    except ImportError:
+        pass  # CHUNKED_TRANSFER_AVAILABLE = False
+
+# Multi-hop Routerのインポート（v1.2 Store-and-Forward）
+MULTI_HOP_AVAILABLE = False
+try:
+    from services.multi_hop_router import MultiHopRouter, MessageStatus, QueuedMessage
+    MULTI_HOP_AVAILABLE = True
+except ImportError:
+    try:
+        from multi_hop_router import MultiHopRouter, MessageStatus, QueuedMessage
+        MULTI_HOP_AVAILABLE = True
+    except ImportError:
+        pass  # MULTI_HOP_AVAILABLE = False
+
 # SessionManagerインポート（新しいUUIDベースのセッション管理）
 SESSION_MANAGER_AVAILABLE = False
 try:
@@ -1110,104 +1134,12 @@ class QueuedMessage:
     next_retry_at: Optional[datetime] = None
 
 
-@dataclass
-class ChunkInfo:
-    """チャンク情報 - 分割メッセージの再構築管理
-    
-    Protocol v1.0対応:
-    - checksum: データ整合性検証用（SHA-256ハッシュ）
-    - total_size: 元データの総サイズ
-    - acked_indices: 確認済みチャンクインデックス
-    - status: 転送状態（"receiving", "complete", "failed"）
-    """
-    chunk_id: str
-    total_chunks: int
-    received_chunks: dict = field(default_factory=dict)
-    received_indices: set = field(default_factory=set)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    original_msg_type: Optional[str] = None
-    sender_id: Optional[str] = None
-    checksum: Optional[str] = None
-    total_size: int = 0
-    acked_indices: set = field(default_factory=set)
-    status: str = "receiving"
-    
-    # Protocol v1.0 Reliable Transfer追加フィールド
-    acknowledged_indices: set = field(default_factory=set)  # 受信側がACKしたインデックス
-    last_ack_time: Optional[datetime] = None  # 最後のACK受信時刻
-    is_reliable: bool = False  # 信頼性モード有効フラグ
-    sender_ready: bool = False  # 送信側準備完了フラグ
-    
-    def is_complete(self) -> bool:
-        """すべてのチャンクが揃ったかチェック"""
-        return len(self.received_indices) >= self.total_chunks
-    
-    def get_missing_indices(self) -> list:
-        """未取得のチャンクインデックスを返す"""
-        return [i for i in range(self.total_chunks) if i not in self.received_indices]
-    
-    def verify_checksum(self, data: bytes) -> bool:
-        """チェックサムを検証"""
-        if not self.checksum:
-            return True  # チェックサムがない場合はスキップ
-        import hashlib
-        computed = hashlib.sha256(data).hexdigest()
-        return computed == self.checksum
-    
-    def add_chunk(self, chunk_index: int, data: str) -> bool:
-        """
-        チャンクを追加
-        
-        Args:
-            chunk_index: チャンクインデックス
-            data: チャンクデータ
-            
-        Returns:
-            True: 新規追加, False: 重複
-        """
-        if chunk_index in self.received_indices:
-            return False  # 重複
-        self.received_chunks[chunk_index] = data
-        self.received_indices.add(chunk_index)
-        return True
-    
-    def get_reconstructed_data(self) -> Optional[str]:
-        """チャンクから元のデータを再構築（base64デコード前）"""
-        if not self.is_complete():
-            return None
-        # シーケンス順にソートして結合
-        try:
-            sorted_chunks = [self.received_chunks[i] for i in range(self.total_chunks)]
-            return "".join(sorted_chunks)
-        except KeyError:
-            return None
-    
-    def get_payload(self) -> Optional[dict]:
-        """チャンクから元のペイロードを再構築"""
-        combined_data = self.get_reconstructed_data()
-        if combined_data is None:
-            return None
-        try:
-            import base64
-            # base64デコード
-            decoded_bytes = base64.b64decode(combined_data)
-            decoded_str = decoded_bytes.decode('utf-8')
-            return json.loads(decoded_str)
-        except (json.JSONDecodeError, KeyError, base64.binascii.Error, UnicodeDecodeError) as e:
-            logger.error(f"Failed to reconstruct chunked message {self.chunk_id}: {e}")
-            return None
-    
-    def is_expired(self, timeout_seconds: float = 300) -> bool:
-        """チャンクがタイムアウトしたかチェック（デフォルト5分）"""
-        age = (datetime.now(timezone.utc) - self.created_at).total_seconds()
-        return age > timeout_seconds
-    
-    def get_missing_indices(self) -> List[int]:
-        """受信していないチャンクインデックスを取得"""
-        return [i for i in range(self.total_chunks) if i not in self.received_indices]
+# ChunkInfo and ChunkManager are now imported from chunked_transfer.py
+# For backward compatibility, they are re-exported here
+if not CHUNKED_TRANSFER_AVAILABLE:
+    raise ImportError("ChunkInfo and ChunkManager must be imported from chunked_transfer.py")
 
-
-class ChunkManager:
+class ExponentialBackoff:
     """
     チャンクメッセージ管理クラス（Protocol v1.1対応）
     
@@ -1789,7 +1721,10 @@ class PeerService:
         connection_pool_max_keepalive: int = 5,
         connection_pool_keepalive_timeout: int = 30,
         dht_registry: Optional[Any] = None,
-        use_dht_discovery: bool = False
+        use_dht_discovery: bool = False,
+        session_manager: Optional['NewSessionManager'] = None,
+        multi_hop_router: Optional['MultiHopRouter'] = None,
+        use_multi_hop: bool = False
     ) -> None:
         """PeerServiceを初期化
         
@@ -1819,6 +1754,8 @@ class PeerService:
             connection_pool_keepalive_timeout: キープアライブタイムアウト（秒、デフォルト: 30）
             dht_registry: DHTレジストリインスタンス（オプション、デフォルト: None）
             use_dht_discovery: DHTを使用したピア発見を有効にする（デフォルト: False）
+            multi_hop_router: Multi-hop routerインスタンス（オプション、デフォルト: None）
+            use_multi_hop: マルチホップルーティングを有効にする（デフォルト: False）
         """
         self.entity_id: str = entity_id
         self.port: int = port
@@ -1829,6 +1766,8 @@ class PeerService:
         self._registry = registry
         self._dht_registry = dht_registry
         self._use_dht_discovery = use_dht_discovery
+        self._multi_hop_router = multi_hop_router
+        self._use_multi_hop = use_multi_hop and MULTI_HOP_AVAILABLE
         
         # require_signaturesが指定されていればenable_verificationを上書き
         if not require_signatures:
@@ -1923,6 +1862,11 @@ class PeerService:
                     default_ttl_minutes=session_ttl_seconds // 60
                 )
                 logger.info(f"SessionManager initialized (TTL: {session_ttl_seconds}s)")
+
+    @property
+    def session_manager(self) -> Optional[NewSessionManager]:
+        """SessionManagerインスタンスを取得"""
+        return self._session_manager
         
         # RateLimiterの初期化 (v1.1)
         self._rate_limiter: Optional[RateLimiter] = None
@@ -3043,9 +2987,9 @@ class PeerService:
         Returns:
             (session_id, sequence_num)のタプル。セッションがない場合は(None, None)
         """
-        if hasattr(self, 'session_manager') and self.session_manager:
+        if hasattr(self, '_session_manager') and self._session_manager:
             try:
-                session = asyncio.run(self.session_manager.get_session_by_peer(target_id))
+                session = asyncio.run(self._session_manager.get_session_by_peer(target_id))
                 if session:
                     session_id = session.session_id
                     sequence_num = session.increment_sequence()
@@ -3190,13 +3134,13 @@ class PeerService:
         # SessionManagerからsession_idとsequence_numを取得
         session_id = None
         sequence_num = None
-        if self.session_manager is not None:
+        if self._session_manager is not None:
             try:
                 # 同期的に実行（async関数だが、内部状態の更新のみ）
                 import asyncio
                 loop = asyncio.get_event_loop()
                 session_id, sequence_num = loop.run_until_complete(
-                    self.session_manager.get_next_sequence(self.entity_id, target_id)
+                    self._session_manager.get_next_sequence(self.entity_id, target_id)
                 )
                 logger.debug(f"Got session_id={session_id}, sequence_num={sequence_num} for {target_id}")
             except Exception as e:
@@ -3421,6 +3365,11 @@ class PeerService:
         # SessionManagerを開始
         if self._session_manager:
             await self._session_manager.start()
+        
+        # Connection Poolを開始
+        if self._connection_pool:
+            await self._connection_pool.start()
+            logger.info("Connection Pool started")
         
         # DHTRegistryを開始
         if self._dht_registry:
@@ -3777,7 +3726,7 @@ class PeerService:
         
         if session_id and sequence_num is not None and version == "1.0":
             # セッションを取得
-            session = await self.session_manager.get_session_by_peer(sender)
+            session = await self._session_manager.get_session_by_peer(sender)
             
             if session:
                 # セッションIDが一致するか確認
@@ -5691,7 +5640,9 @@ def init_service(
     registry=None,
     private_key_hex: Optional[str] = None,
     enable_encryption: bool = True,
-    require_signatures: bool = True
+    require_signatures: bool = True,
+    dht_registry=None,
+    use_dht_discovery: bool = False
 ) -> PeerService:
     """サービスを初期化
 
@@ -5706,6 +5657,8 @@ def init_service(
         private_key_hex: エンティティの秘密鍵（16進文字列、オプション）
         enable_encryption: ペイロード暗号化を有効にする（互換性用）
         require_signatures: 署名を必須とする（enable_verificationと同義）
+        dht_registry: DHTレジストリインスタンス（オプション）
+        use_dht_discovery: DHTを使用したピア発見を有効にする
 
     Returns:
         初期化されたPeerServiceインスタンス
@@ -5719,7 +5672,8 @@ def init_service(
         entity_id, port, enable_signing, enable_verification,
         enable_queue=enable_queue, enable_heartbeat=enable_heartbeat,
         registry=registry, private_key_hex=private_key_hex,
-        enable_encryption=enable_encryption, require_signatures=require_signatures
+        enable_encryption=enable_encryption, require_signatures=require_signatures,
+        dht_registry=dht_registry, use_dht_discovery=use_dht_discovery
     )
     return _service
 
@@ -6448,11 +6402,6 @@ if __name__ == "__main__":
     
     # テスト実行
     service = asyncio.run(run_tests())
-
-
-# =============================================================================
-# E2E Encryption Methods (v1.1)
-# =============================================================================
 
 async def initiate_e2e_handshake(
     self,

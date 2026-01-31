@@ -121,13 +121,15 @@ Coordinating with Entity B for distributed task execution.
         
         try:
             content = self.format_task_post(task_id, description, status)
-            post = await self.client.create_post(content, submolt=self.submolt)
+            result = await self.client.create_post(content, visibility="public")
             
-            if status == "completed":
-                self.stats["tasks_completed"] += 1
-            
-            logger.info(f"Posted task update to Moltbook: {post.id}")
-            return post.id
+            if result:
+                if status == "completed":
+                    self.stats["tasks_completed"] += 1
+                post_id = result.get('id', 'unknown')
+                logger.info(f"Posted task update to Moltbook: {post_id}")
+                return post_id
+            return None
         except Exception as e:
             logger.error(f"Failed to post task update: {e}")
             self.stats["tasks_failed"] += 1
@@ -140,9 +142,12 @@ Coordinating with Entity B for distributed task execution.
         
         try:
             content = self.format_peer_report(status, next_action)
-            post = await self.client.create_post(content, submolt=self.submolt)
-            logger.info(f"Posted peer report to Moltbook: {post.id}")
-            return post.id
+            result = await self.client.create_post(content, visibility="public")
+            if result:
+                post_id = result.get('id', 'unknown')
+                logger.info(f"Posted peer report to Moltbook: {post_id}")
+                return post_id
+            return None
         except Exception as e:
             logger.error(f"Failed to post peer report: {e}")
             return None

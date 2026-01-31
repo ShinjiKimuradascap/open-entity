@@ -83,6 +83,10 @@ class PeerServiceIntegrationTestBase:
         # 環境変数設定
         os.environ["ENTITY_PRIVATE_KEY"] = priv_a
         
+        # SessionManager作成
+        session_mgr_a = SessionManager(default_ttl_minutes=30)
+        session_mgr_b = SessionManager(default_ttl_minutes=30)
+        
         # Peer A作成
         port_a = self._get_next_port()
         peer_a = PeerService(
@@ -92,6 +96,7 @@ class PeerServiceIntegrationTestBase:
             enable_encryption=True,
             require_signatures=True,
             enable_session_management=True,
+            session_manager=session_mgr_a,
         )
         
         # Peer B作成
@@ -103,6 +108,7 @@ class PeerServiceIntegrationTestBase:
             enable_encryption=True,
             require_signatures=True,
             enable_session_management=True,
+            session_manager=session_mgr_b,
         )
         
         # 相互に公開鍵登録

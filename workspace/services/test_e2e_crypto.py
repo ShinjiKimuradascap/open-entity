@@ -37,6 +37,9 @@ from e2e_crypto import (
     generate_keypair, create_e2e_manager
 )
 
+# Test marker for CI categorization
+pytestmark = pytest.mark.integration
+
 
 pytestmark = pytest.mark.skipif(not NACL_AVAILABLE, reason="PyNaCl not installed")
 

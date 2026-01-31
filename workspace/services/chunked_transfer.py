@@ -4,12 +4,13 @@ Chunked Message Transfer for Peer Protocol v1.1
 Handles large message fragmentation and reassembly
 """
 
+from __future__ import annotations
 import hashlib
 import base64
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Callable, Awaitable
+from typing import Dict, List, Optional, Any, Callable, Awaitable, Tuple, Union
 from enum import Enum
 import asyncio
 import logging
@@ -473,6 +474,220 @@ class ChunkedMessageProtocol:
             },
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
+
+
+# =============================================================================
+# Deprecated Classes (moved from peer_service.py for backward compatibility)
+# These classes are maintained for compatibility with existing code.
+# New code should use ChunkedTransfer and ChunkedTransferManager instead.
+# =============================================================================
+
+@dataclass
+class ChunkInfo:
+    """チャンク情報 - 分割メッセージの再構築管理 (Deprecated: use ChunkedTransfer instead)
+    
+    Protocol v1.0対応:
+    - checksum: データ整合性検証用（SHA-256ハッシュ）
+    - total_size: 元データの総サイズ
+    - acked_indices: 確認済みチャンクインデックス
+    - status: 転送状態（"receiving", "complete", "failed"）
+    """
+    chunk_id: str
+    total_chunks: int
+    received_chunks: Dict[int, str] = field(default_factory=dict)
+    received_indices: set = field(default_factory=set)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    original_msg_type: Optional[str] = None
+    sender_id: Optional[str] = None
+    checksum: Optional[str] = None
+    total_size: int = 0
+    acked_indices: set = field(default_factory=set)
+    status: str = "receiving"
+    
+    # Protocol v1.0 Reliable Transfer追加フィールド
+    acknowledged_indices: set = field(default_factory=set)
+    last_ack_time: Optional[datetime] = None
+    is_reliable: bool = False
+    sender_ready: bool = False
+    
+    def is_complete(self) -> bool:
+        """すべてのチャンクが揃ったかチェック"""
+        return len(self.received_indices) >= self.total_chunks
+    
+    def get_missing_indices(self) -> List[int]:
+        """未取得のチャンクインデックスを返す"""
+        return [i for i in range(self.total_chunks) if i not in self.received_indices]
+    
+    def verify_checksum(self, data: bytes) -> bool:
+        """チェックサムを検証"""
+        if not self.checksum:
+            return True
+        computed = hashlib.sha256(data).hexdigest()
+        return computed == self.checksum
+    
+    def add_chunk(self, chunk_index: int, data: str) -> bool:
+        """チャンクを追加"""
+        if chunk_index in self.received_indices:
+            return False
+        self.received_chunks[chunk_index] = data
+        self.received_indices.add(chunk_index)
+        return True
+    
+    def get_reconstructed_data(self) -> Optional[str]:
+        """チャンクから元のデータを再構築（base64デコード前）"""
+        if not self.is_complete():
+            return None
+        try:
+            sorted_chunks = [self.received_chunks[i] for i in range(self.total_chunks)]
+            return "".join(sorted_chunks)
+        except KeyError:
+            return None
+    
+    def get_payload(self) -> Optional[Dict[str, Any]]:
+        """チャンクから元のペイロードを再構築"""
+        combined_data = self.get_reconstructed_data()
+        if combined_data is None:
+            return None
+        try:
+            decoded_bytes = base64.b64decode(combined_data)
+            decoded_str = decoded_bytes.decode('utf-8')
+            return json.loads(decoded_str)
+        except (json.JSONDecodeError, KeyError, base64.binascii.Error, UnicodeDecodeError) as e:
+            logger.error(f"Failed to reconstruct chunked message {self.chunk_id}: {e}")
+            return None
+    
+    def is_expired(self, timeout_seconds: float = 300) -> bool:
+        """チャンクがタイムアウトしたかチェック"""
+        age = (datetime.now(timezone.utc) - self.created_at).total_seconds()
+        return age > timeout_seconds
+
+
+class ChunkManager:
+    """
+    チャンクメッセージ管理クラス（Protocol v1.1対応）(Deprecated: use ChunkedTransferManager instead)
+    
+    - 複数メッセージのチャンクを同時管理
+    - タイムアウト処理（5分以上経過したchunk群は破棄）
+    - 重複チャンクの無視
+    - 不完全メッセージの検出とクリーンアップ
+    """
+    
+    DEFAULT_TIMEOUT_SECONDS = 300
+    CLEANUP_INTERVAL_SECONDS = 60
+    
+    def __init__(self, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS):
+        self._chunks: Dict[str, ChunkInfo] = {}
+        self._lock = asyncio.Lock()
+        self._timeout_seconds = timeout_seconds
+        self._cleanup_task: Optional[asyncio.Task] = None
+        self._stats = {
+            "total_messages": 0,
+            "completed_messages": 0,
+            "expired_messages": 0,
+            "duplicate_chunks": 0,
+            "total_chunks_received": 0
+        }
+        self._send_buffers: Dict[str, Dict[int, str]] = {}
+        self._pending_resend: Dict[str, List[int]] = {}
+        self._ack_waiters: Dict[str, asyncio.Event] = {}
+    
+    async def add_chunk(
+        self,
+        chunk_id: str,
+        chunk_index: int,
+        total_chunks: int,
+        data: str,
+        original_msg_type: str,
+        sender_id: str
+    ) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """チャンクを追加し、完全なメッセージが揃った場合は再構築"""
+        async with self._lock:
+            if chunk_id not in self._chunks:
+                self._chunks[chunk_id] = ChunkInfo(
+                    chunk_id=chunk_id,
+                    total_chunks=total_chunks,
+                    original_msg_type=original_msg_type,
+                    sender_id=sender_id
+                )
+                self._stats["total_messages"] += 1
+                logger.debug(f"Started receiving chunked message {chunk_id} ({total_chunks} chunks)")
+            
+            chunk_info = self._chunks[chunk_id]
+            
+            if chunk_info.total_chunks != total_chunks:
+                logger.warning(f"Chunk count mismatch for {chunk_id}")
+                return False, None
+            
+            is_new = chunk_info.add_chunk(chunk_index, data)
+            if not is_new:
+                self._stats["duplicate_chunks"] += 1
+                return False, None
+            
+            self._stats["total_chunks_received"] += 1
+            
+            if chunk_info.is_complete():
+                payload = chunk_info.get_payload()
+                if payload is not None:
+                    self._stats["completed_messages"] += 1
+                    logger.info(f"Reconstructed chunked message {chunk_id}")
+                    del self._chunks[chunk_id]
+                    return True, payload
+                else:
+                    logger.error(f"Failed to reconstruct message {chunk_id}")
+                    del self._chunks[chunk_id]
+                    return False, None
+            
+            return False, None
+    
+    async def cleanup_expired(self) -> int:
+        """期限切れのチャンクをクリーンアップ"""
+        expired_ids = []
+        async with self._lock:
+            for chunk_id, chunk_info in self._chunks.items():
+                if chunk_info.is_expired(self._timeout_seconds):
+                    expired_ids.append(chunk_id)
+            
+            for chunk_id in expired_ids:
+                del self._chunks[chunk_id]
+            
+            self._stats["expired_messages"] += len(expired_ids)
+        
+        return len(expired_ids)
+    
+    async def start_cleanup_task(self) -> None:
+        """定期クリーンアップタスクを開始"""
+        if self._cleanup_task is not None:
+            return
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+    
+    async def stop_cleanup_task(self) -> None:
+        """定期クリーンアップタスクを停止"""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
+    
+    async def _cleanup_loop(self) -> None:
+        """クリーンアップループ"""
+        while True:
+            try:
+                await asyncio.sleep(self.CLEANUP_INTERVAL_SECONDS)
+                await self.cleanup_expired()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in chunk cleanup loop: {e}")
+    
+    def get_stats(self) -> Dict[str, int]:
+        """統計情報を取得"""
+        return self._stats.copy()
+    
+    def get_pending_count(self) -> int:
+        """処理中のメッセージ数を取得"""
+        return len(self._chunks)
 
 
 # Convenience function for quick chunking

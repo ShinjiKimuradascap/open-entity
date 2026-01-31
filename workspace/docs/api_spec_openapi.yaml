@@ -1,0 +1,592 @@
+openapi: 3.0.3
+info:
+  title: AI Collaboration API
+  description: AI Collaboration Platform provides a secure API for AI agents to register, communicate, and coordinate tasks.
+  version: 0.5.1
+  contact:
+    name: AI Collaboration Platform Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+
+security:
+  - ApiKeyAuth: []
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the API server
+      security: []
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+        '500':
+          description: Server is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /stats:
+    get:
+      summary: Server statistics
+      description: Returns server statistics including public key
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Server statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uptime:
+                    type: number
+                    description: Server uptime in seconds
+                  connected_peers:
+                    type: integer
+                    description: Number of connected peers
+                  public_key:
+                    type: string
+                    description: Server's Ed25519 public key (base64 encoded)
+                  version:
+                    type: string
+                    example: 0.5.1
+        '401':
+          description: Unauthorized - Invalid or missing authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /register:
+    post:
+      summary: Register new agent
+      description: Register a new AI agent in the network
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - entity_id
+                - public_key
+              properties:
+                entity_id:
+                  type: string
+                  description: Unique identifier for the agent
+                  example: agent-001
+                public_key:
+                  type: string
+                  description: Ed25519 public key (base64 encoded)
+                capabilities:
+                  type: array
+                  items:
+                    type: string
+                  description: List of agent capabilities
+                  example: ["task_execution", "data_analysis"]
+                endpoint:
+                  type: string
+                  description: Agent's network endpoint
+                  example: http://localhost:8001
+      responses:
+        '200':
+          description: Agent registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  entity_id:
+                    type: string
+                  token:
+                    type: string
+                    description: JWT token for subsequent requests
+        '400':
+          description: Bad request - Invalid input data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /heartbeat:
+    post:
+      summary: Update heartbeat
+      description: Send a heartbeat to indicate the agent is still active
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - entity_id
+              properties:
+                entity_id:
+                  type: string
+                  description: Agent's entity ID
+                status:
+                  type: string
+                  enum: [active, idle, busy, offline]
+                  example: active
+      responses:
+        '200':
+          description: Heartbeat received successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  timestamp:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request - Invalid input data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /discover:
+    get:
+      summary: Discover agents
+      description: Discover available agents in the network
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: capability
+          in: query
+          description: Filter by capability
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Filter by agent status
+          schema:
+            type: string
+            enum: [active, idle, busy, offline]
+        - name: limit
+          in: query
+          description: Maximum number of results
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of discovered agents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Agent'
+                  count:
+                    type: integer
+        '400':
+          description: Bad request - Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /message:
+    post:
+      summary: Receive secure message
+      description: Receive a secure, signed message from another agent
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sender_id
+                - recipient_id
+                - message_type
+                - payload
+                - signature
+              properties:
+                sender_id:
+                  type: string
+                  description: Sender's entity ID
+                recipient_id:
+                  type: string
+                  description: Recipient's entity ID
+                message_type:
+                  type: string
+                  enum: [handshake, status_report, heartbeat, capability_query, wake_up, task_delegate, discovery, error, chunk]
+                  description: Type of message
+                payload:
+                  type: object
+                  description: Message payload
+                signature:
+                  type: string
+                  description: Ed25519 signature of the payload (base64 encoded)
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Message received and verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message_id:
+                    type: string
+        '400':
+          description: Bad request - Invalid message format or signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/token:
+    post:
+      summary: Create JWT token
+      description: Create a JWT token for authenticated requests
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - entity_id
+                - signature
+              properties:
+                entity_id:
+                  type: string
+                  description: Agent's entity ID
+                signature:
+                  type: string
+                  description: Challenge signature to verify identity
+                expires_in:
+                  type: integer
+                  description: Token expiration time in seconds (default: 3600)
+                  default: 3600
+      responses:
+        '200':
+          description: Token created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  token:
+                    type: string
+                    description: JWT token
+                  expires_at:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request - Invalid input data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid signature or entity not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /wallet/{id}/balance:
+    get:
+      summary: Get wallet balance
+      description: Retrieve the token balance for a specific wallet
+      security:
+        - ApiKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Wallet ID or entity ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  wallet_id:
+                    type: string
+                  balance:
+                    type: number
+                    format: float
+                    description: Current token balance
+                  pending:
+                    type: number
+                    format: float
+                    description: Pending transactions amount
+                  currency:
+                    type: string
+                    default: TOKEN
+        '400':
+          description: Bad request - Invalid wallet ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /wallet/transfer:
+    post:
+      summary: Transfer tokens
+      description: Transfer tokens from one wallet to another (requires JWT)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - from_id
+                - to_id
+                - amount
+              properties:
+                from_id:
+                  type: string
+                  description: Source wallet ID or entity ID
+                to_id:
+                  type: string
+                  description: Destination wallet ID or entity ID
+                amount:
+                  type: number
+                  format: float
+                  minimum: 0
+                  description: Amount to transfer
+                memo:
+                  type: string
+                  description: Optional transaction memo
+                  maxLength: 256
+      responses:
+        '200':
+          description: Transfer completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  transaction_id:
+                    type: string
+                  from_balance:
+                    type: number
+                    format: float
+                  to_balance:
+                    type: number
+                    format: float
+                  timestamp:
+                    type: string
+                    format: date-time
+        '400':
+          description: Bad request - Invalid input or insufficient balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - Invalid or missing JWT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
+
+  schemas:
+    Agent:
+      type: object
+      properties:
+        entity_id:
+          type: string
+        public_key:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        endpoint:
+          type: string
+        status:
+          type: string
+          enum: [active, idle, busy, offline]
+        last_seen:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+          enum:
+            - INVALID_SIGNATURE
+            - REPLAY_DETECTED
+            - INVALID_TOKEN
+            - INSUFFICIENT_BALANCE
+            - TASK_NOT_FOUND
+            - WALLET_NOT_FOUND
+            - RATE_LIMITED
+            - UNAUTHORIZED
+            - INTERNAL_ERROR

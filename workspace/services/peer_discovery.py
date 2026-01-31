@@ -1,13 +1,34 @@
 #!/usr/bin/env python3
 """
-Peer Discovery Service
+Peer Discovery Service (LEGACY - DEPRECATED)
 自動ピア発見・接続機能
 
-機能:
+⚠️ DEPRECATION NOTICE:
+    このモジュールは非推奨です。v1.2以降は services/bootstrap_discovery.py の
+    BootstrapDiscoveryManager を使用してください。
+    
+    BootstrapDiscoveryManager の利点:
+    - 再帰的ブートストラップ発見（最大深度3）
+    - Ed25519署名検証
+    - 到達可能性スコアリング
+    - DHT統合（HYBRIDモード対応）
+    
+    移行例:
+        # 古い方法（非推奨）
+        from peer_discovery import PeerDiscovery
+        discovery = PeerDiscovery()
+        
+        # 新しい方法（推奨）
+        from bootstrap_discovery import BootstrapDiscoveryManager
+        manager = BootstrapDiscoveryManager(entity_id=..., public_key=...)
+        
+機能（レガシー）:
 - ブートストラップノードからの発見
 - Moltbook経由での発見
 - レジストリ照会による発見
 - ピア交換による発見 (gossip)
+
+削除予定: v1.3
 """
 
 import asyncio

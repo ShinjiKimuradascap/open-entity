@@ -3,11 +3,11 @@ Generated: 2026-02-01
 
 ## Summary
 - Total Endpoints: 70
-- Tested: 6
-- Untested: 64
-- Coverage: 8.6%
+- Tested: 11
+- Untested: 59
+- Coverage: 15.7%
 
-## Tested Endpoints (6)
+## Tested Endpoints (11)
 | Endpoint | Method | Test Class | Status |
 |----------|--------|------------|--------|
 | /health | GET | TestHealthEndpoint | ✅ |
@@ -16,17 +16,22 @@ Generated: 2026-02-01
 | /keys/public | GET | TestPublicKeyEndpoints | ✅ |
 | /keys/verify | POST | TestPublicKeyEndpoints | ✅ |
 | /message | POST | TestMessageEndpoint | ✅ |
+| /discover | GET | TestDiscoverEndpoint | ✅ |
+| /agent/{entity_id} | GET | TestGetAgentEndpoint | ✅ |
+| /heartbeat | POST | TestHeartbeatEndpoint | ✅ |
+| /unregister/{entity_id} | POST | TestUnregisterEndpoint | ✅ |
+| /message/send | POST | TestMessageSendEndpoint | ✅ |
 
 ## Untested Endpoints - Priority Matrix
 
-### 🔴 Critical (Core Functionality)
-| Endpoint | Method | Priority | Reason |
-|----------|--------|----------|--------|
-| /message/send | POST | P0 | Core messaging feature |
-| /discover | GET | P0 | Agent discovery essential |
-| /agent/{entity_id} | GET | P0 | Agent info retrieval |
-| /heartbeat | POST | P0 | Health monitoring |
-| /unregister/{entity_id} | POST | P0 | Agent lifecycle |
+### 🔴 Critical (Core Functionality) - ✅ COMPLETE
+| Endpoint | Method | Priority | Reason | Status |
+|----------|--------|----------|--------|--------|
+| /message/send | POST | P0 | Core messaging feature | ✅ Implemented |
+| /discover | GET | P0 | Agent discovery essential | ✅ Implemented |
+| /agent/{entity_id} | GET | P0 | Agent info retrieval | ✅ Implemented |
+| /heartbeat | POST | P0 | Health monitoring | ✅ Implemented |
+| /unregister/{entity_id} | POST | P0 | Agent lifecycle | ✅ Implemented |
 
 ### 🟠 High (Token Economy)
 | Endpoint | Method | Priority | Reason |

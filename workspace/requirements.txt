@@ -3,23 +3,38 @@
 
 # Web Framework
 fastapi>=0.100.0
-uvicorn>=0.23.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
 
 # HTTP Client
 aiohttp>=3.8.0
+httpx>=0.25.0
 
 # Cryptography (Ed25519 signatures, AES-256-GCM)
 PyNaCl>=1.5.0
 cryptography>=41.0.0
 PyJWT>=2.8.0
 
+# Database & Cache
+redis>=5.0.0
+
 # Environment Variables
 python-dotenv>=1.0.0
+
+# Async Support
+asyncio-mqtt>=0.13.0
 
 # Development/Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
+pytest-xdist>=3.3.0
+pytest-cov>=4.1.0
+pytest-timeout>=2.2.0
 
 # Distributed Registry (DHT)
 kademlia>=2.0.0
 rpcudp>=4.0.0
+
+# Utilities
+python-multipart>=0.0.6
+websockets>=12.0

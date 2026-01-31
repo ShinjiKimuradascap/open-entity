@@ -1,78 +1,46 @@
-# Integration Test Automation Plan v1.0
+# 統合テスト自動化計画 (M1)
 
-## Overview
+## 概要
 
-This plan defines the roadmap for automating integration tests for AI Collaboration Platform.
+既存のtests/runner.pyをベースに、CI/CDパイプラインとの完全自動化を実現。
 
-## Current Status
+## 現状分析
 
-### Existing Test Assets
+### 強み
+- tests/runner.py: カテゴリ別テスト実行、HTML/JSONレポート生成
+- pytest-xdist対応: 並列実行可能
+- カバレッジ測定機能あり
 
-- Phase 1: Basic functionality (SessionManager, Crypto)
-- Phase 2: Encryption integration (E2E, X25519, AES-256-GCM)
-- Phase 3: PeerService integration (Handshake, Messaging)
-- Phase 4: End-to-End tests
+### 課題
+- CI/CDワークフローとの統合が不完全
+- テスト結果の自動通知なし
+- 失敗時の自動リトライなし
 
-### Execution Methods
+## 実装計画
 
-Local: python run_integration_tests.py [phase1-4|all]
-Docker: ./scripts/run_e2e_tests.sh
+### Phase 1: CI/CD統合強化
 
-## Entity Collaboration Points
+- 既存ワークフローの更新
+- 自動リトライ機能の実装
+- テストマトリックス（Pythonバージョン別）
 
-### Entity A and Entity B Integration
+### Phase 2: テスト品質向上
 
-- L1 Network: PeerService (tested)
-- L2 Network: WebSocket (pending M5)
-- DHT: DHTRegistry + Kademlia (pending S3)
-- Crypto: crypto.py + crypto_unified.py (tested)
-- Session: SessionManager (tested)
+- 不安定テスト検出スクリプト
+- 品質レポート自動生成
 
-## Automation Plan
+### Phase 3: 自動通知システム
 
-### Phase 1: Existing Test Automation (S1)
+- Slack通知統合
+- 失敗時の詳細レポート送信
 
-- CI/CD integration with GitHub Actions
-- Test parallelization with pytest-xdist
-- Automated report generation
-- Coverage measurement with pytest-cov
+## 次のアクション
 
-### Phase 2: Entity Collaboration Tests (S2)
-
-- L1-L2 bridge testing
-- DHT integration testing
-- Crypto compatibility testing (v1.0 and v1.1)
-
-### Phase 3: E2E Automation (M1)
-
-- Docker Compose integration
-- Scenario-based testing
-- Regression test suite
-
-## Schedule
-
-Short-term (this week):
-- S1-1: GitHub Actions workflow
-- S1-2: pytest parallel execution
-- S1-3: Report generation improvement
-
-Mid-term (2 weeks to 1 month):
-- M1-1: DHT integration tests after Entity B S3
-- M1-2: WebSocket tests after Entity B M1
-- M1-3: Crypto compatibility tests
-
-Long-term (1 month+):
-- L1-1: Fully automated E2E pipeline
-- L1-2: Performance regression tests
-- L1-3: Chaos engineering tests
-
-## Deliverables
-
-- .github/workflows/integration-tests.yml
-- scripts/run_regression_tests.sh
-- docs/test_reports/ directory
-- services/test_entity_a_b_integration.py
+1. .github/workflows/integration-tests.yml 更新
+2. scripts/test_with_retry.py 作成
+3. 通知システム統合
 
 ---
-Created: 2026-02-01
-Next update: After Entity B S3 completion
+作成日: 2026-02-01
+作成者: orchestrator
+バージョン: 1.0

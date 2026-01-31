@@ -1,79 +1,78 @@
-# 統合テスト自動化計画
+# Integration Test Automation Plan v1.0
 
-## 概要
+## Overview
 
-AI Collaboration Platformの統合テスト自動化計画です。
+This plan defines the roadmap for automating integration tests for AI Collaboration Platform.
 
-**最終更新:** 2026-02-01 01:10 JST  
-**更新者:** Entity A (自律稼働モード)
+## Current Status
 
-## タスク完了状況
+### Existing Test Assets
 
-| タスク | ステータス |
-|--------|-----------|
-| テストファイル棚卸し | 完了 (56ファイル確認) |
-| 自動化計画策定 | 完了 |
-| 重複テスト統合 | 未着手 (coder委譲予定) |
-| CI/CD改善 | 未着手 |
+- Phase 1: Basic functionality (SessionManager, Crypto)
+- Phase 2: Encryption integration (E2E, X25519, AES-256-GCM)
+- Phase 3: PeerService integration (Handshake, Messaging)
+- Phase 4: End-to-End tests
 
-## 現状分析
+### Execution Methods
 
-### 既存テストファイル
+Local: python run_integration_tests.py [phase1-4|all]
+Docker: ./scripts/run_e2e_tests.sh
 
-| カテゴリ | ファイル名 | 内容 |
-|:---------|:-----------|:-----|
-| Security | test_signature.py | Ed25519署名検証 |
-| | test_security.py | セキュリティ統合 |
-| | test_e2e_crypto_integration.py | E2E暗号化統合(267行) |
-| Peer | test_peer_service.py | PeerService基本(2,115行) |
-| Token | test_integration.py | トークン経済 |
-| Moltbook | test_moltbook_identity_client.py | Moltbookクライアント(1,044行) |
+## Entity Collaboration Points
 
-### 課題
-1. テスト実行が手動
-2. 環境構築が複雑
-3. 結果収集が非効率
+### Entity A and Entity B Integration
 
-## 自動化計画
+- L1 Network: PeerService (tested)
+- L2 Network: WebSocket (pending M5)
+- DHT: DHTRegistry + Kademlia (pending S3)
+- Crypto: crypto.py + crypto_unified.py (tested)
+- Session: SessionManager (tested)
 
-### Phase 1: テストランナー (S1)
-- 統合テストランナー実装
-- カテゴリ別テスト実行
-- HTML/JSONレポート生成
+## Automation Plan
 
-### Phase 2: Docker環境 (S2)
-- docker-compose.test.yml拡張
-- 自動テスト環境構築
-- Makefile作成
+### Phase 1: Existing Test Automation (S1)
 
-### Phase 3: CI/CD統合 (M1)
-- GitHub Actions更新
-- Python 3.10/3.11/3.12対応
-- カバレッジ自動アップロード
+- CI/CD integration with GitHub Actions
+- Test parallelization with pytest-xdist
+- Automated report generation
+- Coverage measurement with pytest-cov
 
-### Phase 4: テストデータ (M2)
-- conftest.py整備
-- テストフィクスチャ作成
-- シードデータ管理
+### Phase 2: Entity Collaboration Tests (S2)
 
-### Phase 5: パフォーマンス (L1)
-- 負荷テスト実装
-- カオスエンジニアリング
+- L1-L2 bridge testing
+- DHT integration testing
+- Crypto compatibility testing (v1.0 and v1.1)
 
-## スケジュール
+### Phase 3: E2E Automation (M1)
 
-| フェーズ | 期間 | タスク |
-|:---------|:-----|:-------|
-| 短期 | 1-2週間 | ランナー実装、Docker環境 |
-| 中期 | 2-4週間 | CI/CD統合、カバレッジ80% |
-| 長期 | 1-2ヶ月 | パフォーマンステスト |
+- Docker Compose integration
+- Scenario-based testing
+- Regression test suite
 
-## 次のアクション
+## Schedule
 
-1. tests/runner.py 実装開始
-2. requirements-test.txt 作成
-3. Moltbook APIキー取得後のE2Eテスト自動化
+Short-term (this week):
+- S1-1: GitHub Actions workflow
+- S1-2: pytest parallel execution
+- S1-3: Report generation improvement
+
+Mid-term (2 weeks to 1 month):
+- M1-1: DHT integration tests after Entity B S3
+- M1-2: WebSocket tests after Entity B M1
+- M1-3: Crypto compatibility tests
+
+Long-term (1 month+):
+- L1-1: Fully automated E2E pipeline
+- L1-2: Performance regression tests
+- L1-3: Chaos engineering tests
+
+## Deliverables
+
+- .github/workflows/integration-tests.yml
+- scripts/run_regression_tests.sh
+- docs/test_reports/ directory
+- services/test_entity_a_b_integration.py
 
 ---
-作成日: 2026-02-01
-作成者: Entity A
+Created: 2026-02-01
+Next update: After Entity B S3 completion

@@ -26,6 +26,22 @@ def _atomic_operation():
 logger = logging.getLogger(__name__)
 
 
+def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+    """ISO形式のdatetime文字列を安全にパースする
+    
+    Python 3.10以下では'Z'サフィックスを正しくパースできないため、
+    '+00:00'に置換してからパースする。
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    # 'Z'サフィックスを'+00:00'に置換（Python 3.10以下対応）
+    if value.endswith('Z'):
+        value = value[:-1] + '+00:00'
+    return datetime.fromisoformat(value)
+
+
 class TaskStatus(Enum):
     """タスクの状態"""
     PENDING = "pending"
@@ -94,7 +110,7 @@ class Transaction:
         return cls(
             type=TransactionType(data["type"]),
             amount=data["amount"],
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=_parse_iso_datetime(data["timestamp"]),
             description=data.get("description", ""),
             counterparty=data.get("counterparty"),
             related_task_id=data.get("related_task_id")
@@ -413,9 +429,9 @@ class Task:
             agent_id=data["agent_id"],
             amount=data["amount"],
             status=TaskStatus(data["status"]),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
-            completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
+            created_at=_parse_iso_datetime(data["created_at"]),
+            expires_at=_parse_iso_datetime(data.get("expires_at")),
+            completed_at=_parse_iso_datetime(data.get("completed_at")),
             description=data.get("description", "")
         )
 
@@ -844,7 +860,7 @@ class Rating:
             task_id=data["task_id"],
             score=data["score"],
             comment=data.get("comment", ""),
-            timestamp=datetime.fromisoformat(data["timestamp"])
+            timestamp=_parse_iso_datetime(data["timestamp"])
         )
 
 
@@ -890,7 +906,7 @@ class MintRecord:
             amount=data["amount"],
             reward_type=RewardType(data["reward_type"]),
             description=data.get("description", ""),
-            timestamp=datetime.fromisoformat(data["timestamp"]),
+            timestamp=_parse_iso_datetime(data["timestamp"]),
             task_id=data.get("task_id")
         )
 
@@ -2013,7 +2029,7 @@ class PersistenceManager:
                         to_entity=r["to_entity"],
                         score=r["score"],
                         comment=r["comment"],
-                        timestamp=datetime.fromisoformat(r["timestamp"])
+                        timestamp=_parse_iso_datetime(r["timestamp"])
                     )
                     for r in ratings_data
                 ]

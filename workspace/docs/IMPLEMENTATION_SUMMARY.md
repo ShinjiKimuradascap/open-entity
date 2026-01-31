@@ -35,9 +35,23 @@ This session completed the implementation of secure AI-to-AI communication proto
   - Security fix: Timing attack prevention using `hmac.compare_digest`
   - Security fix: JWT secret length validation
 
-#### M1-3: Message Encryption
-- **Status**: Integrated into `crypto.py`
-- **Note**: X25519 + AES-256-GCM framework prepared for future implementation
+#### M1-3: DHT Foundation (v1.2 Phase 1)
+- **File**: `services/dht_registry.py` (600 lines)
+- **Test File**: `services/test_dht_registry.py` (350 lines)
+- **Status**: ✅ Unified implementation completed
+- **Features**:
+  - Kademlia-based decentralized peer discovery
+  - `PeerInfo` class with signature support (`sign()` / `verify()`)
+  - `DHTRegistry` class for peer registration and lookup
+  - Bootstrap node management (`load_bootstrap_nodes()`)
+  - Dynamic bootstrap node addition
+  - Periodic peer refresh
+  - PeerService integration interface
+  - Capability-based peer filtering
+- **Integration Points**:
+  - Uses `services/crypto.py` for signature verification
+  - Loads bootstrap config from `config/bootstrap_nodes.json`
+  - Compatible with existing `peer_service.py` DHT parameters
 
 #### M1-4: API Server Security Integration
 - **File**: `services/api_server.py` (v0.4.0)

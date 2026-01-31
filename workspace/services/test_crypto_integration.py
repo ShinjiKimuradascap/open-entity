@@ -8,6 +8,7 @@ import asyncio
 import json
 import sys
 import os
+import pytest
 
 # servicesディレクトリをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from crypto import KeyPair, MessageSigner, SignatureVerifier, SecureMessage, ReplayProtector
 
 
+@pytest.mark.unit
+@pytest.mark.crypto
 def test_key_generation():
     """鍵ペア生成テスト"""
     print("\n=== Test 1: Key Generation ===")
@@ -58,8 +61,8 @@ def test_signature_verification(key_pair: KeyPair, signature: str, message: dict
     verifier = SignatureVerifier()
     verifier.add_public_key("test-entity", key_pair.public_key)
     
-    # 正常な検証
-    is_valid = verifier.verify_message(message, signature, "test-entity")
+    # 正常な検証（正しいメソッド名: verify）
+    is_valid = verifier.verify("test-entity", message, signature)
     assert is_valid, "Valid signature should be accepted"
     print("✓ Valid signature verified")
     
@@ -67,7 +70,7 @@ def test_signature_verification(key_pair: KeyPair, signature: str, message: dict
     tampered_message = message.copy()
     tampered_message["payload"]["data"] = "tampered"
     
-    is_invalid = verifier.verify_message(tampered_message, signature, "test-entity")
+    is_invalid = verifier.verify("test-entity", tampered_message, signature)
     assert not is_invalid, "Tampered message should be rejected"
     print("✓ Tampered message correctly rejected")
 
@@ -173,11 +176,15 @@ def test_full_flow():
     print("✓ Replay check passed")
     
     # 署名検証
-    is_valid = verifier_b.verify_message(
-        msg.get_signable_data(),
-        msg.signature,
-        msg.sender_id
-    )
+    message_data = {
+        "payload": msg.payload,
+        "timestamp": msg.timestamp,
+        "nonce": msg.nonce,
+        "sender_id": msg.sender_id,
+        "msg_type": msg.msg_type,
+        "version": msg.version,
+    }
+    is_valid = verifier_b.verify(msg.sender_id, message_data, msg.signature)
     assert is_valid, "Signature should be valid"
     print("✓ Signature verified by recipient")
     
@@ -192,11 +199,15 @@ def test_full_flow():
     print("✓ Message restored from JSON")
     
     # 検証
-    is_valid2 = verifier_b.verify_message(
-        received_msg.get_signable_data(),
-        received_msg.signature,
-        received_msg.sender_id
-    )
+    received_data = {
+        "payload": received_msg.payload,
+        "timestamp": received_msg.timestamp,
+        "nonce": received_msg.nonce,
+        "sender_id": received_msg.sender_id,
+        "msg_type": received_msg.msg_type,
+        "version": received_msg.version,
+    }
+    is_valid2 = verifier_b.verify(received_msg.sender_id, received_data, received_msg.signature)
     assert is_valid2, "Restored message should have valid signature"
     print("✓ Restored message signature verified")
 

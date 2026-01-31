@@ -16,7 +16,7 @@ from enum import Enum, auto
 from typing import Dict, Optional, Any, Tuple, Set
 
 from services.crypto import (
-    SecureSession, MessageValidator, ProtocolError, ChunkBuffer, ChunkUtils,
+    SecureSession, MessageValidator, ProtocolError,
     INVALID_VERSION, SESSION_EXPIRED, SEQUENCE_ERROR
 )
 
@@ -46,6 +46,14 @@ class SessionState:
     established_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
     is_active: bool = True
+    
+    # Window-based sequence tracking for duplicate detection
+    received_seq_window: Set[int] = field(default_factory=set)
+    max_received_seq: int = 0
+    
+    # Unacknowledged messages for retry
+    unacknowledged: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    unacknowledged_timeout_sec: int = 30
     
     def __post_init__(self):
         if self.expires_at is None:

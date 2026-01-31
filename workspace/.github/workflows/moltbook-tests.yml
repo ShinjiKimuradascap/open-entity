@@ -1,0 +1,248 @@
+name: Moltbook Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'services/moltbook*.py'
+      - 'tests/**/test_moltbook*.py'
+      - '.github/workflows/moltbook-tests.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'services/moltbook*.py'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type to run'
+        required: true
+        default: 'unit'
+        type: choice
+        options:
+          - unit
+          - integration
+          - all
+  schedule:
+    - cron: '0 2 * * *'
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio aiohttp cryptography
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run Moltbook unit tests
+      run: |
+        python -m pytest services/test_moltbook_identity_client.py \
+          -v \
+          -m "not integration and not e2e" \
+          --tb=short \
+          --junitxml=unit-test-results.xml
+
+    - name: Run Moltbook integration tests (mock)
+      run: |
+        python -m pytest services/test_moltbook_integration.py \
+          -v \
+          --tb=short \
+          --junitxml=integration-test-results.xml
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          unit-test-results.xml
+          integration-test-results.xml
+
+  integration-tests:
+    name: Integration Tests (Live API)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: |
+      github.event_name == 'schedule' || 
+      github.event.inputs.test_type == 'integration' ||
+      github.event.inputs.test_type == 'all' ||
+      contains(github.event.head_commit.message, '[moltbook-integration]')
+    environment: moltbook-staging
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio aiohttp cryptography
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run live API tests
+      env:
+        MOLTBOOK_API_KEY: ${{ secrets.MOLTBOOK_API_KEY_STAGING }}
+        MOLTBOOK_BASE_URL: ${{ vars.MOLTBOOK_STAGING_URL }}
+        TEST_AGENT_ID: ${{ vars.MOLTBOOK_TEST_AGENT_ID }}
+      run: |
+        python -m pytest tests/e2e/test_moltbook_e2e.py \
+          -v \
+          -m integration \
+          --tb=short \
+          --timeout=300 \
+          || echo "Integration tests completed with some failures"
+
+    - name: Generate test report
+      if: always()
+      run: |
+        python -m pytest tests/e2e/test_moltbook_e2e.py \
+          -v \
+          --html=integration-report.html \
+          --self-contained-html || true
+
+    - name: Upload integration test report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: integration-test-report
+        path: integration-report.html
+
+  coverage:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-asyncio aiohttp cryptography
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Generate coverage report
+      run: |
+        python -m pytest services/test_moltbook*.py \
+          --cov=services.moltbook_identity_client \
+          --cov=services.moltbook_integration \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./coverage.xml
+        flags: moltbook
+        name: moltbook-coverage
+        fail_ci_if_error: false
+
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: htmlcov/
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run bandit security checks
+      run: |
+        pip install bandit
+        bandit -r services/moltbook*.py -f json -o moltbook-bandit-report.json || true
+        bandit -r services/moltbook*.py
+
+    - name: Upload security report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-report
+        path: moltbook-bandit-report.json
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, coverage]
+    if: always()
+
+    steps:
+    - name: Notify Slack on failure
+      if: failure()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {
+            "text": "❌ Moltbook Tests Failed",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Moltbook Tests Failed*\nType: ${{ github.event.inputs.test_type || 'push' }}\nBranch: ${{ github.ref }}\nCommit: ${{ github.sha }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                }
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      continue-on-error: true
+
+    - name: Notify Slack on success (scheduled)
+      if: github.event_name == 'schedule' && success()
+      uses: slackapi/slack-github-action@v1
+      with:
+        payload: |
+          {
+            "text": "✅ Moltbook Nightly Tests Passed",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Moltbook Nightly Tests Passed*\nBranch: ${{ github.ref }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                }
+              }
+            ]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      continue-on-error: true

@@ -27,6 +27,19 @@ Problem:
 After:
 - service.add_peer("peer-1", "http://localhost:8001", public_key_hex=pub_a)
 
+### Issue 3: generate_keypair function not found (Line 1025)
+**Fixed by: Entity B (Open Entity)**
+
+Before:
+- priv_b, pub_b = generate_keypair()
+
+Problem:
+- generate_keypair() does not exist in crypto.py
+- Should use generate_entity_keypair()
+
+After:
+- priv_b, pub_b = generate_entity_keypair()
+
 ## Verified
 - generate_entity_keypair(): defined in both crypto.py and crypto_utils.py
 - CryptoManager: correctly imported

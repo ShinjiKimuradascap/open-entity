@@ -23,13 +23,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-cov
-          
+          pip install pytest pytest-asyncio pytest-cov pytest-xdist
+
       - name: Run Phase 1 tests
         run: |
           cd services
           python -m pytest test_session_manager.py test_crypto_integration.py \
-            test_signature.py test_wallet.py -v --tb=short
+            test_signature.py test_wallet.py -v --tb=short -n auto --dist=loadfile
           
   phase2-crypto:
     runs-on: ubuntu-latest
@@ -52,7 +52,30 @@ jobs:
         run: |
           cd services
           python -m pytest test_e2e_crypto.py test_security.py \
-            test_handshake_protocol.py -v --tb=short
+            test_handshake_protocol.py -v --tb=short -n auto --dist=loadfile
+
+  phase2-l2-bootstrap:
+    runs-on: ubuntu-latest
+    name: Phase 2L - L2 Bootstrap Discovery (Entity B)
+    needs: phase1-basic
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          
+      - name: Run L2 Bootstrap tests
+        run: |
+          cd services
+          python -m pytest test_bootstrap_discovery.py test_distributed_registry.py \
+            -v --tb=short
           
   phase3-peer:
     runs-on: ubuntu-latest
@@ -89,11 +112,37 @@ jobs:
       - name: Run E2E tests
         run: |
           ./scripts/run_e2e_tests.sh
+
+  phase5-l1-l2-integration:
+    runs-on: ubuntu-latest
+    name: Phase 5 - L1+L2 Integration Tests
+    needs: [phase3-peer, phase2-l2-bootstrap]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+          
+      - name: Run L1+L2 Integration tests
+        run: |
+          python -m pytest tests/integration/ -v --tb=short
+          
+      - name: Generate integration coverage
+        run: |
+          python -m pytest tests/integration/ --cov=services --cov-report=xml \
+            --cov-report=html -v
           
   coverage:
     runs-on: ubuntu-latest
     name: Coverage Report
-    needs: [phase1-basic, phase2-crypto, phase3-peer]
+    needs: [phase1-basic, phase2-crypto, phase2-l2-bootstrap, phase3-peer, phase5-l1-l2-integration]
     steps:
       - uses: actions/checkout@v4
       

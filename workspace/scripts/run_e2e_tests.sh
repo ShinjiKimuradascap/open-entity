@@ -16,15 +16,15 @@ cd "$(dirname "$0")/.."
 
 echo ""
 echo "Step 1: Stopping any existing containers..."
-docker-compose -f docker-compose.test.yml down --remove-orphans 2>/dev/null || true
+docker compose -f docker-compose.test.yml down --remove-orphans 2>/dev/null || true
 
 echo ""
 echo "Step 2: Building test images..."
-docker-compose -f docker-compose.test.yml build
+docker compose -f docker-compose.test.yml build
 
 echo ""
 echo "Step 3: Starting test services..."
-docker-compose -f docker-compose.test.yml up -d entity-a entity-b
+docker compose -f docker-compose.test.yml up -d entity-a entity-b
 
 echo ""
 echo "Step 4: Waiting for services to be healthy..."
@@ -44,7 +44,7 @@ done
 
 if [ $attempt -gt $max_attempts ]; then
     echo -e "${RED}Services failed to start${NC}"
-    docker-compose -f docker-compose.test.yml logs
+    docker compose -f docker-compose.test.yml logs
     exit 1
 fi
 
@@ -97,14 +97,67 @@ if command -v pytest &> /dev/null; then
     
 else
     echo "Running tests in Docker..."
-    docker-compose -f docker-compose.test.yml -f docker-compose.e2e.yml up e2e-test-runner
+    docker compose -f docker-compose.test.yml -f docker-compose.e2e.yml up e2e-test-runner
 fi
 
 echo ""
 echo "Step 6: Cleaning up..."
-docker-compose -f docker-compose.test.yml down
+docker compose -f docker-compose.test.yml down
+
+echo ""
+echo "Step 6: Generating test summary..."
+echo ""
+echo -e "${GREEN}==========================================${NC}"
+echo -e "${GREEN}E2E Tests Summary${NC}"
+echo -e "${GREEN}==========================================${NC}"
+echo ""
+
+# テスト結果サマリー
+TOTAL_TESTS=0
+PASSED_TESTS=0
+FAILED_TESTS=0
+
+if [ -f test_results/e2e_crypto_integration.log ]; then
+    CRYPTO_PASSED=$(grep -c "PASSED" test_results/e2e_crypto_integration.log 2>/dev/null || echo "0")
+    CRYPTO_FAILED=$(grep -c "FAILED" test_results/e2e_crypto_integration.log 2>/dev/null || echo "0")
+    echo -e "Crypto Integration: ${GREEN}$CRYPTO_PASSED passed${NC}, ${RED}$CRYPTO_FAILED failed${NC}"
+    TOTAL_TESTS=$((TOTAL_TESTS + CRYPTO_PASSED + CRYPTO_FAILED))
+    PASSED_TESTS=$((PASSED_TESTS + CRYPTO_PASSED))
+    FAILED_TESTS=$((FAILED_TESTS + CRYPTO_FAILED))
+fi
+
+if [ -f test_results/e2e_peer_communication.log ]; then
+    PEER_PASSED=$(grep -c "PASSED" test_results/e2e_peer_communication.log 2>/dev/null || echo "0")
+    PEER_FAILED=$(grep -c "FAILED" test_results/e2e_peer_communication.log 2>/dev/null || echo "0")
+    echo -e "Peer Communication: ${GREEN}$PEER_PASSED passed${NC}, ${RED}$PEER_FAILED failed${NC}"
+    TOTAL_TESTS=$((TOTAL_TESTS + PEER_PASSED + PEER_FAILED))
+    PASSED_TESTS=$((PASSED_TESTS + PEER_PASSED))
+    FAILED_TESTS=$((FAILED_TESTS + PEER_FAILED))
+fi
+
+echo ""
+echo -e "Total: ${GREEN}$PASSED_TESTS passed${NC}, ${RED}$FAILED_TESTS failed${NC}"
+echo ""
+
+# 終了コード判定
+if [ $FAILED_TESTS -gt 0 ]; then
+    echo -e "${YELLOW}⚠️ Some tests failed. Check test_results/ for details.${NC}"
+    EXIT_CODE=1
+else
+    echo -e "${GREEN}✅ All tests passed!${NC}"
+    EXIT_CODE=0
+fi
+
+echo ""
+echo "Step 7: Cleaning up..."
+docker-compose -f docker-compose.test.yml down --remove-orphans 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}==========================================${NC}"
 echo -e "${GREEN}E2E Tests Completed!${NC}"
 echo -e "${GREEN}==========================================${NC}"
+echo ""
+echo "Test results saved to: test_results/"
+echo ""
+
+exit $EXIT_CODE
