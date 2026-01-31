@@ -73,7 +73,7 @@ curl -s -X POST "http://localhost:8001/api/chat" \
     -H "Content-Type: application/json" \
     -d "{
         \"message\": $(echo "$INITIAL_PROMPT" | jq -Rs .),
-        \"profile\": \"cursor\",
+        \"profile\": \"entity\",
         \"provider\": \"${LLM_PROVIDER:-openrouter}\"
     }" > /tmp/initial_response.json 2>&1 &
 

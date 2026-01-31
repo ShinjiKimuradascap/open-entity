@@ -21,7 +21,7 @@ wake_up() {
         -H "Content-Type: application/json" \
         -d "{
             \"message\": \"todoread_all() でタスクを確認して、未完了があれば実行。なければ新しいタスクを作成して実行を継続しろ。止まるな。\",
-            \"profile\": \"cursor\",
+            \"profile\": \"entity\",
             \"provider\": \"${provider}\"
         }" > /dev/null 2>&1 &
     

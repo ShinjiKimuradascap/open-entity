@@ -44,7 +44,7 @@ fi
 
 # 6. 環境変数の設定
 export MOCO_WORKING_DIRECTORY="${MOCO_WORKING_DIRECTORY:-$SCRIPT_DIR/workspace}"
-export MOCO_PROFILE="${MOCO_PROFILE:-cursor}"
+export MOCO_PROFILE="${MOCO_PROFILE:-entity}"
 
 echo ""
 echo "✅ 準備完了！"

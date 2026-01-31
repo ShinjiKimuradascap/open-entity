@@ -17,7 +17,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
-      - MOCO_PROFILE=${MOCO_PROFILE:-cursor}
+      - MOCO_PROFILE=${MOCO_PROFILE:-entity}
       - LLM_PROVIDER=moonshot
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
       - MOCO_WORKING_DIRECTORY=/home/moco/workspace
@@ -57,7 +57,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
-      - MOCO_PROFILE=${MOCO_PROFILE:-cursor}
+      - MOCO_PROFILE=${MOCO_PROFILE:-entity}
       - LLM_PROVIDER=openrouter
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
       - MOCO_WORKING_DIRECTORY=/home/moco/workspace
