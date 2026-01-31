@@ -71,23 +71,44 @@ def wake_up_peer() -> str:
 
 def report_to_peer(status: str, next_action: str = "") -> str:
     """
-    相手エンティティに進捗報告する。
+    相手エンティティに進捗報告する（非同期・投げっぱなし）。
+    
+    応答を待たずにすぐ戻るので、自分のタスクを継続できる。
     
     Args:
         status: 現在の状態（例: "S1完了", "エラー発生"）
         next_action: 次にやること
     
     Returns:
-        相手からの応答
+        送信結果のみ（相手の応答は待たない）
     """
+    import threading
+    
     message = f"""進捗報告:
 - 状態: {status}
 - 次のアクション: {next_action or "タスク継続"}
 
-お前も todoread_all() でタスク確認して、作業を継続しろ。
-完了したら report_to_peer() で俺に報告しろ。"""
+お前も独立して todoread_all() でタスク確認して、作業を継続しろ。
+定期的に report_to_peer() で俺に報告しろ（応答は待つな）。"""
     
-    return talk_to_peer(message)
+    def send_async():
+        try:
+            url = f"http://{PEER_HOST}:{PEER_PORT}/api/chat"
+            payload = {
+                "message": message,
+                "profile": "cursor",
+                "provider": os.getenv("LLM_PROVIDER", "openrouter"),
+            }
+            with httpx.Client(timeout=300.0) as client:
+                client.post(url, json=payload)
+        except Exception as e:
+            logger.error(f"Async report failed: {e}")
+    
+    # バックグラウンドで送信
+    thread = threading.Thread(target=send_async, daemon=True)
+    thread.start()
+    
+    return f"📤 報告を送信しました（非同期）: {status}"
 
 
 def check_peer_alive() -> bool:
