@@ -28,7 +28,7 @@ class TaskRunner:
         # 内部的に実行するためのコマンド
         # moco tasks _exec <task_id> <profile> <description> のような形を想定
         cmd = [
-            sys.executable, "-m", "moco.cli", 
+            sys.executable, "-m", "open_entity.cli", 
             "tasks", "_exec", 
             task_id, 
             profile, 

@@ -56,6 +56,8 @@ except (ImportError, ValueError) as e:
             "Please set OPENAI_API_KEY or GEMINI_API_KEY environment variable."
         )
 
+from .peer import talk_to_peer, wake_up_peer, report_to_peer, check_peer_alive
+
 TOOL_MAP = {
     # ファイル操作
     "read_file": read_file,
@@ -115,6 +117,11 @@ TOOL_MAP = {
     "schedule_task": schedule_task,
     "list_scheduled_tasks": list_scheduled_tasks,
     "remove_scheduled_task": remove_scheduled_task,
+    # ピア通信（相手エンティティとの会話）
+    "talk_to_peer": talk_to_peer,
+    "wake_up_peer": wake_up_peer,
+    "report_to_peer": report_to_peer,
+    "check_peer_alive": check_peer_alive,
     # NOTE: browser_* ツールは discovery.py で自動的に読み込まれる
 }
 

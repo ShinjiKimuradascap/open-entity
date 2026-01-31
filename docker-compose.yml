@@ -60,7 +60,7 @@ services:
   slack-gateway:
     build: .
     container_name: moco-slack
-    command: ["python", "-m", "moco.gateway.clients.slack"]
+    command: ["python", "-m", "open_entity.gateway.clients.slack"]
     depends_on:
       - moco
     environment:

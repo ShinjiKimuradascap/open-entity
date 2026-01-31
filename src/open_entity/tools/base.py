@@ -121,6 +121,7 @@ def read_file(path: str, offset: int = None, limit: int = None) -> str:
     try:
         # パスを解決
         abs_path = resolve_safe_path(path)
+        
         if not os.path.exists(abs_path):
             msg = f"Error: File not found: {path}\n"
             similar = _find_similar_files(path)

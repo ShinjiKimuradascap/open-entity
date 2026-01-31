@@ -245,13 +245,53 @@ class ContextCompressor:
 
         return ""
 
+    def _summarize_with_moonshot(self, text: str) -> str:
+        """Moonshotで要約を生成"""
+        api_key = os.environ.get("MOONSHOT_API_KEY")
+        if not api_key:
+            return ""
+
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.moonshot.ai/v1"
+            )
+
+            prompt = f"""以下の会話履歴を簡潔に要約してください。
+要約には以下を**必ず**含めてください：
+1. 重要な決定事項や結論
+2. 議論されたコンテキストや背景
+3. 未完了のタスクや継続中の話題
+4. **発見・使用されたファイルパスやディレクトリ構造**（フルパスで記載）
+5. **プロジェクトのルートディレクトリ**
+
+特に、ファイルパスは要約から省略しないでください。後続の作業で必要になります。
+
+会話履歴:
+---
+{text}
+---
+
+要約（箇条書きで簡潔に）:"""
+
+            response = client.chat.completions.create(
+                model="kimi-k2.5",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2000
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.warning(f"Failed to summarize with Moonshot: {e}")
+            return ""
+
     def _generate_summary(self, messages: List[Dict[str, Any]], provider: str) -> str:
         """
         メッセージリストの要約を生成する。
 
         Args:
             messages: 要約対象のメッセージリスト
-            provider: 使用するLLMプロバイダ ("gemini", "openai", "openrouter")
+            provider: 使用するLLMプロバイダ (\"gemini\", \"openai\", \"openrouter\", \"moonshot\")
 
         Returns:
             要約テキスト
@@ -260,6 +300,12 @@ class ContextCompressor:
 
         if not text.strip():
             return ""
+
+        # Moonshot を優先
+        if os.environ.get("MOONSHOT_API_KEY"):
+            result = self._summarize_with_moonshot(text)
+            if result:
+                return result
 
         # プロバイダに応じて要約を生成
         if provider in ("openai", "openrouter"):

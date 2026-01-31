@@ -46,6 +46,9 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+discovery = [
+    "zeroconf>=0.140.0",  # mDNS-based local AI discovery
+]
 mobile = [
     "neonize",  # WhatsApp integration
     "python-magic",  # File type detection for media

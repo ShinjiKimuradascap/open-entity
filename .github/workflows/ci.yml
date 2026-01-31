@@ -34,7 +34,7 @@ jobs:
       - name: Run type checker
         run: |
           pip install mypy
-          mypy src/moco/ --ignore-missing-imports || true
+          mypy src/open_entity/ --ignore-missing-imports || true
 
       - name: Run tests
         run: |
