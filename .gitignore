@@ -71,10 +71,12 @@ Thumbs.db
 
 # Project specific
 data/
+# Ignore profiles but allow profiles/entity
 /profiles/
+!profiles/entity/
 knowledge_base/
 # Keep package profiles
-!src/moco/profiles/
+!src/open_entity/profiles/
 runbooks/
 
 # Mobile integration
