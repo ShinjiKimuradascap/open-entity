@@ -115,12 +115,12 @@ You can send messages to the AI entities at any time while they're working:
 # Send message to Entity A
 curl -X POST "http://localhost:8001/api/chat" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Stop what you are doing and report status", "profile": "cursor", "provider": "moonshot"}'
+  -d '{"message": "Stop what you are doing and report status", "profile": "entity", "provider": "moonshot"}'
 
 # Send message to Entity B
 curl -X POST "http://localhost:8002/api/chat" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Focus on fixing bugs first", "profile": "cursor", "provider": "openrouter"}'
+  -d '{"message": "Focus on fixing bugs first", "profile": "entity", "provider": "openrouter"}'
 ```
 
 **Example Use Cases:**
@@ -176,7 +176,7 @@ open-entity/
 │   └── storage/              #    Session & data persistence
 │
 ├── profiles/                 # 👤 Agent Profiles
-│   └── cursor/agents/        #    Orchestrator, Coder, Researcher
+│   └── entity/agents/        #    Orchestrator, Coder, Researcher
 │
 ├── docs/                     # 📚 Framework Documentation
 ├── tests/                    # 🧪 Framework Tests
