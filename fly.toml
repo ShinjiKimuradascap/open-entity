@@ -1,0 +1,71 @@
+# Fly.io Bootstrap Node Configuration
+# Free tier: 256MB RAM, shared CPU
+
+app = "open-entity-bootstrap"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[env]
+  PYTHONUNBUFFERED = "1"
+  PYTHONDONTWRITEBYTECODE = "1"
+  NODE_PORT = "9473"
+  HTTP_PORT = "8080"
+  LOG_LEVEL = "INFO"
+  # Memory limits for 256MB container
+  PYTHONMALLOC = "malloc"
+  MALLOC_ARENA_MAX = "2"
+  # Gunicorn/Uvicorn workers
+  WEB_CONCURRENCY = "1"
+  MAX_REQUESTS = "100"
+  MAX_REQUESTS_JITTER = "20"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 50
+    soft_limit = 30
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+
+# DHT port (UDP/TCP)
+[[services]]
+  internal_port = 9473
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [[services.ports]]
+    port = 9473
+    handlers = []
+
+# UDP for DHT
+[[services]]
+  internal_port = 9473
+  protocol = "udp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  
+  [[services.ports]]
+    port = 9473
+    handlers = []
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpus = 1

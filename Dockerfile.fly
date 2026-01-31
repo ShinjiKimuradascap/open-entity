@@ -1,0 +1,49 @@
+# Fly.io Bootstrap Node Dockerfile
+# Optimized for 256MB RAM free tier
+
+FROM python:3.11-slim-bookworm
+
+# Security: Run as non-root
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+
+# Install only essential build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set working directory
+WORKDIR /app
+
+# Copy only requirements first for layer caching
+COPY pyproject.toml ./
+
+# Install Python dependencies with minimal footprint
+# Use --no-cache-dir to reduce image size
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    aiohttp>=3.9.0 \
+    aiohttp-cors \
+    psutil \
+    pyyaml \
+    pydantic>=2.0.0
+
+# Copy application code
+COPY src/open_entity/a2a/ ./open_entity/a2a/
+COPY src/open_entity/__init__.py ./open_entity/
+
+# Set Python path
+ENV PYTHONPATH=/app:$PYTHONPATH
+
+# Switch to non-root user
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+
+# Expose ports
+EXPOSE 8080 9473
+
+# Run bootstrap node
+CMD ["python", "-m", "open_entity.a2a.bootstrap_node"]

@@ -5,11 +5,36 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "open-entity"
 version = "0.1.0"
-description = "Open Entity: Extended AI Agent Framework"
+description = "Open Entity: Multi-agent AI orchestration framework with A2A (AI-to-AI) Communication Protocol for autonomous agent collaboration, trading, and delegation. Supports multiple LLM providers (Gemini, OpenAI, OpenRouter, Z.ai) with profile-based configuration, semantic memory, and decentralized agent discovery."
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
     {name = "Open Entity Team"}
+]
+keywords = [
+    "ai",
+    "agent",
+    "multi-agent",
+    "a2a-protocol",
+    "agent-economy",
+    "autonomous-agents",
+    "ai-collaboration",
+    "orchestration",
+    "llm",
+    "mcp",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
     "typer>=0.15.0",  # 0.12.x has compatibility issues
