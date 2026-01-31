@@ -9,17 +9,10 @@ from ..ui.theme import ThemeName, THEMES
 from ..ui.layout import ui_state
 
 
-@app.command("list-profiles")
 def list_profiles_cmd():
-    """利用可能なプロファイル一覧"""
-    _list_profiles()
-
-
-def _list_profiles():
     """利用可能なプロファイル一覧"""
     profiles_dir = Path.cwd() / "moco" / "profiles"
     if not profiles_dir.exists():
-        # Fallback to absolute path from project root if possible, or current dir
         profiles_dir = Path("moco/profiles")
 
     typer.echo("Available profiles:")
@@ -49,8 +42,7 @@ def complete_profile(incomplete: str):
     return profiles
 
 
-@app.command("version")
-def version(
+def version_cmd(
     detailed: bool = typer.Option(False, "--detailed", "-d", help="依存関係のバージョンも表示"),
 ):
     """バージョン表示"""
@@ -59,20 +51,18 @@ def version(
     console = Console()
     
     try:
-        v = get_version("moco")
+        v = get_version("open-entity")
     except PackageNotFoundError:
         v = "0.2.0"
     
     if not detailed:
-        typer.echo(f"Moco v{v}")
+        typer.echo(f"Open Entity v{v}")
         return
     
-    # 詳細表示モード
-    table = Table(title=f"Moco v{v}", border_style="cyan")
+    table = Table(title=f"Open Entity v{v}", border_style="cyan")
     table.add_column("Package", style="cyan")
     table.add_column("Version")
     
-    # コア依存関係
     core_deps = [
         "typer", "rich", "pydantic", "pyyaml", "fastapi", "uvicorn",
         "sqlmodel", "alembic", "httpx", "aiohttp", "openai",
@@ -88,3 +78,9 @@ def version(
             table.add_row(dep, "[dim]not installed[/dim]")
     
     console.print(table)
+
+
+def register_commands(app: typer.Typer):
+    """コマンドをTyperアプリに登録"""
+    app.command("list-profiles")(list_profiles_cmd)
+    app.command("version")(version_cmd)
