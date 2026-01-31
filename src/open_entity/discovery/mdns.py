@@ -25,6 +25,10 @@ try:
     ZEROCO_AVAILABLE = True
 except ImportError:
     ZEROCO_AVAILABLE = False
+    Zeroconf = None
+    ServiceInfo = None
+    ServiceBrowser = None
+    IPVersion = None
     # ダミークラス（インポートエラー回避用）
     class ServiceListener:
         pass
