@@ -133,3 +133,14 @@ INIT -> HANDSHAKE_SENT -> ACTIVE -> CLOSED
 **Document Version:** 1.1.0-PRODUCTION  
 **Last Updated:** 2026-02-01  
 **Status:** Production Ready
+
+---
+
+## 統合履歴 (Integration History)
+
+| 日付 | 統合内容 | 備考 |
+|------|---------|------|
+| 2026-02-01 | `v1.0_improvements.md` から改善案を統合 | v1.1新機能として実装 |
+| 2026-02-01 | `v1.0_gap_analysis.md` から要件を統合 | 設計に反映 |
+
+- アーカイブ: `docs/archive/v1.0_improvements.md`, `docs/archive/v1.0_gap_analysis.md`

@@ -29,10 +29,11 @@ import_error_details = []
 try:
     # パターン1: パッケージとして実行
     from services.peer_service import (
-        PeerService, SessionManager, Session, SessionState,
+        PeerService, Session, SessionState,
         MessageQueue, HeartbeatManager, PeerStatus, ChunkInfo,
         init_service, create_server
     )
+    from services.session_manager import SessionManager
     from services.crypto import generate_entity_keypair, CryptoManager, SecureMessage
     print("✅ Imported using package pattern (services.xxx)")
 except ImportError as e1:
@@ -40,10 +41,11 @@ except ImportError as e1:
     try:
         # パターン2: スクリプトとして直接実行
         from peer_service import (
-            PeerService, SessionManager, Session, SessionState,
+            PeerService, Session, SessionState,
             MessageQueue, HeartbeatManager, PeerStatus, ChunkInfo,
             init_service, create_server
         )
+        from session_manager import SessionManager
         from crypto import generate_entity_keypair, CryptoManager, SecureMessage
         print("✅ Imported using direct pattern (xxx)")
     except ImportError as e2:
@@ -89,6 +91,7 @@ class PeerServiceIntegrationTestBase:
             private_key_hex=priv_a,
             enable_encryption=True,
             require_signatures=True,
+            enable_session_management=True,
         )
         
         # Peer B作成
@@ -99,6 +102,7 @@ class PeerServiceIntegrationTestBase:
             private_key_hex=priv_b,
             enable_encryption=True,
             require_signatures=True,
+            enable_session_management=True,
         )
         
         # 相互に公開鍵登録
@@ -150,8 +154,8 @@ class PeerServiceIntegrationTestBase:
         for peer in self.test_peers:
             try:
                 # セッションマネージャー停止
-                if hasattr(peer, 'session_manager') and peer.session_manager:
-                    await peer.session_manager.stop()
+                if hasattr(peer, '_session_manager') and peer._session_manager:
+                    await peer._session_manager.stop()
             except Exception as e:
                 print(f"Warning: Error during teardown: {e}")
         
@@ -176,8 +180,8 @@ async def test_scenario_1_handshake_flow():
         print("✓ Two peers initialized")
         
         # 1. セッション作成
-        session_mgr_a = peer_a.session_manager
-        session_mgr_b = peer_b.session_manager
+        session_mgr_a = peer_a._session_manager
+        session_mgr_b = peer_b._session_manager
         
         # SessionManager開始
         await session_mgr_a.start()

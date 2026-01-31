@@ -19,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent / "services"))
 
 from token_system import (
     create_wallet, get_wallet, 
-    create_task_contract, get_task_contract,
+    get_task_contract,
     get_reputation_contract,
-    TaskStatus, RewardType, TransactionType
+    TaskStatus, TransactionType
 )
 from token_economy import TokenEconomy, TokenMetadata, get_token_economy
 from token_persistence import get_persistence_manager
@@ -89,29 +89,29 @@ def demo_token_economy():
     
     # Orchestrator creates a task
     print("\n📋 Orchestrator creates a coding task...")
-    task = create_task_contract(
+    tc = get_task_contract()
+    success = tc.create_task(
         task_id="task_001",
-        creator_id="orchestrator",
-        description="Implement API endpoint for token transfers",
-        reward_amount=1000.0,
-        reward_type=RewardType.TOKEN
+        client_id="orchestrator",
+        agent_id="coder",
+        amount=1000.0,
+        description="Implement API endpoint for token transfers"
     )
-    print(f"  Task ID: {task.task_id}")
-    print(f"  Reward: {task.reward_amount} AIC")
-    print(f"  Status: {task.status.value}")
-    
-    # Coder accepts and completes the task
-    print("\n👨‍💻 Coder accepts the task...")
-    task.assign_worker("coder")
-    print(f"  Assigned to: {task.worker_id}")
-    
-    print("\n✅ Coder completes the task...")
-    result = task.complete()
-    if result["success"]:
-        print(f"  Task completed successfully!")
-        print(f"  Reward transferred: {result['reward_amount']} AIC")
+    if success:
+        print(f"  Task ID: task_001")
+        print(f"  Reward: 1000.0 AIC")
+        print(f"  Status: IN_PROGRESS")
     else:
-        print(f"  Task completion failed: {result.get('error')}")
+        print(f"  Failed to create task")
+    
+    # Coder completes the task
+    print("\n✅ Coder completes the task...")
+    success = tc.complete_task("task_001")
+    if success:
+        print(f"  Task completed successfully!")
+        print(f"  Reward transferred: 1000.0 AIC")
+    else:
+        print(f"  Task completion failed")
     
     # Show updated balances
     print("\n💼 Updated Balances:")
@@ -238,27 +238,32 @@ def demo_task_delegation():
     # Create tasks
     print("\n📋 Creating tasks...")
     
+    tc = get_task_contract()
     tasks = [
-        ("task_001", "Implement user authentication", worker_a, 800.0),
-        ("task_002", "Write API documentation", worker_b, 500.0),
-        ("task_003", "Create database schema", worker_a, 1000.0),
+        ("task_del_001", "Implement user authentication", "worker_a", 800.0),
+        ("task_del_002", "Write API documentation", "worker_b", 500.0),
+        ("task_del_003", "Create database schema", "worker_a", 1000.0),
     ]
     
-    for task_id, desc, worker, reward in tasks:
-        task = create_task_contract(
+    for task_id, desc, worker_id, reward in tasks:
+        # Create task with worker assigned
+        success = tc.create_task(
             task_id=task_id,
-            creator_id="master_orchestrator",
-            description=desc,
-            reward_amount=reward,
-            reward_type=RewardType.TOKEN
+            client_id="master_orchestrator",
+            agent_id=worker_id,
+            amount=reward,
+            description=desc
         )
-        task.assign_worker(worker.entity_id)
-        result = task.complete()
         
-        if result["success"]:
-            print(f"  ✓ {task_id}: {desc} -> {worker.entity_id} (+{reward} AIC)")
+        if success:
+            # Complete the task
+            success = tc.complete_task(task_id)
+            if success:
+                print(f"  ✓ {task_id}: {desc} -> {worker_id} (+{reward} AIC)")
+            else:
+                print(f"  ✗ {task_id}: Completion failed")
         else:
-            print(f"  ✗ {task_id}: Failed - {result.get('error')}")
+            print(f"  ✗ {task_id}: Creation failed")
     
     # Show final balances
     print("\n💼 Final Balances:")

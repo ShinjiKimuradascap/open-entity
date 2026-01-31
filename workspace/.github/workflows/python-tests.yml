@@ -42,6 +42,23 @@ jobs:
         cd services
         python test_session_manager.py
 
+    - name: Run integration tests
+      run: |
+        pip install pytest pytest-asyncio
+        PYTHONPATH=./services python -m pytest tests/ -v --tb=short || true
+
+    - name: Run unit tests
+      run: |
+        pip install pytest pytest-asyncio
+        python -m pytest services/test_*.py -v -m "not integration and not e2e" --tb=short || true
+
+    - name: Run integration tests
+      run: |
+        cd services
+        python test_integration_scenarios.py || true
+        python test_e2e_crypto_integration.py || true
+        python test_peer_service_e2e.py || true
+
     - name: Lint with flake8
       run: |
         pip install flake8
@@ -49,14 +66,29 @@ jobs:
 
     - name: Generate coverage report
       run: |
-        pip install pytest pytest-cov
-        python -m pytest services/ -v --cov=services --cov-report=xml --cov-report=term-missing --ignore=services/integration_test.py || true
+        pip install pytest pytest-cov pytest-xdist
+        python -m pytest services/ -v --cov=services --cov-report=xml --cov-report=term-missing --ignore=services/integration_test.py -n auto --junitxml=junit.xml || true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          junit.xml
+          coverage.xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         files: ./coverage.xml
         fail_ci_if_error: false
+
+    - name: Test Summary
+      uses: test-summary/action@v2
+      with:
+        paths: "junit.xml"
+        show: "fail, skip"
 
   e2e-tests:
     runs-on: ubuntu-latest

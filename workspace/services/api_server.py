@@ -4,7 +4,7 @@ AI Agent API Server v0.4.0
 Security-enhanced version with Ed25519 signatures, JWT authentication, and replay protection
 """
 
-from fastapi import FastAPI, HTTPException, Header, Request, Depends
+from fastapi import FastAPI, HTTPException, Header, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -3098,6 +3098,307 @@ async def get_governance_stats(
     stats = gov.get_stats()
     
     return GovernanceStatsResponse(**stats)
+
+
+# ============================================================================
+# WebSocket Support for Real-time Peer Communication
+# ============================================================================
+
+class WebSocketMessage(BaseModel):
+    """WebSocket message format"""
+    type: str = Field(..., description="Message type: ping, pong, message, task, status")
+    payload: Optional[Dict[str, Any]] = Field(default=None, description="Message payload")
+    timestamp: Optional[str] = Field(default=None, description="ISO format timestamp")
+    sender: Optional[str] = Field(default=None, description="Sender entity ID")
+
+
+class WebSocketConnectionManager:
+    """Manage WebSocket connections for peers"""
+    
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.connection_metadata: Dict[str, Dict[str, Any]] = {}
+    
+    async def connect(self, websocket: WebSocket, entity_id: str):
+        """Accept and store a new WebSocket connection"""
+        await websocket.accept()
+        self.active_connections[entity_id] = websocket
+        self.connection_metadata[entity_id] = {
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "last_ping": None,
+            "message_count": 0
+        }
+        logging.info(f"WebSocket connected: {entity_id}")
+    
+    def disconnect(self, entity_id: str):
+        """Remove a WebSocket connection"""
+        if entity_id in self.active_connections:
+            del self.active_connections[entity_id]
+        if entity_id in self.connection_metadata:
+            del self.connection_metadata[entity_id]
+        logging.info(f"WebSocket disconnected: {entity_id}")
+    
+    async def send_message(self, entity_id: str, message: Dict[str, Any]):
+        """Send a message to a specific peer"""
+        if entity_id in self.active_connections:
+            await self.active_connections[entity_id].send_json(message)
+            return True
+        return False
+    
+    async def broadcast(self, message: Dict[str, Any], exclude: Optional[str] = None):
+        """Broadcast a message to all connected peers"""
+        for entity_id, connection in self.active_connections.items():
+            if entity_id != exclude:
+                try:
+                    await connection.send_json(message)
+                except Exception as e:
+                    logging.warning(f"Failed to send to {entity_id}: {e}")
+    
+    def get_connected_peers(self) -> List[str]:
+        """Get list of connected peer entity IDs"""
+        return list(self.active_connections.keys())
+    
+    def is_connected(self, entity_id: str) -> bool:
+        """Check if a peer is connected"""
+        return entity_id in self.active_connections
+
+
+# Global connection manager
+ws_manager = WebSocketConnectionManager()
+
+# Import WebSocket connection pool
+try:
+    from services.connection_pool import (
+        get_websocket_pool, init_websocket_pool, shutdown_websocket_pool,
+        WebSocketConnectionPool, WebSocketState
+    )
+except ImportError:
+    from connection_pool import (
+        get_websocket_pool, init_websocket_pool, shutdown_websocket_pool,
+        WebSocketConnectionPool, WebSocketState
+    )
+
+# Global WebSocket connection pool
+_ws_pool: Optional[WebSocketConnectionPool] = None
+
+async def get_ws_pool() -> WebSocketConnectionPool:
+    """Get or initialize WebSocket connection pool"""
+    global _ws_pool
+    if _ws_pool is None:
+        _ws_pool = get_websocket_pool()
+        await _ws_pool.start()
+    return _ws_pool
+
+
+@app.websocket("/ws/v1/peers")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time peer communication.
+    
+    Authentication: Pass JWT token as query parameter: ?token=<jwt_token>
+    
+    Message Types:
+    - ping: Heartbeat request (server responds with pong)
+    - pong: Heartbeat response
+    - message: General message between peers
+    - task: Task-related communication
+    - status: Status update broadcast
+    """
+    entity_id: Optional[str] = None
+    
+    try:
+        # Authenticate using query parameter token
+        token = websocket.query_params.get("token")
+        if not token:
+            await websocket.close(code=1008, reason="Missing authentication token")
+            return
+        
+        # Verify JWT token
+        try:
+            payload = jwt_auth.verify_token(token)
+            entity_id = payload.get("sub")
+            if not entity_id:
+                await websocket.close(code=1008, reason="Invalid token: missing subject")
+                return
+        except Exception as e:
+            await websocket.close(code=1008, reason=f"Authentication failed: {str(e)}")
+            return
+        
+        # Accept connection
+        await ws_manager.connect(websocket, entity_id)
+        
+        # Send welcome message
+        await websocket.send_json({
+            "type": "status",
+            "payload": {
+                "event": "connected",
+                "entity_id": entity_id,
+                "message": "WebSocket connection established"
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Handle incoming messages
+        while True:
+            try:
+                # Receive JSON message
+                data = await websocket.receive_json()
+                msg_type = data.get("type", "message")
+                msg_payload = data.get("payload", {})
+                
+                # Update metadata
+                ws_manager.connection_metadata[entity_id]["message_count"] += 1
+                
+                # Handle different message types
+                if msg_type == "ping":
+                    # Respond with pong
+                    ws_manager.connection_metadata[entity_id]["last_ping"] = datetime.now(timezone.utc).isoformat()
+                    await websocket.send_json({
+                        "type": "pong",
+                        "payload": {"timestamp": datetime.now(timezone.utc).isoformat()},
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                
+                elif msg_type == "pong":
+                    # Client pong received (acknowledgment)
+                    pass
+                
+                elif msg_type == "message":
+                    # General message - echo back with acknowledgment
+                    target = msg_payload.get("target")
+                    message_data = {
+                        "type": "message",
+                        "payload": {
+                            **msg_payload,
+                            "from": entity_id,
+                            "received": True
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "sender": entity_id
+                    }
+                    
+                    if target and target != "broadcast":
+                        # Send to specific target
+                        sent = await ws_manager.send_message(target, message_data)
+                        await websocket.send_json({
+                            "type": "status",
+                            "payload": {
+                                "event": "message_sent",
+                                "target": target,
+                                "delivered": sent
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                    else:
+                        # Broadcast to all except sender
+                        await ws_manager.broadcast(message_data, exclude=entity_id)
+                
+                elif msg_type == "task":
+                    # Task-related message
+                    task_action = msg_payload.get("action")
+                    task_id = msg_payload.get("task_id")
+                    
+                    # Process task message
+                    response = {
+                        "type": "task",
+                        "payload": {
+                            "action": task_action,
+                            "task_id": task_id,
+                            "from": entity_id,
+                            "status": "received",
+                            "processed": True
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "sender": entity_id
+                    }
+                    
+                    # Echo back to sender
+                    await websocket.send_json(response)
+                    
+                    # If target specified, forward to target
+                    target = msg_payload.get("target")
+                    if target:
+                        await ws_manager.send_message(target, response)
+                
+                elif msg_type == "status":
+                    # Status update request
+                    status_type = msg_payload.get("status_type", "general")
+                    
+                    if status_type == "peers":
+                        # Return list of connected peers
+                        connected_peers = ws_manager.get_connected_peers()
+                        await websocket.send_json({
+                            "type": "status",
+                            "payload": {
+                                "event": "peer_list",
+                                "peers": connected_peers,
+                                "count": len(connected_peers)
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                    else:
+                        # General status acknowledgment
+                        await websocket.send_json({
+                            "type": "status",
+                            "payload": {
+                                "event": "status_received",
+                                "status_type": status_type,
+                                "from": entity_id
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                
+                else:
+                    # Unknown message type
+                    await websocket.send_json({
+                        "type": "status",
+                        "payload": {
+                            "event": "error",
+                            "message": f"Unknown message type: {msg_type}",
+                            "supported_types": ["ping", "pong", "message", "task", "status"]
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+            
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logging.error(f"WebSocket error for {entity_id}: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "status",
+                        "payload": {
+                            "event": "error",
+                            "message": str(e)
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except:
+                    break
+    
+    except Exception as e:
+        logging.error(f"WebSocket connection error: {e}")
+    
+    finally:
+        # Cleanup on disconnect
+        if entity_id:
+            ws_manager.disconnect(entity_id)
+
+
+@app.get("/ws/peers")
+async def get_connected_websocket_peers(
+    entity_id: str = Depends(get_current_entity_id)
+) -> Dict[str, Any]:
+    """
+    Get list of peers connected via WebSocket.
+    Requires JWT authentication.
+    """
+    connected_peers = ws_manager.get_connected_peers()
+    return {
+        "peers": connected_peers,
+        "count": len(connected_peers),
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 
 if __name__ == "__main__":

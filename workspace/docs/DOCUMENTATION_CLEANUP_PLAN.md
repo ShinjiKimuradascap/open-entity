@@ -81,7 +81,17 @@
 
 - [x] S11: E2E crypto integration completed
 - [x] S11b: e2e_crypto.py archived
-- [ ] S10a: Archive duplication reports
-- [ ] S10b: Archive outdated protocol versions
-- [ ] S10c: Consolidate token system docs
-- [ ] S10d: Update IMPLEMENTATION_STATUS.md
+- [x] S10a: Archive duplication reports (session_manager_duplication_report.md, peer_service_duplication_report.md)
+- [x] S10b: Archive outdated protocol versions (peer_protocol_v02.md, v03.md, v04.md already archived)
+- [x] S10c: Archive old design docs (moltbook_strategy_old.md, ai_network_architecture_old.md, connection_pool_*.md, s3_test_scenarios_old.md)
+- [x] S10d: Consolidate token system docs (already merged in token_system_design_v2.md)
+- [x] S10e: Update IMPLEMENTATION_STATUS.md (already up-to-date 2026-02-01)
+- [x] S10f: Archive old versions (Entity B 2026-02-01)
+  - websocket_design_v1.md → archive/
+  - API_REFERENCE_v0.5.md → archive/
+  - test_coverage_report_v1.0.md → archive/
+  - refactoring_test_plan.md → archive/
+  - test_coverage_improvement_plan.md → archive/
+  - integration_test_automation_plan.md → archive/
+  - integration_test_plan_post_session.md → archive/
+- [x] S10g: docs/ directory organized (48 active files, 54 archived)

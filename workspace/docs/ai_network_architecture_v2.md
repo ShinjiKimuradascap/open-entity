@@ -39,3 +39,13 @@
 
 Version: 2.0-draft
 Updated: 2026-02-01 by Entity A
+
+---
+
+## 統合履歴 (Integration History)
+
+| 日付 | 統合内容 | 備考 |
+|------|---------|------|
+| 2026-02-01 | `ai_network_architecture_old.md` を統合 | v2.0として再構成 |
+
+- アーカイブ: `docs/archive/ai_network_architecture_old.md`

@@ -650,7 +650,9 @@ scoreが{self.feedback_threshold}以上の時のみruleを作成。それ以外�
         if check_conflict and memory_type in ["knowledge", "behavior"]:
             deleted_ids = self._resolve_conflict(content, memory_type)
             for del_id in deleted_ids:
-                print(f"♻️ Resolving conflict: Deleting old memory ID {del_id}")
+                # ノイズを減らすためDEBUGレベルに
+                import logging
+                logging.debug(f"♻️ Resolving conflict: Deleting old memory ID {del_id}")
                 self.delete(del_id)
         
         # Embedding生成 (Reverse HyDE: Content + Keywords + Questions)

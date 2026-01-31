@@ -233,14 +233,14 @@ class GovernanceEngine:
                 )
                 
                 # Auto-activate proposals after discussion period
-                for proposal in self.proposal_manager.list_proposals():
+                for proposal in self.proposal_manager.get_all_proposals():
                     if (proposal.status == ProposalStatus.PENDING and 
                         proposal.discussion_end and 
                         datetime.utcnow() >= proposal.discussion_end):
                         self.activate_proposal(proposal.id)
                 
                 # Auto-finalize proposals after voting period
-                for proposal in self.proposal_manager.list_proposals():
+                for proposal in self.proposal_manager.get_all_proposals():
                     if (proposal.status == ProposalStatus.ACTIVE and 
                         proposal.voting_end and 
                         datetime.utcnow() >= proposal.voting_end):

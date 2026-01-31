@@ -12,8 +12,11 @@ import json
 import logging
 import threading
 
-# Import from token_system
-from token_system import TokenWallet, Transaction, TransactionType, create_wallet, get_wallet
+# Import from token_system (support both relative and absolute imports)
+try:
+    from .token_system import TokenWallet, Transaction, TransactionType, create_wallet, get_wallet
+except ImportError:
+    from token_system import TokenWallet, Transaction, TransactionType, create_wallet, get_wallet
 
 logger = logging.getLogger(__name__)
 

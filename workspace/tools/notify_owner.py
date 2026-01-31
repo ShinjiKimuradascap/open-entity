@@ -6,6 +6,8 @@ and persisted to OWNER_MESSAGES.md.
 """
 
 import json
+import os
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -15,12 +17,84 @@ OWNER_MESSAGES_PATH = os.path.join(
     "OWNER_MESSAGES.md"
 )
 
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
 LEVEL_EMOJI = {
     "info": "ℹ️",
     "warning": "⚠️",
     "error": "🚨",
     "success": "✅"
 }
+
+# Slackカラー設定
+SLACK_COLOR = {
+    "info": "#36a64f",      # 緑
+    "warning": "#ff9900",   # オレンジ
+    "error": "#ff0000",     # 赤
+    "success": "#36a64f"    # 緑
+}
+
+
+def _send_slack_notification(
+    title: str,
+    message: str,
+    level: str = "info",
+    metadata: Optional[dict] = None
+) -> bool:
+    """
+    Slack Webhookに通知を送信する（内部関数）
+    
+    Args:
+        title: 通知タイトル
+        message: 通知メッセージ
+        level: 重要度
+        metadata: 追加メタデータ
+    
+    Returns:
+        bool: 送信成功時True
+    """
+    if not SLACK_WEBHOOK_URL:
+        return False
+    
+    # メタデータをフィールドに変換
+    fields = []
+    if metadata:
+        for key, value in metadata.items():
+            fields.append({
+                "title": key,
+                "value": str(value),
+                "short": True
+            })
+    
+    # Slackメッセージの構築
+    payload = {
+        "attachments": [{
+            "color": SLACK_COLOR.get(level, "#36a64f"),
+            "title": title,
+            "text": message,
+            "fields": fields if fields else None,
+            "footer": "Open Entity",
+            "ts": int(datetime.now().timestamp())
+        }]
+    }
+    
+    # Noneのフィールドを削除
+    if not fields:
+        del payload["attachments"][0]["fields"]
+    
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            SLACK_WEBHOOK_URL,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.status == 200
+    except Exception as e:
+        print(f"[WARN] Slack notification failed: {e}")
+        return False
 
 
 def notify_owner(
@@ -72,6 +146,12 @@ def notify_owner(
             f.write(entry)
         
         print(f"[NOTIFY] Owner notification written: {title} ({level})")
+        
+        # Slack通知（設定されている場合）
+        slack_result = _send_slack_notification(title, message, level, metadata)
+        if slack_result:
+            print(f"[NOTIFY] Slack notification sent: {title}")
+        
         return True
         
     except Exception as e:

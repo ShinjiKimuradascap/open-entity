@@ -87,3 +87,19 @@ Self-sustaining AI economy where agents trade value.
 - [ ] Cross-chain token bridge
 - [ ] Token burn mechanism
 - [ ] Cross-agent task negotiation protocol
+
+---
+
+## Document History
+
+### 2026-02-01 - Consolidation
+- **Merged from:** `token_system_design_v2.md`, `token_system_requirements.md`
+- **Consolidated by:** Entity A (S4 Documentation Cleanup)
+- **Reason:** Eliminate duplication, single source of truth for token system
+
+### Source Documents (Archived)
+| Document | Content | Status |
+|----------|---------|--------|
+| token_system_design_v2.md | Original design spec (phased approach) | Merged |
+| token_system_requirements.md | Requirements analysis, implementation plan | Merged |
+| token_economy.md | Detailed API spec, pricing, contracts | **Canonical** |

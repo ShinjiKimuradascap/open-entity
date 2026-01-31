@@ -72,7 +72,7 @@ class Transaction:
     """
     type: TransactionType
     amount: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     description: str = ""
     counterparty: Optional[str] = None
     related_task_id: Optional[str] = None
@@ -385,7 +385,7 @@ class Task:
     agent_id: str
     amount: float
     status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     description: str = ""
@@ -822,7 +822,7 @@ class Rating:
     task_id: str
     score: float  # 1-5
     comment: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict[str, Any]:
         """辞書形式に変換"""
@@ -866,7 +866,7 @@ class MintRecord:
     amount: float
     reward_type: RewardType
     description: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     task_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -1487,6 +1487,15 @@ def create_wallet(entity_id: str, initial_balance: float = 0.0) -> TokenWallet:
 def get_wallet(entity_id: str) -> Optional[TokenWallet]:
     """ウォレットを取得"""
     return _wallet_registry.get(entity_id)
+
+
+def delete_wallet(entity_id: str) -> bool:
+    """ウォレットを削除"""
+    if entity_id in _wallet_registry:
+        del _wallet_registry[entity_id]
+        logger.info(f"Deleted wallet for {entity_id}")
+        return True
+    return False
 
 
 def get_task_contract() -> "TaskContract":

@@ -1,44 +1,48 @@
 # Token System Design v2.0
 
-## Current Status
+## Overview
 
-### Implemented
-- TokenWallet: balance, deposit, withdraw, transfer, history
-- TaskContract: create, lock, release, slash
-- ReputationContract: rating, trust score
+AIエージェント間の経済活動を支えるトークンシステム。AIC（AI Credit）を通じて、タスク報酬、サービス支払い、ガバナンス参加を実現。
 
-### Missing (Priority Order)
-1. Persistence layer (JSON/DB save/load)
-2. Token minting/burning
-3. Transaction signature verification
-4. Exchange rate & fees
-5. API endpoints
-6. Blockchain integration
+## Token Specification
 
-## Implementation Plan
+| Property | Value |
+|----------|-------|
+| Name | AI Credit |
+| Symbol | AIC |
+| Decimals | 8 |
+| Initial Supply | 1,000,000 AIC |
+| Mintable | Yes |
+| Burnable | Yes |
 
-### Phase 1: Persistence
-- PersistenceManager class
-- Auto-backup functionality
+## Core Components
 
-### Phase 2: Token Economy
-- TokenEconomy class (mint/burn)
-- Supply tracking
+1. **TokenWallet** - Balance tracking, transfer, history
+2. **TaskContract** - Escrow for task payments
+3. **ReputationContract** - Rating and trust system
+4. **TokenEconomy** - Mint/burn functionality
+5. **PersistenceManager** - Save/load to JSON
 
-### Phase 3: Security
-- SignedTransaction with ECDSA
-- TransactionValidator
+## API Endpoints
 
-### Phase 4: Market
-- ExchangeRate
-- FeeManager
+- GET /wallet/{entity_id}
+- POST /wallet/transfer
+- POST /admin/mint
+- GET /admin/mint/history
+- POST /admin/persistence/save
+- GET /reputation/{entity_id}/ratings
 
-### Phase 5: API
-- FastAPI endpoints
-- Integration with api_server.py
+## Implementation Status
 
-## Files to Create
-- token_persistence.py
-- token_economy.py
-- token_security.py
-- token_api.py
+All Phase 1-2 features implemented:
+- Token economy with mint/burn
+- Persistence layer
+- API integration
+- Admin controls
+
+## History
+
+- v2.0 (2026-02-01): Consolidated documentation
+- v1.0 (2026-01-31): Initial design
+
+Merged: token_economy.md, token_system_requirements.md

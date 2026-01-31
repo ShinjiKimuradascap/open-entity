@@ -1,0 +1,119 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+
+jobs:
+  phase1-basic:
+    runs-on: ubuntu-latest
+    name: Phase 1 - Basic Functionality
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+          
+      - name: Run Phase 1 tests
+        run: |
+          cd services
+          python -m pytest test_session_manager.py test_crypto_integration.py \
+            test_signature.py test_wallet.py -v --tb=short
+          
+  phase2-crypto:
+    runs-on: ubuntu-latest
+    name: Phase 2 - Encryption Integration
+    needs: phase1-basic
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          
+      - name: Run Phase 2 tests
+        run: |
+          cd services
+          python -m pytest test_e2e_crypto.py test_security.py \
+            test_handshake_protocol.py -v --tb=short
+          
+  phase3-peer:
+    runs-on: ubuntu-latest
+    name: Phase 3 - Peer Service Integration
+    needs: phase2-crypto
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          
+      - name: Run Phase 3 tests
+        run: |
+          cd services
+          python test_peer_service_integration.py
+          
+  phase4-e2e:
+    runs-on: ubuntu-latest
+    name: Phase 4 - End-to-End Tests
+    needs: phase3-peer
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Run E2E tests
+        run: |
+          ./scripts/run_e2e_tests.sh
+          
+  coverage:
+    runs-on: ubuntu-latest
+    name: Coverage Report
+    needs: [phase1-basic, phase2-crypto, phase3-peer]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov coverage
+          
+      - name: Generate coverage report
+        run: |
+          cd services
+          python -m pytest --cov=. --cov-report=xml --cov-report=html -v
+          
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./services/coverage.xml
+          fail_ci_if_error: false

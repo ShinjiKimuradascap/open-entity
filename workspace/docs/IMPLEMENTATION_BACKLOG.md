@@ -1,36 +1,83 @@
 # 実装バックログ
 
-## 未実装機能
+## 実装済み機能（最近追加）
 
-### 1. Kademlia DHT ベースピアディスカバリー
-**優先度:** High  
-**難易度:** High  
-**関連:** peer_protocol_v1.1.md
+### Kademlia DHT ベースピアディスカバリー ✅
+**実装:** `services/kademlia_dht.py`  
+**状態:** Complete
 
-**詳細:**
+**実装済み機能:**
 - XOR距離メトリクスによるノード配置
 - ルーティングテーブル（k-buckets）
-- FIND_NODE / FIND_VALUE RPC
-- ノードID生成と管理
-
-**実装候補:**
-- `services/kademlia_dht.py`
-- `services/kademlia_routing.py`
+- PeerInfo署名付き登録
+- ブートストラップノードサポート
+- 定期リフレッシュとクリーンアップ
 
 ---
 
-### 2. Rate Limiting システム
-**優先度:** Medium  
-**難易度:** Medium  
-**関連:** peer_protocol_v1.1.md
+### Rate Limiting システム ✅
+**実装:** `services/rate_limiter.py`  
+**状態:** Complete
 
-**詳細:**
+**実装済み機能:**
 - Token Bucket方式
 - ピアごとの帯域制限
-- Rate Limitヘッダー実装
+- 自動レート調整
+
+---
+
+### Multi-Hop Message Router ✅
+**実装:** `services/multi_hop_router.py`  
+**状態:** Complete
+
+**実装済み機能:**
+- Store-and-forwardメッセージ中継
+- TTLベースループ防止
+- パストラッキングと検証
+- 永続メッセージキュー
+- 配信確認
+
+---
+
+## 未実装機能
+
+### 1. Bootstrap Auto-Discovery
+**優先度:** High  
+**難易度:** Medium
+
+**詳細:**
+- 既存ブートストラップノードから追加ノードを動的発見
+- 再帰的ディスカバリー（最大深度3）
+- 署名検証による信頼確立
+- 到達可能性スコアリング
 
 **実装候補:**
-- `services/rate_limiter.py`
+- `services/bootstrap_discovery.py`
+- `BootstrapDiscoveryManager`クラス
+
+---
+
+### 2. Network Partition Handling
+**優先度:** High  
+**難易度:** High
+
+**詳細:**
+- パーティション検出（Heartbeat timeout, gossip anomalies）
+- Vector Clock + Merkle Treeによる分岐検出
+- CRDTベース衝突解決
+
+---
+
+### 3. Bandwidth Adaptation
+**優先度:** Medium  
+**難易度:** Medium  
+**関連:** peer_protocol_v1.2.md
+
+**詳細:**
+- 動的品質調整
+- メッセージ優先順位付け
+- 輻輳制御
+- 帯域使用量メトリクス
 
 ---
 
@@ -90,17 +137,27 @@
 
 ## 実装ロードマップ
 
-### Phase 1: 基盤強化（1-2週間）
-- [ ] Kademlia DHT実装
+### Phase 1: 基盤強化（完了）✅
+- [x] Kademlia DHT実装
+- [x] Rate Limiting実装
+- [x] Multi-hop Routing実装
+
+### Phase 2: 信頼性層（進行中）
+- [ ] Bootstrap Auto-Discovery
+- [ ] Network Partition Handling
+- [ ] Persistent Offline Message Queue
 - [ ] 本番ブートストラップノード設定
 
-### Phase 2: セキュリティ強化（3-4週間）
-- [ ] Rate Limiting実装
-- [ ] Gossipプロトコル完全実装
+### Phase 3: 高度機能（計画中）
+- [ ] Bandwidth Adaptation
+- [ ] Group Messaging (Multi-cast)
+- [ ] WebSocket Transport
+- [ ] Binary Protocol (CBOR)
 
-### Phase 3: 統合テスト（5-6週間）
+### Phase 4: 統合テスト
 - [ ] E2Eテスト
 - [ ] 負荷テスト
+- [ ] フォールトトレランステスト
 
 ---
 

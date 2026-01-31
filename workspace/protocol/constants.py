@@ -41,6 +41,7 @@ class MessageType:
     TASK_STATUS = "task_status"  # v1.1
     PING = "ping"  # v1.1
     PONG = "pong"  # v1.1
+    TOKEN_TRANSFER = "token_transfer"  # v1.2
 
 
 class ProtocolError(Exception):

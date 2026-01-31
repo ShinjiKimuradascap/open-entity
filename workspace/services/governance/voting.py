@@ -141,7 +141,7 @@ class VotingManager:
         if proposal.votes_for <= proposal.votes_against:
             return False
         
-        if proposal.for_percentage < self.config.PASS_THRESHOLD_PERCENTAGE:
+        if proposal.for_percentage < self.config.APPROVAL_THRESHOLD:
             return False
         
         return True

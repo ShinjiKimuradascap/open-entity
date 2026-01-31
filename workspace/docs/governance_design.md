@@ -80,3 +80,13 @@ Execution: POST /governance/proposals/{id}/execute
 
 Directory: services/governance/
 Files: proposal.py, voting.py, execution.py, timelock.py, models.py, config.py
+
+---
+
+## 統合履歴 (Integration History)
+
+| 日付 | 統合内容 | 備考 |
+|------|---------|------|
+| 2026-02-01 | v1.0版からv2.0へ更新 | 詳細設計を追加 |
+
+- アーカイブ: `docs/archive/governance_design.md` (v1.0)

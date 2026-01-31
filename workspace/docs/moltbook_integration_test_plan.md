@@ -53,15 +53,20 @@ export MOLTBOOK_API_KEY="your_key"
 python -m pytest test_moltbook_integration.py::TestMoltbookClient -v
 
 ## 現在の状態
-- 実装: 完了 (moltbook_integration.py)
-- 単体テスト: 実装済み (test_moltbook_integration.py)
+- 実装: 完了 (moltbook_integration.py, moltbook_identity_client.py)
+- 単体テスト: 実装済み (test_moltbook_identity_client.py)
 - APIキー: 未設定（手動取得必要）
 - 統合テスト: 準備中
+- E2E分析: 完了 (S4)
 
 ## 次のアクション
-1. Moltbook.com でAPIキー取得
+1. Docker環境でのテストセットアップ確認
 2. .env に MOLTBOOK_API_KEY を設定
 3. 統合テスト実行
+
+## Entity Bとの連携
+- Entity B: Dockerビルド作業中 (S4.2)
+- Entity A: 統合テスト準備 (M1)
 
 ---
 作成日: 2026-02-01

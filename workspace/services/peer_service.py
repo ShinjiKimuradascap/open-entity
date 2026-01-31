@@ -1787,7 +1787,9 @@ class PeerService:
         enable_connection_pool: bool = True,
         connection_pool_max_connections: int = 10,
         connection_pool_max_keepalive: int = 5,
-        connection_pool_keepalive_timeout: int = 30
+        connection_pool_keepalive_timeout: int = 30,
+        dht_registry: Optional[Any] = None,
+        use_dht_discovery: bool = False
     ) -> None:
         """PeerServiceを初期化
         
@@ -1815,6 +1817,8 @@ class PeerService:
             connection_pool_max_connections: ピアあたりの最大接続数（デフォルト: 10）
             connection_pool_max_keepalive: キープアライブ接続数（デフォルト: 5）
             connection_pool_keepalive_timeout: キープアライブタイムアウト（秒、デフォルト: 30）
+            dht_registry: DHTレジストリインスタンス（オプション、デフォルト: None）
+            use_dht_discovery: DHTを使用したピア発見を有効にする（デフォルト: False）
         """
         self.entity_id: str = entity_id
         self.port: int = port
@@ -1823,6 +1827,8 @@ class PeerService:
         self.message_handlers: Dict[str, MessageHandler] = {}
         self.peer_stats: Dict[str, PeerStats] = {}
         self._registry = registry
+        self._dht_registry = dht_registry
+        self._use_dht_discovery = use_dht_discovery
         
         # require_signaturesが指定されていればenable_verificationを上書き
         if not require_signatures:
@@ -1878,11 +1884,31 @@ class PeerService:
         self._e2e_shared_keys: Dict[str, bytes] = {}  # peer_id -> shared_key cache
         self.e2e_manager: Optional['E2ECryptoManager'] = None  # E2E暗号化管理
         self._e2e_handler: Optional['E2EHandshakeHandler'] = None  # E2Eハンドシェイクハンドラ
+        self.enable_e2e_encryption: bool = enable_encryption  # E2E暗号化フラグ
 
         if CRYPTO_AVAILABLE:
             self._init_crypto(max_message_age, private_key_hex)
         else:
             logger.warning("Crypto module not available. Running without signing/verification.")
+        
+        # E2ECryptoManagerの初期化（E2E暗号化が有効な場合）
+        if self.enable_e2e_encryption and E2E_CRYPTO_AVAILABLE and self.crypto_manager:
+            try:
+                from services.e2e_crypto import E2ECryptoManager
+                # KeyPairを取得
+                keypair = getattr(self.crypto_manager, '_ed25519_keypair', None)
+                if keypair:
+                    self.e2e_manager = E2ECryptoManager(
+                        entity_id=self.entity_id,
+                        keypair=keypair,
+                        default_timeout=session_ttl_seconds
+                    )
+                    logger.info(f"E2ECryptoManager initialized for {self.entity_id}")
+                else:
+                    logger.warning("Cannot initialize E2ECryptoManager: keypair not available")
+            except Exception as e:
+                logger.error(f"Failed to initialize E2ECryptoManager: {e}")
+                self.e2e_manager = None
         
         # SessionManagerの初期化（外部から受け取るか、新規作成）
         self._session_manager: Optional[NewSessionManager] = None
@@ -1904,6 +1930,11 @@ class PeerService:
         if self._enable_rate_limiting:
             self._rate_limiter = RateLimiter()
             logger.info("RateLimiter initialized (60 req/min, 1000 req/hour)")
+        
+        # DHTRegistryの初期化
+        self._dht_registry: Optional[Any] = dht_registry
+        if self._dht_registry:
+            logger.info("DHTRegistry integration enabled")
         
         # E2ECryptoManagerの初期化 (v1.1 E2E暗号化強化)
         if E2E_CRYPTO_AVAILABLE and self.keypair and not self.e2e_manager:
@@ -2786,6 +2817,51 @@ class PeerService:
             """wake_up_ackメッセージハンドラ"""
             await self.handle_wake_up_ack(message)
 
+        async def _handle_token_transfer(message: dict) -> None:
+            """token_transferメッセージハンドラ - トークン転送
+
+            Protocol v1.2対応:
+            他のピアからのトークン転送リクエストを処理する。
+
+            Payload:
+            - transfer_id: 転送ID
+            - sender_address: 送信元アドレス
+            - recipient_address: 送信先アドレス
+            - amount: 転送量
+            - token_type: トークンタイプ（デフォルト: AGT）
+            """
+            sender = message.get("sender_id", message.get("from", "unknown"))
+            payload = message.get("payload", {})
+            transfer_id = payload.get("transfer_id", "unknown")
+            sender_address = payload.get("sender_address", "")
+            recipient_address = payload.get("recipient_address", "")
+            amount = payload.get("amount", 0)
+            token_type = payload.get("token_type", "AGT")
+
+            logger.info(f"Received token transfer from {sender}: transfer_id={transfer_id}, amount={amount} {token_type}")
+
+            # 統計を更新
+            if sender in self.peer_stats:
+                self.peer_stats[sender].total_messages_received += 1
+                self.peer_stats[sender].last_seen = datetime.now(timezone.utc)
+
+            # トークン転送を内部キューに追加（処理は別途行われる）
+            if not hasattr(self, '_pending_transfers'):
+                self._pending_transfers = []
+
+            self._pending_transfers.append({
+                "transfer_id": transfer_id,
+                "from_peer": sender,
+                "sender_address": sender_address,
+                "recipient_address": recipient_address,
+                "amount": amount,
+                "token_type": token_type,
+                "received_at": datetime.now(timezone.utc).isoformat(),
+                "payload": payload
+            })
+
+            logger.info(f"Token transfer {transfer_id} queued for processing. Queue size: {len(self._pending_transfers)}")
+
         # ハンドラ登録
         self.register_handler("ping", _handle_ping)
         self.register_handler("status", _handle_status)
@@ -2802,6 +2878,7 @@ class PeerService:
         self.register_handler("capability_response", _handle_capability_response)
         self.register_handler("wake_up", _handle_wake_up)
         self.register_handler("wake_up_ack", _handle_wake_up_ack)
+        self.register_handler("token_transfer", _handle_token_transfer)
 
         # 内部状態初期化
         self._last_capability_response = None
@@ -2927,9 +3004,31 @@ class PeerService:
         if not encrypt:
             return payload
 
+        # 優先: E2ECryptoManagerを使用
+        if self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+            try:
+                # アクティブなE2Eセッションを取得
+                e2e_session = self.e2e_manager.get_active_session(target_id)
+                if e2e_session:
+                    # E2ECryptoManagerで暗号化
+                    encrypted_msg = self.e2e_manager.encrypt_message(
+                        e2e_session.session_id, payload
+                    )
+                    encrypted_payload = {
+                        "_e2e_encrypted": True,
+                        "session_id": e2e_session.session_id,
+                        "data": encrypted_msg.payload.get("data"),
+                        "nonce": encrypted_msg.payload.get("nonce")
+                    }
+                    logger.debug(f"Payload E2E encrypted for {target_id} using session {e2e_session.session_id}")
+                    return encrypted_payload
+            except Exception as e:
+                logger.warning(f"E2E encryption failed for {target_id}: {e}")
+        
+        # フォールバック: 従来の暗号化方式
         encrypted = self.encrypt_payload(target_id, payload)
         if encrypted:
-            logger.debug(f"Payload encrypted for {target_id}")
+            logger.debug(f"Payload encrypted for {target_id} (legacy method)")
             return {"_encrypted_payload": encrypted}
         else:
             logger.warning(f"Failed to encrypt payload for {target_id}, sending unencrypted")
@@ -3323,6 +3422,14 @@ class PeerService:
         if self._session_manager:
             await self._session_manager.start()
         
+        # DHTRegistryを開始
+        if self._dht_registry:
+            dht_started = await self._dht_registry.start()
+            if dht_started:
+                logger.info(f"DHT Registry started for peer discovery")
+            else:
+                logger.warning("Failed to start DHT Registry, falling back to traditional discovery")
+        
         logger.info(f"PeerService started: {self.entity_id}")
     
     async def _chunk_cleanup_loop(self) -> None:
@@ -3357,6 +3464,11 @@ class PeerService:
             except asyncio.CancelledError:
                 pass
             logger.debug("Chunk cleanup loop stopped")
+        
+        # DHTRegistryを停止
+        if self._dht_registry:
+            await self._dht_registry.stop()
+            logger.debug("DHT Registry stopped")
         
         logger.info(f"PeerService stopped: {self.entity_id}")
     
@@ -3722,13 +3834,46 @@ class PeerService:
 
         # 暗号化ペイロードの復号（E2E暗号化対応）
         payload = message.get("payload", {})
-        if isinstance(payload, dict) and "_encrypted_payload" in payload:
+        
+        # E2E暗号化メッセージの復号（E2ECryptoManager使用）
+        if isinstance(payload, dict) and payload.get("_e2e_encrypted"):
+            if self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+                try:
+                    session_id = payload.get("session_id")
+                    if session_id:
+                        e2e_session = self.e2e_manager.get_session(session_id)
+                        if e2e_session:
+                            # SecureMessageライクな構造を作成
+                            from services.crypto import SecureMessage
+                            encrypted_msg = SecureMessage(
+                                version="1.0",
+                                msg_type=msg_type,
+                                sender_id=sender,
+                                recipient_id=self.entity_id,
+                                payload={"encrypted": True, "data": payload.get("data"), "nonce": payload.get("nonce")},
+                                session_id=session_id,
+                                sequence_num=message.get("sequence_num")
+                            )
+                            decrypted = self.e2e_manager.decrypt_message(e2e_session, encrypted_msg)
+                            if decrypted:
+                                message["payload"] = decrypted
+                                message["_decrypted"] = True
+                                logger.debug(f"Payload E2E decrypted from {sender} using session {session_id}")
+                            else:
+                                logger.error(f"Failed to E2E decrypt payload from {sender}")
+                                return {"status": "error", "reason": "E2E Decryption failed"}
+                except Exception as e:
+                    logger.error(f"E2E decryption error from {sender}: {e}")
+                    return {"status": "error", "reason": f"E2E decryption error: {e}"}
+        
+        # 従来の暗号化ペイロードの復号
+        elif isinstance(payload, dict) and "_encrypted_payload" in payload:
             encrypted_data = payload["_encrypted_payload"]
             decrypted = self.decrypt_payload(sender, encrypted_data)
             if decrypted:
                 message["payload"] = decrypted
                 message["_decrypted"] = True  # 復号済みフラグ
-                logger.debug(f"Payload decrypted from {sender}")
+                logger.debug(f"Payload decrypted from {sender} (legacy method)")
             else:
                 logger.error(f"Failed to decrypt payload from {sender}")
                 return {"status": "error", "reason": "Decryption failed"}
@@ -4672,6 +4817,82 @@ class PeerService:
             logger.error(f"Error sending wake_up_ack to {target_id}: {e}")
             return False
 
+    async def send_token_transfer(
+        self,
+        recipient_id: str,
+        amount: float,
+        token_type: str = "AGT",
+        transfer_id: Optional[str] = None,
+        memo: Optional[str] = None,
+        timeout: float = 10.0,
+        max_retries: int = 3
+    ) -> Tuple[bool, Optional[str]]:
+        """トークン転送メッセージを送信
+
+        Args:
+            recipient_id: 受信者のエンティティID
+            amount: 転送量
+            token_type: トークンタイプ（デフォルト: AGT）
+            transfer_id: 転送ID（オプション、未指定時は自動生成）
+            memo: 転送メモ（オプション）
+            timeout: タイムアウト秒数（デフォルト: 10.0秒）
+            max_retries: 最大リトライ回数（デフォルト: 3）
+
+        Returns:
+            (成功ならTrue, エラーメッセージ)
+        """
+        if recipient_id not in self.peers:
+            return False, f"Unknown peer: {recipient_id}"
+
+        # transfer_id が未指定の場合は自動生成
+        if transfer_id is None:
+            transfer_id = str(uuid.uuid4())
+
+        # ペイロード作成
+        payload = {
+            "transfer_id": transfer_id,
+            "sender_address": self.entity_id,
+            "recipient_address": recipient_id,
+            "amount": amount,
+            "token_type": token_type,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        if memo:
+            payload["memo"] = memo
+
+        # メッセージ送信（リトライ付き）
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Sending token_transfer to {recipient_id} (attempt {attempt}/{max_retries}, amount={amount} {token_type})")
+
+                success = await self.send_message(
+                    target_id=recipient_id,
+                    message_type="token_transfer",
+                    payload=payload,
+                    max_retries=1,  # 個別送信のリトライは1回のみ（外側ループで制御）
+                    base_delay=timeout
+                )
+
+                if success:
+                    logger.info(f"token_transfer sent successfully to {recipient_id} (transfer_id={transfer_id})")
+                    return True, None
+                else:
+                    logger.warning(f"token_transfer send failed to {recipient_id} (attempt {attempt})")
+
+            except Exception as e:
+                logger.error(f"Error sending token_transfer to {recipient_id} (attempt {attempt}): {e}")
+
+            # リトライ間隔を増加（指数バックオフ）
+            if attempt < max_retries:
+                backoff = min(timeout * (2 ** (attempt - 1)), 30.0)  # 最大30秒
+                logger.debug(f"Retrying token_transfer to {recipient_id} after {backoff:.1f}s")
+                await asyncio.sleep(backoff)
+
+        # 全リトライ失敗
+        error_msg = f"Failed to send token_transfer to {recipient_id} after {max_retries} attempts"
+        logger.error(error_msg)
+        return False, error_msg
+
     async def handle_wake_up_ack(self, message: dict) -> None:
         """wake_up_ackを受信
 
@@ -4705,20 +4926,23 @@ class PeerService:
     async def initiate_handshake(
         self,
         target_id: str,
-        timeout: float = 30.0
+        timeout: float = 30.0,
+        enable_e2e: bool = True
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """v1.0 プロトコル: ハンドシェイクを開始
         
         3-way handshakeを開始し、新しいセッションを確立する。
+        E2E暗号化が有効な場合、E2ECryptoManager経由でセッションを作成する。
         Flow:
-        1. A sends handshake with pubkey + challenge
+        1. A sends handshake with pubkey + challenge (+ E2E capability if enabled)
         2. B responds with handshake_ack + pubkey + challenge_response
         3. A confirms with handshake_confirm
-        4. Session established
+        4. Session established (with E2E encryption if negotiated)
         
         Args:
             target_id: 対象ピアのエンティティID
             timeout: タイムアウト秒数
+            enable_e2e: E2E暗号化を有効にする（デフォルト: True）
             
         Returns:
             (成功ならTrue, セッションID, エラーメッセージ)
@@ -4728,6 +4952,15 @@ class PeerService:
         
         if target_id not in self.peers:
             return False, None, f"Unknown peer: {target_id}"
+        
+        # E2Eセッションを作成（E2E暗号化が有効な場合）
+        e2e_session = None
+        if enable_e2e and self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+            try:
+                e2e_session = self.e2e_manager.create_session(target_id)
+                logger.debug(f"Created E2E session for handshake: {e2e_session.session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to create E2E session: {e}")
         
         # セッションIDを生成
         session_id = str(uuid.uuid4())
@@ -4759,7 +4992,11 @@ class PeerService:
                     "session_id": session_id,
                     "challenge": challenge,
                     "public_key": self.key_pair.get_public_key_hex(),
-                    "supported_versions": ["1.0", "0.3"]
+                    "supported_versions": ["1.0", "0.3"],
+                    "capabilities": ["e2e_encryption", "aes_256_gcm", "x25519"] if self.enable_e2e_encryption else [],
+                    "e2e_enabled": self.enable_e2e_encryption and e2e_session is not None,
+                    "e2e_session_id": e2e_session.session_id if e2e_session else None,
+                    "e2e_ephemeral_key": base64.b64encode(e2e_session.ephemeral_public_key).decode() if e2e_session else None
                 }
                 
                 handshake_msg = {
@@ -4851,6 +5088,15 @@ class PeerService:
                         self._handshake_pending.pop(target_id, None)
                         break
                 logger.info(f"Cleaned up expired handshake session: {session_id}")
+        
+        # E2Eセッションのクリーンアップ
+        if self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+            try:
+                cleaned_e2e = self.e2e_manager.cleanup_expired_sessions()
+                if cleaned_e2e > 0:
+                    logger.debug(f"Cleaned up {cleaned_e2e} expired E2E sessions")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup E2E sessions: {e}")
         
         return len(expired_sessions)
     
@@ -4989,6 +5235,31 @@ class PeerService:
             # ピアの公開鍵を登録
             self.add_peer_public_key(sender_id, public_key_hex)
             
+            # E2E暗号化ネゴシエーション
+            e2e_session = None
+            e2e_accepted = False
+            if self.enable_e2e_encryption and self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+                e2e_enabled = payload.get("e2e_enabled", False)
+                e2e_session_id = payload.get("e2e_session_id")
+                e2e_ephemeral_key_b64 = payload.get("e2e_ephemeral_key")
+                
+                if e2e_enabled and e2e_session_id and e2e_ephemeral_key_b64:
+                    try:
+                        # E2Eセッションを作成（レスポンダー側）
+                        e2e_session = self.e2e_manager.create_session(sender_id)
+                        
+                        # リモートのエフェメラルキーをデコード
+                        remote_ephemeral_key = base64.b64decode(e2e_ephemeral_key_b64)
+                        remote_pubkey = bytes.fromhex(public_key_hex)
+                        
+                        # ハンドシェイクを完了してセッションキーを導出
+                        e2e_session.complete_handshake(remote_pubkey, remote_ephemeral_key)
+                        e2e_accepted = True
+                        
+                        logger.info(f"E2E encryption negotiated with {sender_id}: session={e2e_session.session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to establish E2E session with {sender_id}: {e}")
+            
             # 統計を更新
             if sender_id in self.peer_stats:
                 self.peer_stats[sender_id].total_messages_received += 1
@@ -5000,7 +5271,10 @@ class PeerService:
                 "public_key": self.key_pair.get_public_key_hex(),
                 "challenge_response": challenge_response,
                 "selected_version": "1.0",
-                "confirm": True
+                "confirm": True,
+                "e2e_accepted": e2e_accepted,
+                "e2e_session_id": e2e_session.session_id if e2e_session else None,
+                "e2e_ephemeral_key": base64.b64encode(e2e_session.ephemeral_public_key).decode() if e2e_session else None
             }
             
             ack_msg = {
@@ -5125,6 +5399,31 @@ class PeerService:
             if public_key_hex:
                 self.add_peer_public_key(sender_id, public_key_hex)
                 session.peer_public_key = public_key_hex
+            
+            # E2Eセッションを確立（E2E暗号化がネゴシエートされた場合）
+            if self.e2e_manager and E2E_CRYPTO_AVAILABLE:
+                e2e_accepted = payload.get("e2e_accepted", False)
+                e2e_session_id = payload.get("e2e_session_id")
+                e2e_ephemeral_key_b64 = payload.get("e2e_ephemeral_key")
+                
+                if e2e_accepted and e2e_session_id and e2e_ephemeral_key_b64:
+                    try:
+                        # 既存のE2Eセッションを探すか新規作成
+                        e2e_session = self.e2e_manager.get_session(e2e_session_id)
+                        if not e2e_session:
+                            e2e_session = self.e2e_manager.create_session(sender_id)
+                            e2e_session.session_id = e2e_session_id
+                        
+                        # リモートのエフェメラルキーをデコード
+                        remote_ephemeral_key = base64.b64decode(e2e_ephemeral_key_b64)
+                        remote_pubkey = bytes.fromhex(public_key_hex) if public_key_hex else None
+                        
+                        # ハンドシェイクを完了
+                        e2e_session.complete_handshake(remote_pubkey, remote_ephemeral_key)
+                        
+                        logger.info(f"E2E session established with {sender_id}: session={e2e_session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to complete E2E handshake with {sender_id}: {e}")
             
             # セッションを更新
             session.state = SessionState.HANDSHAKE_ACKED
@@ -5423,6 +5722,470 @@ def init_service(
         enable_encryption=enable_encryption, require_signatures=require_signatures
     )
     return _service
+
+
+    async def discover_from_bootstrap(
+        self,
+        bootstrap_url: Optional[str] = None,
+        max_peers: int = 10
+    ) -> List[Dict[str, Any]]:
+        """ブートストラップサーバーからピアを発見する
+        
+        Args:
+            bootstrap_url: ブートストラップサーバーURL (Noneの場合は環境変数から取得)
+            max_peers: 取得する最大ピア数
+            
+        Returns:
+            発見されたピアのリスト
+        """
+        import aiohttp
+        
+        # ブートストラップURLを決定
+        if not bootstrap_url:
+            bootstrap_url = os.environ.get("BOOTSTRAP_URL", "http://localhost:9000")
+        
+        discovered = []
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 自分の情報を含めてディスカバリー要求
+                request_data = {
+                    "node_id": self.entity_id,
+                    "max_results": max_peers
+                }
+                
+                headers = {"Content-Type": "application/json"}
+                if self.jwt_token:
+                    headers["Authorization"] = f"Bearer {self.jwt_token}"
+                
+                async with session.post(
+                    f"{bootstrap_url}/discover",
+                    json=request_data,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        peers = data.get("peers", [])
+                        
+                        for peer_data in peers:
+                            peer_info = {
+                                "entity_id": peer_data.get("node_id"),
+                                "endpoint": peer_data.get("endpoint"),
+                                "public_key": peer_data.get("public_key"),
+                                "region": peer_data.get("region", "unknown"),
+                                "capabilities": peer_data.get("capabilities", [])
+                            }
+                            discovered.append(peer_info)
+                            
+                            # ピアを自動追加（設定が有効な場合）
+                            if self._auto_discover and peer_info["entity_id"]:
+                                if peer_info["entity_id"] != self.entity_id:
+                                    self.add_peer(
+                                        peer_info["entity_id"],
+                                        peer_info["endpoint"],
+                                        is_manual=False,
+                                        public_key_hex=peer_info.get("public_key")
+                                    )
+                        
+                        logger.info(f"Discovered {len(discovered)} peers from bootstrap server")
+                    else:
+                        logger.warning(f"Bootstrap discovery failed: HTTP {response.status}")
+                        
+        except Exception as e:
+            logger.error(f"Error discovering from bootstrap: {e}")
+        
+        return discovered
+    
+    async def discover_peers_dht(
+        self,
+        count: int = 10,
+        capability: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """DHTを使用してピアを発見する
+        
+        Args:
+            count: 発見する最大ピア数
+            capability: 特定の機能を持つピアのみを発見（オプション）
+            
+        Returns:
+            発見されたピアのリスト
+        """
+        if not self._dht_registry:
+            logger.warning("DHT registry not available, cannot discover peers via DHT")
+            return []
+        
+        discovered = []
+        
+        try:
+            # DHTからピアを発見
+            if capability:
+                peer_infos = await self._dht_registry.find_by_capability(capability)
+                logger.info(f"Discovered {len(peer_infos)} peers with capability '{capability}' via DHT")
+            else:
+                peer_infos = await self._dht_registry.discover_peers(count=count)
+                logger.info(f"Discovered {len(peer_infos)} peers via DHT")
+            
+            # PeerInfoを辞書形式に変換し、ローカルのピアリストに追加
+            for peer_info in peer_infos:
+                peer_data = {
+                    "entity_id": peer_info.entity_id,
+                    "entity_name": peer_info.entity_name,
+                    "endpoint": peer_info.endpoint,
+                    "public_key": peer_info.public_key,
+                    "capabilities": peer_info.capabilities,
+                    "peer_id": peer_info.peer_id
+                }
+                discovered.append(peer_data)
+                
+                # ローカルのピアリストに追加（まだ存在しない場合）
+                if peer_info.entity_id not in self.peers:
+                    await self.add_peer(
+                        peer_info.entity_id,
+                        peer_info.endpoint,
+                        is_manual=False,
+                        public_key_hex=peer_info.public_key
+                    )
+            
+            return discovered
+            
+        except Exception as e:
+            logger.error(f"Error discovering peers via DHT: {e}")
+            return []
+    
+    async def lookup_peer_dht(self, peer_id: str) -> Optional[Dict[str, Any]]:
+        """DHTを使用して特定のピアを検索する
+        
+        Args:
+            peer_id: 検索するピアのID
+            
+        Returns:
+            ピア情報（見つからない場合はNone）
+        """
+        if not self._dht_registry:
+            logger.warning("DHT registry not available, cannot lookup peer via DHT")
+            return None
+        
+        try:
+            peer_info = await self._dht_registry.lookup_peer(peer_id)
+            if peer_info:
+                return {
+                    "entity_id": peer_info.entity_id,
+                    "entity_name": peer_info.entity_name,
+                    "endpoint": peer_info.endpoint,
+                    "public_key": peer_info.public_key,
+                    "capabilities": peer_info.capabilities,
+                    "peer_id": peer_info.peer_id
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error looking up peer via DHT: {e}")
+            return None
+    
+    async def register_with_bootstrap(
+        self,
+        bootstrap_url: Optional[str] = None
+    ) -> bool:
+        """ブートストラップサーバーに自分を登録する
+        
+        Args:
+            bootstrap_url: ブートストラップサーバーURL
+            
+        Returns:
+            登録成功したかどうか
+        """
+        import aiohttp
+        
+        if not bootstrap_url:
+            bootstrap_url = os.environ.get("BOOTSTRAP_URL", "http://localhost:9000")
+        
+        try:
+            # 自分の情報を構築
+            registration = {
+                "node_id": self.entity_id,
+                "endpoint": f"http://localhost:{self.port}",
+                "public_key": self.get_public_key_b64() if self.keypair else None,
+                "region": os.environ.get("REGION", "unknown"),
+                "capabilities": ["discovery", "relay"],
+                "version": "1.0"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{bootstrap_url}/register",
+                    json=registration,
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        logger.info(f"Successfully registered with bootstrap server: {bootstrap_url}")
+                        return True
+                    else:
+                        logger.warning(f"Bootstrap registration failed: HTTP {response.status}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"Error registering with bootstrap: {e}")
+            return False
+    
+    def load_bootstrap_nodes(self, filepath: str = "config/bootstrap_nodes.json") -> List[str]:
+        """ブートストラップノード設定を読み込む
+        
+        Args:
+            filepath: 設定ファイルのパス
+            
+        Returns:
+            ブートストラップサーバーURLのリスト
+        """
+        bootstrap_urls = []
+        
+        try:
+            # 複数のパスを試行
+            possible_paths = [
+                filepath,
+                os.path.join(os.path.dirname(__file__), "..", filepath),
+                os.path.join(os.path.dirname(__file__), filepath),
+            ]
+            
+            config_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    config_path = path
+                    break
+            
+            if not config_path:
+                logger.warning(f"Bootstrap nodes config not found: {filepath}")
+                return bootstrap_urls
+            
+            with open(config_path, 'r') as f:
+                data = json.load(f)
+            
+            # ブートストラップサーバーURLを収集
+            for server in data.get("bootstrap_servers", []):
+                url = server.get("endpoint")
+                if url:
+                    bootstrap_urls.append(url)
+            
+            for server in data.get("local_bootstrap", []):
+                url = server.get("endpoint")
+                if url:
+                    bootstrap_urls.append(url)
+            
+            logger.info(f"Loaded {len(bootstrap_urls)} bootstrap server URLs from {config_path}")
+            
+        except Exception as e:
+            logger.error(f"Error loading bootstrap nodes: {e}")
+        
+        return bootstrap_urls
+    
+    async def auto_discover_with_bootstrap(self) -> int:
+        """ブートストラップサーバーを使用して自動ピア発見
+        
+        Returns:
+            発見・追加されたピアの数
+        """
+        if not self._auto_discover:
+            return 0
+        
+        # ブートストラップURLを取得
+        bootstrap_urls = self.load_bootstrap_nodes()
+        if not bootstrap_urls:
+            # 環境変数から取得を試行
+            env_url = os.environ.get("BOOTSTRAP_URL")
+            if env_url:
+                bootstrap_urls = [env_url]
+        
+        added_count = 0
+        
+        for url in bootstrap_urls:
+            try:
+                # 自分を登録
+                await self.register_with_bootstrap(url)
+                
+                # ピアを発見
+                peers = await self.discover_from_bootstrap(url)
+                
+                for peer in peers:
+                    entity_id = peer.get("entity_id")
+                    endpoint = peer.get("endpoint")
+                    
+                    if entity_id and endpoint and entity_id != self.entity_id:
+                        if entity_id not in self.peers:
+                            self.add_peer(
+                                entity_id,
+                                endpoint,
+                                is_manual=False,
+                                public_key_hex=peer.get("public_key")
+                            )
+                            added_count += 1
+                
+            except Exception as e:
+                logger.error(f"Error with bootstrap server {url}: {e}")
+        
+        if added_count > 0:
+            logger.info(f"Auto-discovered and added {added_count} peers via bootstrap")
+        
+        return added_count
+    
+    # ============================================================
+    # DHT Registry Integration Methods
+    # ============================================================
+    
+    async def discover_peers_via_dht(
+        self,
+        count: int = 10,
+        capability: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """DHTを使用してピアを発見する
+        
+        DHTレジストリからランダムなピアを発見し、内部ピアリストに追加する。
+        capabilityが指定された場合、その機能を持つピアのみを返す。
+        
+        Args:
+            count: 発見する最大ピア数
+            capability: フィルタする機能（オプション）
+            
+        Returns:
+            発見されたピア情報のリスト
+        """
+        if not self._dht_registry:
+            logger.warning("DHT registry not available")
+            return []
+        
+        discovered = []
+        
+        try:
+            # DHTからピアを発見
+            if capability:
+                peer_infos = await self._dht_registry.find_by_capability(capability)
+                logger.info(f"Found {len(peer_infos)} peers with capability '{capability}' via DHT")
+            else:
+                peer_infos = await self._dht_registry.discover_peers(count=count)
+                logger.info(f"Discovered {len(peer_infos)} peers via DHT")
+            
+            # PeerInfoを辞書形式に変換してピアリストに追加
+            for peer_info in peer_infos:
+                if peer_info.entity_id == self.entity_id:
+                    continue  # 自分自身は除外
+                
+                peer_data = {
+                    "entity_id": peer_info.entity_id,
+                    "entity_name": peer_info.entity_name,
+                    "endpoint": peer_info.endpoint,
+                    "public_key": peer_info.public_key,
+                    "capabilities": peer_info.capabilities,
+                    "peer_id": peer_info.peer_id,
+                    "timestamp": peer_info.timestamp
+                }
+                discovered.append(peer_data)
+                
+                # ピアを自動追加（設定が有効な場合）
+                if self._auto_discover:
+                    if peer_info.entity_id not in self.peers:
+                        self.add_peer(
+                            peer_info.entity_id,
+                            peer_info.endpoint,
+                            is_manual=False,
+                            public_key_hex=peer_info.public_key
+                        )
+            
+            logger.info(f"Added {len(discovered)} peers from DHT discovery")
+            
+        except Exception as e:
+            logger.error(f"Error discovering peers via DHT: {e}")
+        
+        return discovered
+    
+    async def register_to_dht(self) -> bool:
+        """DHTに自身のピア情報を登録する
+        
+        Returns:
+            登録成功したかどうか
+        """
+        if not self._dht_registry:
+            logger.warning("DHT registry not available")
+            return False
+        
+        try:
+            # DHTRegistryの内部メソッドを使用して自身を登録
+            result = await self._dht_registry._register_self()
+            if result:
+                logger.info(f"Successfully registered to DHT: {self.entity_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error registering to DHT: {e}")
+            return False
+    
+    async def get_peer_from_dht(self, peer_id: str) -> Optional[Dict[str, Any]]:
+        """DHTから特定のピア情報を取得する
+        
+        Args:
+            peer_id: 検索するピアID（公開鍵のSHA256ハッシュ）
+            
+        Returns:
+            ピア情報（見つからない場合はNone）
+        """
+        if not self._dht_registry:
+            logger.warning("DHT registry not available")
+            return None
+        
+        try:
+            peer_info = await self._dht_registry.lookup_peer(peer_id)
+            
+            if peer_info:
+                return {
+                    "entity_id": peer_info.entity_id,
+                    "entity_name": peer_info.entity_name,
+                    "endpoint": peer_info.endpoint,
+                    "public_key": peer_info.public_key,
+                    "capabilities": peer_info.capabilities,
+                    "peer_id": peer_info.peer_id,
+                    "timestamp": peer_info.timestamp,
+                    "signature": peer_info.signature
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting peer from DHT: {e}")
+            return None
+    
+    async def auto_discover_with_dht(self) -> int:
+        """DHTを使用して自動ピア発見
+        
+        Returns:
+            発見・追加されたピアの数
+        """
+        if not self._auto_discover or not self._dht_registry:
+            return 0
+        
+        try:
+            peers = await self.discover_peers_via_dht(count=20)
+            
+            added_count = 0
+            for peer in peers:
+                entity_id = peer.get("entity_id")
+                endpoint = peer.get("endpoint")
+                
+                if entity_id and endpoint and entity_id != self.entity_id:
+                    if entity_id not in self.peers:
+                        self.add_peer(
+                            entity_id,
+                            endpoint,
+                            is_manual=False,
+                            public_key_hex=peer.get("public_key")
+                        )
+                        added_count += 1
+            
+            if added_count > 0:
+                logger.info(f"Auto-discovered and added {added_count} peers via DHT")
+            
+            return added_count
+            
+        except Exception as e:
+            logger.error(f"Error in DHT auto-discovery: {e}")
+            return 0
 
 
 def get_service() -> Optional[PeerService]:

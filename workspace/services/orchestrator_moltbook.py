@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-from moltbook_integration import create_moltbook_client, MoltbookClient
+from moltbook_identity_client import init_client, get_client, MoltbookClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,10 @@ class OrchestratorMoltbookReporter:
         """Moltbookクライアントを初期化"""
         if self.client is None:
             try:
-                self.client = create_moltbook_client()
+                self.client = init_client()
+                if self.client is None:
+                    logger.warning("MOLTBOOK_API_KEY not set. Client will operate in read-only mode.")
+                    return False
                 logger.info("Moltbook client initialized")
                 return True
             except Exception as e:
@@ -100,10 +103,13 @@ Coordinating with Entity B for distributed task execution.
         
         try:
             content = self.format_status_post()
-            post = await self.client.create_post(content, submolt=self.submolt)
-            self.stats["posts_made"] += 1
-            logger.info(f"Posted status to Moltbook: {post.id}")
-            return post.id
+            result = await self.client.create_post(content, visibility="public")
+            if result:
+                self.stats["posts_made"] += 1
+                post_id = result.get('id', 'unknown')
+                logger.info(f"Posted status to Moltbook: {post_id}")
+                return post_id
+            return None
         except Exception as e:
             logger.error(f"Failed to post status: {e}")
             return None

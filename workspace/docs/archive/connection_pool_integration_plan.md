@@ -25,3 +25,14 @@
 - Circuit breaker protection
 
 ## Time Estimate: 2-3 days
+
+---
+
+## 統合履歴 (Integration History)
+
+| 日付 | 統合内容 | 統合先ファイル |
+|------|---------|--------------|
+| 2026-02-01 | `connection_pool_design.md` を統合 | 本文書 |
+| 2026-02-01 | `connection_pooling_improvement_plan.md` を統合 | 本文書 |
+
+- アーカイブ: `docs/archive/connection_pool_design_old.md`, `docs/archive/connection_pooling_improvement_plan_old.md`

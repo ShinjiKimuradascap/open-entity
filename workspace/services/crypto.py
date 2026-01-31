@@ -404,6 +404,194 @@ class CryptoManager:
             self._seen_nonces.discard(nonce)
             del self._nonce_timestamps[nonce]
 
+    # ==================== Secure Message Methods ====================
+
+    def create_secure_message(
+        self,
+        payload: Dict[str, Any],
+        encrypt: bool = False,
+        peer_public_key_b64: Optional[str] = None,
+        peer_id: Optional[str] = None,
+        include_jwt: bool = False,
+        jwt_audience: Optional[str] = None,
+        signer: Optional["MessageSigner"] = None,
+        msg_type: str = "message",
+        sender_id: Optional[str] = None,
+        return_dict: bool = False
+    ) -> SecureMessage | Dict[str, Any]:
+        """セキュアメッセージを作成
+
+        Args:
+            payload: メッセージの内容
+            encrypt: 暗号化するかどうか
+            peer_public_key_b64: 暗号化時の相手のX25519公開鍵（Base64）
+            peer_id: 相手のエンティティID
+            include_jwt: JWTトークンを含めるか
+            jwt_audience: JWTのaudience
+            signer: メッセージ署名用（省略時は内部署名を使用）
+            msg_type: メッセージタイプ
+            sender_id: 送信者ID（省略時はself.entity_idを使用）
+            return_dict: Trueの場合、SecureMessageオブジェクトの代わりに辞書を返す
+
+        Returns:
+            SecureMessage: 作成されたセキュアメッセージ、またはreturn_dict=Trueの場合は辞書
+        """
+        if sender_id is None:
+            sender_id = self.entity_id
+
+        timestamp = time.time()
+        nonce = self.generate_nonce()
+
+        # ペイロードのコピーを作成
+        message_payload = dict(payload)
+        message_payload["timestamp"] = timestamp
+        message_payload["nonce"] = nonce
+        message_payload["sender_id"] = sender_id
+        message_payload["msg_type"] = msg_type
+
+        encrypted_payload = None
+
+        # 暗号化が必要な場合
+        if encrypt and peer_public_key_b64 and peer_id:
+            ciphertext, enc_nonce = self.encrypt_payload(
+                message_payload,
+                peer_public_key_b64,
+                peer_id
+            )
+            encrypted_payload = f"{ciphertext}:{enc_nonce}"
+            # 署名用のデータは暗号化されたものを使用
+            sign_data = {"encrypted": encrypted_payload, "timestamp": timestamp, "nonce": nonce}
+        else:
+            sign_data = message_payload
+
+        # 署名を作成（signerが指定されている場合はそれを使用）
+        if signer:
+            signature = signer.sign_message(sign_data)
+        else:
+            signature = self.sign_message(sign_data)
+
+        # JWTトークンの生成
+        jwt_token = None
+        if include_jwt:
+            jwt_token = self.create_jwt_token(audience=jwt_audience)
+
+        secure_msg = SecureMessage(
+            payload=message_payload if not encrypt else {},
+            timestamp=timestamp,
+            nonce=nonce,
+            signature=signature,
+            encrypted_payload=encrypted_payload,
+            sender_public_key=self.get_ed25519_public_key_b64(),
+            jwt_token=jwt_token,
+            sender_id=sender_id
+        )
+
+        if return_dict:
+            return secure_msg.to_dict()
+        return secure_msg
+
+    def decrypt_secure_message(
+        self,
+        encrypted_msg: SecureMessage,
+        peer_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """暗号化メッセージを復号
+        
+        Args:
+            encrypted_msg: 暗号化されたメッセージ
+            peer_id: 送信者のエンティティID
+            
+        Returns:
+            復号されたペイロード、または失敗時はNone
+        """
+        return self.verify_and_decrypt_message(encrypted_msg, peer_id=peer_id)
+
+    def verify_and_decrypt_message(
+        self,
+        secure_msg: SecureMessage,
+        peer_id: Optional[str] = None,
+        verify_jwt: bool = False,
+        jwt_audience: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """メッセージを検証して復号
+        
+        Args:
+            secure_msg: 検証するメッセージ
+            peer_id: 送信者のエンティティID（省略時はsecure_msg.sender_idを使用）
+            verify_jwt: JWTも検証するか
+            jwt_audience: JWT検証時のaudience
+            
+        Returns:
+            検証・復号されたペイロード、または失敗時はNone
+        """
+        sender_id = peer_id or secure_msg.sender_id
+        if not sender_id:
+            logger.error("No sender_id specified for verification")
+            return None
+        
+        # リプレイ攻撃チェック
+        if not self.check_and_record_nonce(secure_msg.nonce, secure_msg.timestamp):
+            logger.warning(f"Replay attack detected or invalid timestamp from {sender_id}")
+            return None
+        
+        # JWT検証
+        if verify_jwt and secure_msg.jwt_token:
+            if not secure_msg.sender_public_key:
+                logger.error("No sender_public_key for JWT verification")
+                return None
+            jwt_data = self.verify_jwt_token(
+                secure_msg.jwt_token,
+                secure_msg.sender_public_key,
+                audience=jwt_audience
+            )
+            if jwt_data is None:
+                logger.warning("JWT verification failed")
+                return None
+        
+        # 暗号化されている場合は復号
+        if secure_msg.encrypted_payload:
+            try:
+                parts = secure_msg.encrypted_payload.split(":")
+                if len(parts) != 2:
+                    logger.error("Invalid encrypted payload format")
+                    return None
+                ciphertext_b64, nonce_b64 = parts
+                
+                decrypted = self.decrypt_payload(ciphertext_b64, nonce_b64, sender_id)
+                if decrypted is None:
+                    logger.error("Decryption failed")
+                    return None
+                
+                # 復号したデータの署名を検証
+                sign_data = {"encrypted": secure_msg.encrypted_payload, 
+                            "timestamp": secure_msg.timestamp, "nonce": secure_msg.nonce}
+                is_valid = self.verify_signature(
+                    sign_data,
+                    secure_msg.signature,
+                    secure_msg.sender_public_key or ""
+                )
+                if not is_valid:
+                    logger.warning("Signature verification failed for encrypted message")
+                    return None
+                
+                return decrypted
+            except Exception as e:
+                logger.error(f"Error decrypting message: {e}")
+                return None
+        else:
+            # 暗号化されていない場合はペイロードの署名を検証
+            payload = dict(secure_msg.payload)
+            is_valid = self.verify_signature(
+                payload,
+                secure_msg.signature,
+                secure_msg.sender_public_key or ""
+            )
+            if not is_valid:
+                logger.warning("Signature verification failed")
+                return None
+            
+            return payload
+
 
 # ============================================================================
 # WalletManager
@@ -692,6 +880,61 @@ class SignatureVerifier:
 
 
 # ============================================================================
+# ReplayProtector (for backward compatibility)
+# ============================================================================
+
+class ReplayProtector:
+    """リプレイ攻撃防止クラス
+    
+    既存のテストコードとの互換性のために提供。
+    新しいコードではCryptoManagerの_nonce管理機能を使用すること。
+    """
+    
+    def __init__(self, max_age_seconds: int = 300):
+        self.max_age_seconds = max_age_seconds
+        self._seen_nonces: Set[str] = set()
+        self._nonce_timestamps: Dict[str, float] = {}
+    
+    def is_replay(self, nonce: str, timestamp: float) -> bool:
+        """リプレイ攻撃かどうかをチェック"""
+        current_time = time.time()
+        
+        # タイムスタンプが古すぎる場合
+        if current_time - timestamp > self.max_age_seconds:
+            return True
+        
+        # nonceが既に使用されている場合
+        if nonce in self._seen_nonces:
+            return True
+        
+        return False
+    
+    def record_nonce(self, nonce: str, timestamp: float) -> None:
+        """nonceを記録"""
+        self._seen_nonces.add(nonce)
+        self._nonce_timestamps[nonce] = timestamp
+        self._cleanup_old_nonces()
+    
+    def _cleanup_old_nonces(self) -> None:
+        """古いnonceをクリーンアップ"""
+        current_time = time.time()
+        old_nonces = [
+            nonce for nonce, ts in self._nonce_timestamps.items()
+            if current_time - ts > self.max_age_seconds
+        ]
+        for nonce in old_nonces:
+            self._seen_nonces.discard(nonce)
+            del self._nonce_timestamps[nonce]
+    
+    def check_and_record(self, nonce: str, timestamp: float) -> bool:
+        """チェックと記録を一度に行う"""
+        if self.is_replay(nonce, timestamp):
+            return False
+        self.record_nonce(nonce, timestamp)
+        return True
+
+
+# ============================================================================
 # Exports
 # ============================================================================
 
@@ -706,6 +949,7 @@ __all__ = [
     "MessageSigner",
     "SignatureVerifier",
     "MessageValidator",
+    "ReplayProtector",
     "TIMESTAMP_TOLERANCE_SECONDS",
     "JWT_EXPIRY_MINUTES",
     "NONCE_SIZE_BYTES",

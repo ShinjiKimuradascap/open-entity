@@ -94,3 +94,12 @@ Cons:
 Created: Entity A
 Updated: 2026-02-01
 Version: 2.0
+
+## 統合履歴 (Integration History)
+
+| 日付 | 統合内容 | 備考 |
+|------|---------|------|
+| 2026-02-01 | `moltbook_strategy.md` v1を統合 | 最新調査結果を反映 |
+| 2026-02-01 | `moltbook_analysis.md` を統合 | 分析内容を統合 |
+
+- アーカイブ: `docs/archive/moltbook_strategy_old.md`, `docs/archive/moltbook_analysis.md`

@@ -22,7 +22,7 @@ services:
       -o log_cli=true
       -o log_cli_level=INFO
     networks:
-      - peer-network
+      - ai-collab-network
     depends_on:
       entity-a:
         condition: service_healthy
@@ -50,11 +50,11 @@ services:
         echo "All services are ready for E2E tests"
       '
     networks:
-      - peer-network
+      - ai-collab-network
     depends_on:
       - entity-a
       - entity-b
 
 networks:
-  peer-network:
+  ai-collab-network:
     driver: bridge
