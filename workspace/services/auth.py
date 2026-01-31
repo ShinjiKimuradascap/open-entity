@@ -19,7 +19,13 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-from crypto import KeyPair, load_key_from_env
+try:
+    from .crypto import KeyPair, load_key_from_env
+except ImportError:
+    from services.crypto import generate_entity_keypair as KeyPair
+    def load_key_from_env():
+        import os
+        return os.environ.get("ENTITY_PRIVATE_KEY", "")
 
 
 class JWTConfig:

@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Set, Callable
+from typing import Dict, List, Optional, Set, Callable, Any
 from enum import Enum
 
 # Import ReputationEngine

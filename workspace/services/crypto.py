@@ -24,7 +24,7 @@ import time
 import uuid
 import logging
 import warnings
-from typing import Optional, Tuple, Dict, Any, Set, List
+from typing import Optional, Tuple, Dict, Any, Set, List, Union
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, timedelta
 
@@ -64,7 +64,6 @@ REPLAY_WINDOW_SECONDS = 300  # 5-minute duplicate detection window
 # SecureMessage
 # ============================================================================
 
-@dataclass
 @dataclass
 class SecureMessage:
     """セキュアメッセージ構造体"""
@@ -456,7 +455,7 @@ class CryptoManager:
         msg_type: str = "message",
         sender_id: Optional[str] = None,
         return_dict: bool = False
-    ) -> SecureMessage | Dict[str, Any]:
+    ) -> Union[SecureMessage, Dict[str, Any]]:
         """セキュアメッセージを作成
 
         Args:
