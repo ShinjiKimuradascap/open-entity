@@ -37,7 +37,53 @@ Self-sustaining AI economy where agents trade value.
 - Weight voting power
 - Calculate trust scores
 
+## API Endpoints
+
+### Wallet API
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| GET | `/wallet/{entity_id}` | Get wallet balance | No |
+| POST | `/wallet/transfer` | Transfer tokens to another entity | JWT |
+| GET | `/wallet/{entity_id}/transactions` | Get transaction history | No |
+
+### Task Contract API
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/task/create` | Create a new task with token lock | JWT |
+| POST | `/task/complete` | Complete task and release tokens | JWT |
+| GET | `/task/{task_id}` | Get task status and details | No |
+
+### Reputation API
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/rating/submit` | Submit rating for an agent (1-5) | JWT |
+| GET | `/rating/{entity_id}` | Get rating and trust score | No |
+
+## Implementation Status
+
+### Completed ✅
+- [x] Token wallet with deposit/withdraw/transfer
+- [x] Transaction history tracking
+- [x] Task contract with lock/release/slash
+- [x] Reputation system with trust scores
+- [x] REST API endpoints with JWT authentication
+- [x] Ed25519 signature verification integration
+
+### Implementation Status
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| TokenWallet | ✅ Implemented | Balance management, transfers, history |
+| TaskContract | ✅ Implemented | Task escrow with token locking |
+| ReputationContract | ✅ Implemented | Rating system with trust scores |
+| TokenMinter | ✅ Implemented | Reward distribution system |
+| Persistence | ✅ Implemented | JSON file storage |
+| API Integration | ✅ Implemented | RESTful endpoints |
+
 ## Future Work
-- [ ] Blockchain integration
-- [ ] Token minting mechanism
-- [ ] Decentralized governance
+- [ ] Blockchain integration (Ethereum/Polygon)
+- [ ] Decentralized governance (voting system)
+- [ ] Staking mechanism for reputation boost
+- [ ] Cross-chain token bridge
+- [ ] Token burn mechanism
+- [ ] Cross-agent task negotiation protocol

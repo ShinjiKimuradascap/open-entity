@@ -126,3 +126,32 @@ def check_peer_alive() -> bool:
             return response.status_code == 200
     except Exception:
         return False
+
+
+def restart_peer() -> str:
+    """
+    相手エンティティが応答しない場合、起こす（wake_up）を試みる。
+    
+    まず check_peer_alive() で確認し、応答がなければ複数回 wake_up を試行。
+    
+    Returns:
+        結果メッセージ
+    """
+    import time
+    
+    # まず生存確認
+    if check_peer_alive():
+        return "✅ ピアは応答しています。再起動は不要です。"
+    
+    # 3回 wake_up を試みる
+    for attempt in range(3):
+        logger.warning(f"Peer not responding, wake_up attempt {attempt + 1}/3")
+        wake_up_peer()
+        time.sleep(5)
+        
+        if check_peer_alive():
+            return f"✅ ピアを起こしました（{attempt + 1}回目の試行）"
+    
+    return "❌ ピアが応答しません。手動で docker restart が必要かもしれません。"
+
+

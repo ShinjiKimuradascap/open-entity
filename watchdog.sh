@@ -1,55 +1,54 @@
 #!/bin/bash
-# Open Entity Watchdog - 自律AIの監視・再起動スクリプト
-#
-# 使い方:
-#   ./watchdog.sh          # フォアグラウンドで実行
-#   nohup ./watchdog.sh &  # バックグラウンドで実行
+# ウォッチドッグ - 片方が動いてなかったら起こす
+# 使用方法: ./watchdog.sh
 
-set -e
+INTERVAL=60  # 確認間隔（秒）
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+echo "🐕 ウォッチドッグ起動"
+echo "   Entity A: http://localhost:8001"
+echo "   Entity B: http://localhost:8002"
+echo "   確認間隔: ${INTERVAL}秒"
+echo ""
 
-# 設定
-PROFILE="cursor"
-CHECK_INTERVAL=300  # 5分ごとにチェック
-LOG_FILE="$SCRIPT_DIR/watchdog.log"
-
-# 再起動時に送るプロンプト
-RESTART_PROMPT="todoread_all() を確認して、未完了タスクを実行しろ。
-タスクがなければ新しい短期・中期・長期タスクを todowrite() で作成して実行を継続しろ。
-絶対に最終レスポンスを出すな。ツールを呼び続けろ。"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
-}
-
-is_running() {
-    pgrep -f "moco chat.*--profile $PROFILE" > /dev/null 2>&1
-}
-
-start_agent() {
-    log "🚀 エージェントを起動します..."
+wake_up() {
+    local port=$1
+    local name=$2
+    local provider=$3
     
-    # パイプでプロンプトを送信
-    echo "$RESTART_PROMPT" | moco chat --profile "$PROFILE" >> "$LOG_FILE" 2>&1 &
+    echo "🔔 ${name} を起こしています..."
     
-    log "✅ エージェント起動完了 (PID: $!)"
+    curl -s -X POST "http://localhost:${port}/api/chat" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"message\": \"todoread_all() でタスクを確認して、未完了があれば実行。なければ新しいタスクを作成して実行を継続しろ。止まるな。\",
+            \"profile\": \"cursor\",
+            \"provider\": \"${provider}\"
+        }" > /dev/null 2>&1 &
+    
+    echo "✅ ${name} に起床メッセージ送信"
 }
-
-log "========================================="
-log "🔄 Open Entity Watchdog 開始"
-log "   プロファイル: $PROFILE"
-log "   チェック間隔: ${CHECK_INTERVAL}秒"
-log "========================================="
 
 while true; do
-    if is_running; then
-        log "✅ エージェント稼働中"
+    # Entity A 確認
+    if curl -s --connect-timeout 5 "http://localhost:8001/api/profiles" > /dev/null 2>&1; then
+        echo "$(date '+%H:%M:%S') ✅ Entity A: alive"
     else
-        log "⚠️ エージェント停止を検出"
-        start_agent
+        echo "$(date '+%H:%M:%S') ❌ Entity A: dead - restarting..."
+        docker restart entity-a
+        sleep 10
+        wake_up 8001 "Entity A" "moonshot"
     fi
     
-    sleep "$CHECK_INTERVAL"
+    # Entity B 確認
+    if curl -s --connect-timeout 5 "http://localhost:8002/api/profiles" > /dev/null 2>&1; then
+        echo "$(date '+%H:%M:%S') ✅ Entity B: alive"
+    else
+        echo "$(date '+%H:%M:%S') ❌ Entity B: dead - restarting..."
+        docker restart entity-b
+        sleep 10
+        wake_up 8002 "Entity B" "openrouter"
+    fi
+    
+    echo ""
+    sleep $INTERVAL
 done

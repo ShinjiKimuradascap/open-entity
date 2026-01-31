@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  # API Server - Central registry and message relay
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-collab-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENTITY_PRIVATE_KEY=${API_PRIVATE_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - JWT_SECRET=${JWT_SECRET:-changeme-in-production}
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./services:/app/services
+      - registry-data:/app/data
+    command: python -m uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - ai-collab-network
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Entity A - Autonomous Agent A
+  entity-a:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-a
+    ports:
+      - "8001:8001"
+    environment:
+      - ENTITY_ID=entity-a
+      - ENTITY_PRIVATE_KEY=${ENTITY_A_PRIVATE_KEY:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+      - API_SERVER_URL=http://api-server:8000
+      - PORT=8001
+    volumes:
+      - ./services:/app/services
+      - entity-a-data:/app/data
+    command: python services/peer_service_runner.py --id entity-a --port 8001
+    networks:
+      - ai-collab-network
+    depends_on:
+      api-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Entity B - Autonomous Agent B
+  entity-b:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-b
+    ports:
+      - "8002:8002"
+    environment:
+      - ENTITY_ID=entity-b
+      - ENTITY_PRIVATE_KEY=${ENTITY_B_PRIVATE_KEY:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}
+      - API_SERVER_URL=http://api-server:8000
+      - PORT=8002
+    volumes:
+      - ./services:/app/services
+      - entity-b-data:/app/data
+    command: python services/peer_service_runner.py --id entity-b --port 8002
+    networks:
+      - ai-collab-network
+    depends_on:
+      api-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Redis - Message queue and caching
+  redis:
+    image: redis:7-alpine
+    container_name: ai-collab-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-collab-network
+    restart: unless-stopped
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ai-collab-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - ai-collab-network
+    restart: unless-stopped
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ai-collab-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - ai-collab-network
+    restart: unless-stopped
+
+volumes:
+  registry-data:
+  entity-a-data:
+  entity-b-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  ai-collab-network:
+    driver: bridge

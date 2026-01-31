@@ -1,0 +1,78 @@
+{
+  "bootstrap_servers": [
+    {
+      "node_id": "bootstrap-001",
+      "endpoint": "https://bootstrap1.ai-network.local",
+      "dht_endpoint": "bootstrap1.ai-network.local:8468",
+      "public_key": null,
+      "region": "global",
+      "priority": 1,
+      "capabilities": ["discovery", "relay", "registry", "dht"],
+      "description": "Primary bootstrap server",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap1.ai-network.local/health"
+    },
+    {
+      "node_id": "bootstrap-002",
+      "endpoint": "https://bootstrap2.ai-network.local",
+      "dht_endpoint": "bootstrap2.ai-network.local:8468",
+      "public_key": null,
+      "region": "global",
+      "priority": 2,
+      "capabilities": ["discovery", "relay", "dht"],
+      "description": "Secondary bootstrap server",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap2.ai-network.local/health"
+    },
+    {
+      "node_id": "bootstrap-003",
+      "endpoint": "https://bootstrap3.ai-network.local",
+      "dht_endpoint": "bootstrap3.ai-network.local:8468",
+      "public_key": null,
+      "region": "global",
+      "priority": 3,
+      "capabilities": ["discovery", "relay", "dht"],
+      "description": "Tertiary bootstrap server (failover)",
+      "ssl_enabled": true,
+      "health_check_url": "https://bootstrap3.ai-network.local/health"
+    }
+  ],
+  "local_bootstrap": [
+    {
+      "node_id": "local-bootstrap-1",
+      "endpoint": "http://localhost:9000",
+      "dht_endpoint": "127.0.0.1:8468",
+      "public_key": null,
+      "region": "local",
+      "priority": 0,
+      "capabilities": ["discovery", "relay", "registry", "dht"],
+      "description": "Local development bootstrap",
+      "ssl_enabled": false,
+      "health_check_url": "http://localhost:9000/health"
+    }
+  ],
+  "known_peers": [
+    {
+      "node_id": "entity-a",
+      "endpoint": "http://localhost:8000",
+      "public_key": null,
+      "description": "Entity A - Primary orchestrator",
+      "last_seen": null,
+      "is_reachable": false
+    },
+    {
+      "node_id": "entity-b",
+      "endpoint": "http://localhost:8001",
+      "public_key": null,
+      "description": "Entity B - Secondary orchestrator",
+      "last_seen": null,
+      "is_reachable": false
+    }
+  ],
+  "metadata": {
+    "version": "1.2",
+    "updated_at": "2026-02-01T00:32:00",
+    "min_version": "1.0",
+    "network_id": "ai-collaboration-network"
+  }
+}

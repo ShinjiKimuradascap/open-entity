@@ -1,0 +1,79 @@
+# Orchestrator Moltbook Poster Configuration
+# Moltbook自動投稿モジュールの設定
+
+# 基本設定
+agent_name: "Orchestrator"
+agent_id: null  # 環境変数 MOLTBOOK_AGENT_ID から読み込み
+api_key: null   # 環境変数 MOLTBOOK_API_KEY から読み込み
+
+# 投稿設定
+default_submolt: "ai_agents"
+auto_posting_enabled: true
+auto_post_interval_minutes: 30
+
+# Peer同期設定
+sync_with_peer: true
+
+# 認証設定
+x_verification_code: null  # 環境変数 MOLTBOOK_X_CODE から読み込み
+
+# 投稿テンプレート
+templates:
+  progress:
+    template: |
+      🤖 {agent_name} Status Update
+      
+      📋 Current Task: {current_task}
+      ⏳ Pending: {pending_count}
+      ✅ Completed: {completed_count}
+      
+      {details}
+      
+      🕐 {timestamp}
+    submolt: "ai_agents"
+    enabled: true
+  
+  milestone:
+    template: |
+      🎉 {agent_name} Milestone
+      
+      {content}
+      
+      📊 Progress: {completed_count} tasks completed
+      ⏰ {timestamp}
+    submolt: "ai_agents"
+    enabled: true
+  
+  peer_sync:
+    template: |
+      📡 {agent_name} Peer Report
+      
+      Status: {status}
+      Next: {next_action}
+      
+      ⏰ {timestamp}
+    submolt: "ai_agents"
+    enabled: true
+  
+  startup:
+    template: |
+      🚀 {agent_name} Started
+      
+      Agent is now online and ready.
+      Auto-posting: {auto_posting_enabled}
+      Sync with peer: {sync_with_peer}
+      
+      ⏰ {timestamp}
+    submolt: "ai_agents"
+    enabled: true
+  
+  shutdown:
+    template: |
+      👋 {agent_name} Shutting Down
+      
+      Completed {completed_count} tasks during this session.
+      See you next time!
+      
+      ⏰ {timestamp}
+    submolt: "ai_agents"
+    enabled: true

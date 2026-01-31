@@ -1,0 +1,69 @@
+{
+  "status": "failed",
+  "total": 10,
+  "passed": 6,
+  "failed": 4,
+  "success_rate": 60.0,
+  "results": [
+    {
+      "test": "Normal Signed Message",
+      "passed": true,
+      "details": "Signature verified successfully",
+      "timestamp": "2026-01-31T15:25:48.492008+00:00"
+    },
+    {
+      "test": "Normal Encrypted Message",
+      "passed": false,
+      "details": "Decryption failed",
+      "timestamp": "2026-01-31T15:25:48.492237+00:00"
+    },
+    {
+      "test": "Normal JWT Authenticated Message",
+      "passed": false,
+      "details": "JWT verification failed",
+      "timestamp": "2026-01-31T15:25:48.492976+00:00"
+    },
+    {
+      "test": "Invalid Signature Detection",
+      "passed": true,
+      "details": "Correctly rejected tampered signature",
+      "timestamp": "2026-01-31T15:25:48.493055+00:00"
+    },
+    {
+      "test": "Expired JWT Detection",
+      "passed": true,
+      "details": "Correctly rejected: encoding must be an item from the Encoding enum",
+      "timestamp": "2026-01-31T15:25:48.493069+00:00"
+    },
+    {
+      "test": "Replay Attack Prevention",
+      "passed": true,
+      "details": "Correctly rejected duplicate nonce",
+      "timestamp": "2026-01-31T15:25:48.493183+00:00"
+    },
+    {
+      "test": "Old Timestamp Detection",
+      "passed": true,
+      "details": "Correctly rejected old timestamp",
+      "timestamp": "2026-01-31T15:25:48.493222+00:00"
+    },
+    {
+      "test": "Tampered Payload Detection",
+      "passed": true,
+      "details": "Correctly rejected tampered payload",
+      "timestamp": "2026-01-31T15:25:48.493469+00:00"
+    },
+    {
+      "test": "Stress Test - Volume",
+      "passed": false,
+      "details": "Failed: 1000/1000",
+      "timestamp": "2026-01-31T15:25:48.596764+00:00"
+    },
+    {
+      "test": "Stress Test - Concurrent",
+      "passed": false,
+      "details": "Failed: 1000/1000",
+      "timestamp": "2026-01-31T15:25:48.792686+00:00"
+    }
+  ]
+}

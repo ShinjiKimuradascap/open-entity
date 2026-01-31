@@ -1,0 +1,1390 @@
+#!/usr/bin/env python3
+"""
+Cryptographic Utilities for Peer Communication
+AI間通信のための暗号化・署名ユーティリティ
+
+⚠️ DEPRECATED: This module is deprecated and will be removed in a future version.
+Please migrate to services.crypto which now includes WalletManager and other utilities.
+
+Features:
+- Ed25519 signatures for message authentication
+- X25519 + AES-256-GCM encryption for payload confidentiality
+- JWT tokens for session authentication (5-minute expiry)
+- Replay attack prevention with timestamp + nonce validation
+
+Migration Guide:
+- from services.crypto_utils import WalletManager
++ from services.crypto import WalletManager
+
+- from services.crypto_utils import generate_entity_keypair
++ from services.crypto import generate_entity_keypair
+"""
+
+import warnings
+warnings.warn(
+    "crypto_utils is deprecated. Use services.crypto instead. "
+    "WalletManager and generate_entity_keypair are now available in services.crypto.",
+    DeprecationWarning,
+    stacklevel=2
+)
+
+import os
+import time
+import json
+import base64
+import secrets
+import logging
+from typing import Optional, Dict, Any, Tuple, Set
+from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, asdict
+
+import jwt
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.exceptions import InvalidSignature
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants
+TIMESTAMP_TOLERANCE_SECONDS = 60  # 60秒の許容範囲
+JWT_EXPIRY_MINUTES = 5  # 5分の有効期限
+NONCE_SIZE_BYTES = 16  # 128-bit nonce
+AES_KEY_SIZE_BYTES = 32  # 256-bit key for AES-256-GCM
+REPLAY_WINDOW_SECONDS = 300  # 5-minute duplicate detection window
+
+
+@dataclass
+class SecureMessage:
+    """セキュアメッセージ構造体"""
+    payload: Dict[str, Any]  # 元のメッセージ内容
+    timestamp: float  # UNIX timestamp (seconds)
+    nonce: str  # Base64 encoded 128-bit nonce
+    signature: str  # Base64 encoded Ed25519 signature
+    encrypted_payload: Optional[str] = None  # Optional: encrypted payload (Base64)
+    sender_public_key: Optional[str] = None  # Optional: sender's Ed25519 public key (Base64)
+    jwt_token: Optional[str] = None  # Optional: JWT token for session auth
+    sender_id: Optional[str] = None  # Sender entity ID
+    session_id: Optional[str] = None  # Session UUID (v1.0)
+    sequence_num: Optional[int] = None  # Sequence number (v1.0)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """辞書に変換"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SecureMessage":
+        """辞書から生成"""
+        return cls(
+            payload=data.get("payload", {}),
+            timestamp=data.get("timestamp", 0.0),
+            nonce=data.get("nonce", ""),
+            signature=data.get("signature", ""),
+            encrypted_payload=data.get("encrypted_payload"),
+            sender_public_key=data.get("sender_public_key"),
+            jwt_token=data.get("jwt_token"),
+            sender_id=data.get("sender_id"),
+            session_id=data.get("session_id"),
+            sequence_num=data.get("sequence_num"),
+        )
+
+
+class CryptoManager:
+    """暗号化管理クラス
+    
+    Ed25519署名、X25519鍵交換、AES-256-GCM暗号化、JWT認証を管理する。
+    """
+
+    def __init__(self, entity_id: str, private_key_hex: Optional[str] = None):
+        """CryptoManagerを初期化
+        
+        Args:
+            entity_id: このエンティティのID
+            private_key_hex: 16進数エンコードされたEd25519秘密鍵（省略時は環境変数から読み込み）
+        """
+        self.entity_id = entity_id
+        self._seen_nonces: Set[str] = set()  # リプレイ防止用nonce記録
+        self._nonce_timestamps: Dict[str, float] = {}  # nonceのタイムスタンプ記録
+        
+        # 秘密鍵の読み込み
+        if private_key_hex:
+            private_key_bytes = bytes.fromhex(private_key_hex)
+        else:
+            env_key = os.environ.get("ENTITY_PRIVATE_KEY")
+            if not env_key:
+                raise ValueError(
+                    "ENTITY_PRIVATE_KEY environment variable not set "
+                    "and no private_key_hex provided"
+                )
+            private_key_bytes = bytes.fromhex(env_key)
+        
+        # Ed25519鍵ペア
+        self._ed25519_private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+        self._ed25519_public_key = self._ed25519_private_key.public_key()
+        
+        # X25519鍵ペア（エフェメラル、セッションごとに生成）
+        self._x25519_private_key: Optional[X25519PrivateKey] = None
+        self._x25519_public_key: Optional[X25519PublicKey] = None
+        
+        # 共有秘密鍵キャッシュ（peer_id -> shared_key）
+        self._shared_keys: Dict[str, bytes] = {}
+        
+        # ピアのEd25519公開鍵キャッシュ（peer_id -> public_key_b64）
+        self._peer_public_keys: Dict[str, str] = {}
+        
+        # X25519公開鍵キャッシュ（peer_id -> x25519_public_key_b64）
+        self._peer_x25519_keys: Dict[str, str] = {}
+        
+        logger.info(f"CryptoManager initialized for entity: {entity_id}")
+
+    # ==================== Key Management ====================
+
+    def get_ed25519_public_key_bytes(self) -> bytes:
+        """Ed25519公開鍵をバイト列で取得"""
+        return self._ed25519_public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+
+    def get_ed25519_public_key_b64(self) -> str:
+        """Ed25519公開鍵をBase64で取得"""
+        return base64.b64encode(self.get_ed25519_public_key_bytes()).decode("ascii")
+
+    def generate_x25519_keypair(self) -> Tuple[X25519PrivateKey, X25519PublicKey]:
+        """新しいX25519鍵ペアを生成（エフェメラル）"""
+        private_key = X25519PrivateKey.generate()
+        public_key = private_key.public_key()
+        self._x25519_private_key = private_key
+        self._x25519_public_key = public_key
+        return private_key, public_key
+
+    def get_x25519_public_key_b64(self) -> Optional[str]:
+        """X25519公開鍵をBase64で取得"""
+        if self._x25519_public_key is None:
+            return None
+        public_bytes = self._x25519_public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        )
+        return base64.b64encode(public_bytes).decode("ascii")
+
+    def add_peer_public_key(self, peer_id: str, public_key_hex: str) -> None:
+        """ピアのEd25519公開鍵を登録
+        
+        Args:
+            peer_id: ピアのエンティティID
+            public_key_hex: hexエンコードされたEd25519公開鍵
+        """
+        # hex -> bytes -> base64
+        public_key_bytes = bytes.fromhex(public_key_hex)
+        public_key_b64 = base64.b64encode(public_key_bytes).decode("ascii")
+        self._peer_public_keys[peer_id] = public_key_b64
+        
+        # Ed25519 -> X25519 変換（libsodium互換）
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+            
+            ed25519_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            # cryptographyライブラリには直接変換関数がないため、
+            # libsodiumの変換アルゴリズムを使用
+            x25519_bytes = self._ed25519_to_x25519_public(public_key_bytes)
+            x25519_b64 = base64.b64encode(x25519_bytes).decode("ascii")
+            self._peer_x25519_keys[peer_id] = x25519_b64
+        except Exception as e:
+            logger.warning(f"Could not convert Ed25519 to X25519 for {peer_id}: {e}")
+        
+        logger.debug(f"Added public key for peer: {peer_id}")
+    
+    def _ed25519_to_x25519_public(self, ed25519_public_bytes: bytes) -> bytes:
+        """Ed25519公開鍵をX25519公開鍵に変換（libsodium互換）
+        
+        libsodiumのcrypto_sign_ed25519_pk_to_curve25519と同等
+        """
+        # Ed25519とX25519は同じ基礎曲線を使用するが、エンコーディングが異なる
+        # この変換はlibsodiumの実装に従う
+        # 注意: 完全な変換にはlibsodium/PyNaClが必要な場合がある
+        
+        # 簡易実装: PyNaClが利用可能な場合はそれを使用
+        try:
+            from nacl.bindings import crypto_sign_ed25519_pk_to_curve25519
+            return crypto_sign_ed25519_pk_to_curve25519(ed25519_public_bytes)
+        except ImportError:
+            # PyNaClがない場合はエラーを返す
+            raise RuntimeError(
+                "PyNaCl required for Ed25519 to X25519 conversion. "
+                "Install with: pip install pynacl"
+            )
+    
+    def encrypt_payload_simple(
+        self, 
+        peer_id: str, 
+        payload: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """ペイロードを簡易E2E暗号化（peer_service互換）
+        
+        Args:
+            peer_id: 送信先ピアのエンティティID
+            payload: 暗号化するペイロード
+            
+        Returns:
+            {"encrypted": True, "ciphertext": "...", "nonce": "..."} または None
+        """
+        try:
+            # X25519公開鍵を取得
+            if peer_id not in self._peer_x25519_keys:
+                # Ed25519公開鍵から変換を試みる
+                if peer_id in self._peer_public_keys:
+                    ed25519_b64 = self._peer_public_keys[peer_id]
+                    ed25519_bytes = base64.b64decode(ed25519_b64)
+                    x25519_bytes = self._ed25519_to_x25519_public(ed25519_bytes)
+                    x25519_b64 = base64.b64encode(x25519_bytes).decode("ascii")
+                    self._peer_x25519_keys[peer_id] = x25519_b64
+                else:
+                    logger.error(f"No public key registered for peer: {peer_id}")
+                    return None
+            
+            peer_x25519_b64 = self._peer_x25519_keys[peer_id]
+            
+            # 暗号化実行
+            ciphertext_b64, nonce_b64 = self.encrypt_payload(
+                payload, peer_x25519_b64, peer_id
+            )
+            
+            return {
+                "encrypted": True,
+                "ciphertext": ciphertext_b64,
+                "nonce": nonce_b64
+            }
+        except Exception as e:
+            logger.error(f"Failed to encrypt payload for {peer_id}: {e}")
+            return None
+    
+    def decrypt_payload_simple(
+        self, 
+        peer_id: str, 
+        encrypted_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """暗号化されたペイロードを簡易復号（peer_service互換）
+        
+        Args:
+            peer_id: 送信元ピアのエンティティID
+            encrypted_data: {"ciphertext": "...", "nonce": "..."}
+            
+        Returns:
+            復号されたペイロード辞書、失敗時はNone
+        """
+        try:
+            ciphertext_b64 = encrypted_data.get("ciphertext")
+            nonce_b64 = encrypted_data.get("nonce")
+            
+            if not ciphertext_b64 or not nonce_b64:
+                logger.error("Missing ciphertext or nonce in encrypted data")
+                return None
+            
+            return self.decrypt_payload(ciphertext_b64, nonce_b64, peer_id)
+        except Exception as e:
+            logger.error(f"Failed to decrypt payload from {peer_id}: {e}")
+            return None
+
+    # ==================== Ed25519 Signatures ====================
+
+    def sign_message(self, message_data: Dict[str, Any]) -> str:
+        """メッセージにEd25519署名を付与
+        
+        Args:
+            message_data: 署名するメッセージデータ（辞書）
+            
+        Returns:
+            Base64エンコードされた署名
+        """
+        # 決定的なシリアライゼーション
+        message_bytes = json.dumps(message_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        signature = self._ed25519_private_key.sign(message_bytes)
+        return base64.b64encode(signature).decode("ascii")
+
+    def verify_signature(
+        self, 
+        message_data: Dict[str, Any], 
+        signature_b64: str, 
+        public_key_b64: str
+    ) -> bool:
+        """署名を検証
+        
+        Args:
+            message_data: メッセージデータ
+            signature_b64: Base64エンコードされた署名
+            public_key_b64: Base64エンコードされた送信者の公開鍵
+            
+        Returns:
+            署名が有効ならTrue
+        """
+        try:
+            public_key_bytes = base64.b64decode(public_key_b64)
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            
+            signature = base64.b64decode(signature_b64)
+            message_bytes = json.dumps(message_data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            
+            public_key.verify(signature, message_bytes)
+            return True
+        except (InvalidSignature, Exception) as e:
+            logger.warning(f"Signature verification failed: {e}")
+            return False
+
+    # ==================== X25519 + AES-256-GCM Encryption ====================
+
+    def derive_shared_key(self, peer_public_key_b64: str, peer_id: str) -> bytes:
+        """X25519鍵交換から共有鍵を導出
+        
+        Args:
+            peer_public_key_b64: 相手のX25519公開鍵（Base64）
+            peer_id: 相手のエンティティID
+            
+        Returns:
+            32バイトの共有鍵
+        """
+        if peer_id in self._shared_keys:
+            return self._shared_keys[peer_id]
+        
+        # エフェメラル鍵ペアを生成（まだない場合）
+        if self._x25519_private_key is None:
+            self.generate_x25519_keypair()
+        
+        # 相手の公開鍵をデコード
+        peer_public_bytes = base64.b64decode(peer_public_key_b64)
+        peer_public_key = X25519PublicKey.from_public_bytes(peer_public_bytes)
+        
+        # 共有秘密を導出
+        shared_secret = self._x25519_private_key.exchange(peer_public_key)
+        
+        # HKDFでAES-256鍵を導出
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        
+        shared_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=AES_KEY_SIZE_BYTES,
+            salt=None,
+            info=b"peer-communication-key",
+        ).derive(shared_secret)
+        
+        self._shared_keys[peer_id] = shared_key
+        return shared_key
+
+    def derive_session_key_v1_1(
+        self,
+        peer_public_key_b64: str,
+        peer_id: str,
+        handshake_hash: str,
+        salt: Optional[bytes] = None
+    ) -> bytes:
+        """v1.1プロトコル用セッション鍵を導出（HKDF-SHA256）
+        
+        Args:
+            peer_public_key_b64: 相手のX25519公開鍵（Base64）
+            peer_id: 相手のエンティティID
+            handshake_hash: ハンドシェイクメッセージのSHA256ハッシュ
+            salt: オプションのsalt（指定時はhandshake_hashより優先）
+            
+        Returns:
+            32バイトのセッション鍵
+        """
+        # エフェメラル鍵ペアを生成（まだない場合）
+        if self._x25519_private_key is None:
+            self.generate_x25519_keypair()
+        
+        # 相手の公開鍵をデコード
+        peer_public_bytes = base64.b64decode(peer_public_key_b64)
+        peer_public_key = X25519PublicKey.from_public_bytes(peer_public_bytes)
+        
+        # 共有秘密を導出
+        shared_secret = self._x25519_private_key.exchange(peer_public_key)
+        
+        # HKDF-SHA256でセッション鍵を導出
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        
+        # saltとしてhandshake_hashを使用
+        hkdf_salt = salt if salt is not None else bytes.fromhex(handshake_hash)
+        
+        session_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=AES_KEY_SIZE_BYTES,
+            salt=hkdf_salt,
+            info=b"peer-v1.1-session-key",
+        ).derive(shared_secret)
+        
+        # セッション鍵を保存
+        session_key_id = f"{peer_id}:session"
+        self._shared_keys[session_key_id] = session_key
+        
+        logger.info(f"Session key derived for v1.1 peer: {peer_id}")
+        return session_key
+
+    def compute_handshake_hash(
+        self,
+        messages: List[Dict[str, Any]]
+    ) -> str:
+        """ハンドシェイクメッセージのSHA256ハッシュを計算
+        
+        Args:
+            messages: ハンドシェイクメッセージのリスト
+            
+        Returns:
+            SHA256ハッシュ（hex）
+        """
+        import hashlib
+        
+        # 決定的なシリアライゼーション
+        data = json.dumps(messages, sort_keys=True, separators=(",", ":"))
+        hash_bytes = hashlib.sha256(data.encode("utf-8")).digest()
+        return hash_bytes.hex()
+
+    def encrypt_payload(
+        self, 
+        payload: Dict[str, Any], 
+        peer_public_key_b64: str, 
+        peer_id: str
+    ) -> Tuple[str, str]:
+        """ペイロードをAES-256-GCMで暗号化
+        
+        Args:
+            payload: 暗号化するペイロード
+            peer_public_key_b64: 相手のX25519公開鍵
+            peer_id: 相手のエンティティID
+            
+        Returns:
+            (暗号文Base64, nonce Base64)のタプル
+        """
+        shared_key = self.derive_shared_key(peer_public_key_b64, peer_id)
+        
+        # ランダムnonceを生成
+        nonce = secrets.token_bytes(NONCE_SIZE_BYTES)
+        
+        # AES-256-GCMで暗号化
+        aesgcm = AESGCM(shared_key)
+        plaintext = json.dumps(payload, sort_keys=True).encode("utf-8")
+        ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+        
+        return (
+            base64.b64encode(ciphertext).decode("ascii"),
+            base64.b64encode(nonce).decode("ascii")
+        )
+
+    def decrypt_payload(
+        self, 
+        ciphertext_b64: str, 
+        nonce_b64: str, 
+        peer_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """暗号文を復号
+        
+        Args:
+            ciphertext_b64: Base64エンコードされた暗号文
+            nonce_b64: Base64エンコードされたnonce
+            peer_id: 相手のエンティティID
+            
+        Returns:
+            復号されたペイロード、失敗時はNone
+        """
+        try:
+            if peer_id not in self._shared_keys:
+                logger.error(f"No shared key for peer: {peer_id}")
+                return None
+            
+            shared_key = self._shared_keys[peer_id]
+            nonce = base64.b64decode(nonce_b64)
+            ciphertext = base64.b64decode(ciphertext_b64)
+            
+            aesgcm = AESGCM(shared_key)
+            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            
+            return json.loads(plaintext.decode("utf-8"))
+        except Exception as e:
+            logger.error(f"Decryption failed: {e}")
+            return None
+
+    # ==================== JWT Authentication ====================
+
+    def create_jwt_token(self, audience: Optional[str] = None) -> str:
+        """JWTトークンを作成（5分間有効）
+        
+        Args:
+            audience: トークンの受信者（オプション）
+            
+        Returns:
+            JWTトークン文字列
+        """
+        now = datetime.now(timezone.utc)
+        expiry = now + timedelta(minutes=JWT_EXPIRY_MINUTES)
+        
+        payload = {
+            "sub": self.entity_id,
+            "iat": now,
+            "exp": expiry,
+            "iss": "peer-service",
+        }
+        
+        if audience:
+            payload["aud"] = audience
+        
+        # Ed25519秘密鍵で署名
+        private_key_pem = self._ed25519_private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        
+        token = jwt.encode(payload, private_key_pem, algorithm="EdDSA")
+        return token
+
+    def verify_jwt_token(
+        self, 
+        token: str, 
+        sender_public_key_b64: str,
+        audience: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """JWTトークンを検証
+        
+        Args:
+            token: JWTトークン
+            sender_public_key_b64: 送信者のEd25519公開鍵（Base64）
+            audience: 期待される受信者（オプション）
+            
+        Returns:
+            デコードされたペイロード、失敗時はNone
+        """
+        try:
+            public_key_bytes = base64.b64decode(sender_public_key_b64)
+            public_key = Ed25519PublicKey.from_public_bytes(public_key_bytes)
+            
+            public_key_pem = public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            
+            decoded = jwt.decode(
+                token,
+                public_key_pem,
+                algorithms=["EdDSA"],
+                audience=audience,
+                issuer="peer-service"
+            )
+            return decoded
+        except jwt.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            return None
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Invalid JWT token: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"JWT verification failed: {e}")
+            return None
+
+    # ==================== Replay Attack Prevention ====================
+
+    def generate_nonce(self) -> str:
+        """128-bitランダムnonceを生成"""
+        return base64.b64encode(secrets.token_bytes(NONCE_SIZE_BYTES)).decode("ascii")
+
+    def check_and_record_nonce(self, nonce: str, timestamp: float) -> bool:
+        """nonceをチェックし、リプレイ攻撃を防止
+        
+        Args:
+            nonce: メッセージのnonce
+            timestamp: メッセージのタイムスタンプ
+            
+        Returns:
+            有効なnonceならTrue、リプレイまたは無効ならFalse
+        """
+        now = time.time()
+        
+        # タイムスタンプの検証（60秒の許容範囲）
+        if abs(now - timestamp) > TIMESTAMP_TOLERANCE_SECONDS:
+            logger.warning(f"Timestamp out of tolerance: {timestamp} (now: {now})")
+            return False
+        
+        # 重複nonceのチェック（5分間のウィンドウ）
+        if nonce in self._seen_nonces:
+            logger.warning(f"Replay attack detected: duplicate nonce {nonce}")
+            return False
+        
+        # nonceを記録
+        self._seen_nonces.add(nonce)
+        self._nonce_timestamps[nonce] = now
+        
+        # 古いnonceをクリーンアップ（5分以上経過したもの）
+        self._cleanup_old_nonces()
+        
+        return True
+
+    def _cleanup_old_nonces(self) -> None:
+        """古いnonceエントリをクリーンアップ"""
+        now = time.time()
+        expired = [
+            nonce for nonce, ts in self._nonce_timestamps.items()
+            if now - ts > REPLAY_WINDOW_SECONDS
+        ]
+        for nonce in expired:
+            self._seen_nonces.discard(nonce)
+            del self._nonce_timestamps[nonce]
+
+    # ==================== Ed25519 to X25519 Conversion ====================
+
+    @staticmethod
+    def convert_ed25519_private_to_x25519(ed25519_private_bytes: bytes) -> bytes:
+        """
+        Ed25519秘密鍵をX25519秘密鍵に変換
+        
+        libsodiumのcrypto_sign_ed25519_sk_to_curve25519と同等の機能。
+        Ed25519の32バイトシードをX25519秘密鍵に変換する。
+        
+        Args:
+            ed25519_private_bytes: 32バイトまたは64バイトのEd25519秘密鍵
+                                   (32バイト=シード, 64バイト=シード+公開鍵)
+        
+        Returns:
+            32バイトのX25519秘密鍵
+            
+        Note:
+            Ed25519とX25519は同じ32バイトシードから導出されるが、
+            X25519ではclamp処理（特定ビットのクリア/セット）が必要
+        """
+        # 32バイトシードを抽出
+        if len(ed25519_private_bytes) == 64:
+            # PyNaCl形式: 64バイト (シード + 公開鍵)
+            seed = ed25519_private_bytes[:32]
+        elif len(ed25519_private_bytes) == 32:
+            # 純粋なシード
+            seed = ed25519_private_bytes
+        else:
+            raise ValueError(
+                f"Invalid Ed25519 private key length: {len(ed25519_private_bytes)}. "
+                "Expected 32 or 64 bytes."
+            )
+        
+        # X25519秘密鍵のclamp処理 (RFC 7748)
+        # ビット操作: 
+        # - 下位3ビットをクリア (0b11111000 と AND)
+        # - 第254ビットをセット (0x40 と OR)
+        # - 最上位ビットをクリア (0x7F と AND)
+        x25519_private = bytearray(seed)
+        x25519_private[0] &= 0xF8   # 下位3ビットクリア
+        x25519_private[31] &= 0x7F  # 最上位ビットクリア
+        x25519_private[31] |= 0x40  # 第254ビットセット
+        
+        return bytes(x25519_private)
+
+    @staticmethod
+    def convert_ed25519_public_to_x25519(ed25519_public_bytes: bytes) -> bytes:
+        """
+        Ed25519公開鍵をX25519公開鍵に変換
+        
+        libsodiumのcrypto_sign_ed25519_pk_to_curve25519と同等の機能。
+        Ed25519公開鍵(Edwards形式)をX25519公開鍵(Montgomery形式)に変換する。
+        
+        Args:
+            ed25519_public_bytes: 32バイトのEd25519公開鍵
+        
+        Returns:
+            32バイトのX25519公開鍵
+            
+        Raises:
+            ValueError: 無効な公開鍵の場合
+            
+        Note:
+            Ed25519公開鍵は圧縮されたEdwards形式(y座標 + signビット)で、
+            X25519公開鍵はMontgomery形式(u座標)なので、
+            Edwards->Montgomery曲線上の点変換が必要
+        """
+        if len(ed25519_public_bytes) != 32:
+            raise ValueError(
+                f"Invalid Ed25519 public key length: {len(ed25519_public_bytes)}. "
+                "Expected 32 bytes."
+            )
+        
+        # Ed25519公開鍵のデコード (圧縮形式: y座標 + signビット)
+        # 最上位ビットはxの符号、残りはy座標
+        y_bytes = bytearray(ed25519_public_bytes)
+        x_sign = (y_bytes[31] >> 7) & 1  # xの符号ビットを保存
+        y_bytes[31] &= 0x7F  # 符号ビットをクリアしてy座標に
+        
+        # yを整数として解釈 (リトルエンディアン)
+        y = int.from_bytes(y_bytes, byteorder='little')
+        
+        # Curve25519パラメータ
+        p = 2**255 - 19  # 素数
+        d = 0x52036CEE2B6FFE738CC740797779E89800700A4D4141D8AB75EB4DCA135978A3  # -121665/121666
+        
+        # Edwards -> Montgomery変換
+        # u = (1 + y) / (1 - y) (mod p)
+        # 
+        # ただし、分母が0になる場合は無効な点
+        
+        # 1 + y (mod p)
+        one_plus_y = (1 + y) % p
+        
+        # 1 - y (mod p)
+        one_minus_y = (1 - y) % p
+        
+        if one_minus_y == 0:
+            raise ValueError("Invalid Ed25519 public key: results in division by zero")
+        
+        # モジュラー逆数を計算: (1 - y)^(-1) (mod p)
+        # Fermatの小定理: a^(p-2) ≡ a^(-1) (mod p)
+        one_minus_y_inv = pow(one_minus_y, p - 2, p)
+        
+        # u = (1 + y) * (1 - y)^(-1) (mod p)
+        u = (one_plus_y * one_minus_y_inv) % p
+        
+        # uを32バイトリトルエンディアンにエンコード
+        x25519_public = u.to_bytes(32, byteorder='little')
+        
+        return x25519_public
+
+    def derive_shared_key_from_ed25519(
+        self,
+        peer_ed25519_public_b64: str,
+        peer_id: str
+    ) -> bytes:
+        """
+        Ed25519公開鍵からX25519共有鍵を導出
+        
+        自分のEd25519秘密鍵と相手のEd25519公開鍵を使用して、
+        X25519鍵交換を行い共有鍵を導出する。
+        
+        Args:
+            peer_ed25519_public_b64: 相手のEd25519公開鍵（Base64）
+            peer_id: 相手のエンティティID
+        
+        Returns:
+            32バイトの共有鍵
+        """
+        if peer_id in self._shared_keys:
+            return self._shared_keys[peer_id]
+        
+        # 自分のEd25519秘密鍵をX25519秘密鍵に変換
+        ed25519_private_bytes = self._ed25519_private_key.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        x25519_private_bytes = self.convert_ed25519_private_to_x25519(ed25519_private_bytes)
+        
+        # 相手のEd25519公開鍵をX25519公開鍵に変換
+        ed25519_public_bytes = base64.b64decode(peer_ed25519_public_b64)
+        x25519_public_bytes = self.convert_ed25519_public_to_x25519(ed25519_public_bytes)
+        
+        # X25519鍵ペアを作成
+        x25519_private_key = X25519PrivateKey.from_private_bytes(x25519_private_bytes)
+        x25519_public_key = X25519PublicKey.from_public_bytes(x25519_public_bytes)
+        
+        # ECDH鍵交換
+        shared_secret = x25519_private_key.exchange(x25519_public_key)
+        
+        # HKDFでAES-256鍵を導出
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+        
+        shared_key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=AES_KEY_SIZE_BYTES,
+            salt=None,
+            info=b"ed25519-x25519-key-derivation",
+        ).derive(shared_secret)
+        
+        self._shared_keys[peer_id] = shared_key
+        return shared_key
+
+    # ==================== High-Level Message Operations ====================
+
+    def create_secure_message(
+        self,
+        payload: Dict[str, Any],
+        encrypt: bool = False,
+        peer_public_key_b64: Optional[str] = None,
+        peer_id: Optional[str] = None,
+        include_jwt: bool = False,
+        jwt_audience: Optional[str] = None,
+    ) -> SecureMessage:
+        """セキュアメッセージを作成
+        
+        Args:
+            payload: メッセージペイロード
+            encrypt: 暗号化するかどうか
+            peer_public_key_b64: 暗号化時に使用する相手の公開鍵
+            peer_id: 暗号化時に使用する相手のID
+            include_jwt: JWTトークンを含めるか
+            jwt_audience: JWTのaudience
+            
+        Returns:
+            SecureMessageオブジェクト
+        """
+        timestamp = time.time()
+        message_nonce = self.generate_nonce()
+        
+        # ペイロード暗号化
+        encrypted_payload = None
+        enc_nonce = None
+        if encrypt and peer_public_key_b64 and peer_id:
+            ciphertext, enc_nonce = self.encrypt_payload(
+                payload, peer_public_key_b64, peer_id
+            )
+            encrypted_payload = ciphertext
+        
+        # 署名対象データ（ペイロードと送信者のみ）
+        # nonceとtimestampはリプレイ防止・期限切れ検出に使用されるため、
+        # 署名対象からは除外して、暗号化nonceと独立させる
+        sign_data = {
+            "payload": payload,
+            "sender": self.entity_id,
+        }
+        
+        # 署名
+        signature = self.sign_message(sign_data)
+        
+        # 使用するnonceを決定（暗号化時は暗号化用nonceをメッセージに含める）
+        nonce = enc_nonce if enc_nonce else message_nonce
+        
+        # JWTトークン
+        jwt_token = None
+        if include_jwt:
+            jwt_token = self.create_jwt_token(audience=jwt_audience)
+        
+        return SecureMessage(
+            payload=payload if not encrypt else {},
+            timestamp=timestamp,
+            nonce=nonce,
+            signature=signature,
+            encrypted_payload=encrypted_payload,
+            sender_public_key=self.get_ed25519_public_key_b64(),
+            jwt_token=jwt_token,
+        )
+
+    def verify_and_decrypt_message(
+        self,
+        message: SecureMessage,
+        require_encryption: bool = False,
+        peer_id: Optional[str] = None,
+        verify_jwt: bool = False,
+        jwt_audience: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """セキュアメッセージを検証・復号
+        
+        Args:
+            message: 検証するSecureMessage
+            require_encryption: 暗号化を必須とするか
+            peer_id: 復号時に使用する相手のID
+            verify_jwt: JWTを検証するか
+            jwt_audience: JWTの期待audience
+            
+        Returns:
+            検証成功時はペイロード、失敗時はNone
+        """
+        # 1. リプレイ防止チェック
+        if not self.check_and_record_nonce(message.nonce, message.timestamp):
+            logger.error("Nonce validation failed (possible replay attack)")
+            return None
+        
+        # 2. ペイロード復号（暗号化されている場合）
+        payload_for_verification = message.payload
+        if message.encrypted_payload:
+            if not peer_id:
+                logger.error("peer_id required for decryption")
+                return None
+            decrypted = self.decrypt_payload(
+                message.encrypted_payload,
+                message.nonce,
+                peer_id
+            )
+            if decrypted is None:
+                logger.error("Decryption failed")
+                return None
+            payload_for_verification = decrypted
+        elif require_encryption:
+            logger.error("Encryption required but payload is not encrypted")
+            return None
+        
+        # 3. 署名検証（復号後のペイロードで検証）
+        sign_data = {
+            "payload": payload_for_verification,
+            "sender": payload_for_verification.get("from", "unknown"),
+        }
+        
+        if not message.sender_public_key:
+            logger.error("Missing sender public key")
+            return None
+        
+        if not self.verify_signature(sign_data, message.signature, message.sender_public_key):
+            logger.error("Signature verification failed")
+            return None
+        
+        # 4. JWT検証（要求された場合）
+        if verify_jwt and message.jwt_token:
+            jwt_payload = self.verify_jwt_token(
+                message.jwt_token,
+                message.sender_public_key,
+                audience=jwt_audience
+            )
+            if jwt_payload is None:
+                logger.error("JWT verification failed")
+                return None
+        
+        return payload_for_verification
+
+
+def generate_entity_keypair() -> Tuple[str, str]:
+    """新しいEd25519鍵ペアを生成
+    
+    Returns:
+        (private_key_hex, public_key_hex)のタプル
+    """
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+    
+    private_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()
+    )
+    public_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw
+    )
+    
+    return private_bytes.hex(), public_bytes.hex()
+
+
+# テスト用
+def _test_crypto():
+    """暗号ユーティリティのテスト"""
+    print("=== Testing Crypto Utils ===")
+    
+    # 鍵ペア生成
+    priv_a, pub_a = generate_entity_keypair()
+    priv_b, pub_b = generate_entity_keypair()
+    print(f"Entity A keys generated: {pub_a[:16]}...")
+    print(f"Entity B keys generated: {pub_b[:16]}...")
+    
+    # CryptoManager初期化
+    os.environ["ENTITY_PRIVATE_KEY"] = priv_a
+    crypto_a = CryptoManager("entity-a")
+    
+    os.environ["ENTITY_PRIVATE_KEY"] = priv_b
+    crypto_b = CryptoManager("entity-b")
+    
+    # 署名テスト
+    print("\n--- Signature Test ---")
+    payload = {"type": "test", "data": "hello"}
+    sig = crypto_a.sign_message(payload)
+    print(f"Signature created: {sig[:32]}...")
+    
+    valid = crypto_b.verify_signature(payload, sig, crypto_a.get_ed25519_public_key_b64())
+    print(f"Signature valid: {valid}")
+    
+    # 暗号化テスト
+    print("\n--- Encryption Test ---")
+    crypto_a.generate_x25519_keypair()
+    crypto_b.generate_x25519_keypair()
+    
+    pub_key_b_x25519 = crypto_b.get_x25519_public_key_b64()
+    
+    ciphertext, nonce = crypto_a.encrypt_payload(payload, pub_key_b_x25519, "entity-b")
+    print(f"Encrypted payload: {ciphertext[:32]}...")
+    
+    decrypted = crypto_b.decrypt_payload(ciphertext, nonce, "entity-a")
+    print(f"Decrypted payload: {decrypted}")
+    print(f"Decryption successful: {decrypted == payload}")
+    
+    # JWTテスト
+    print("\n--- JWT Test ---")
+    token = crypto_a.create_jwt_token(audience="entity-b")
+    print(f"JWT created: {token[:50]}...")
+    
+    decoded = crypto_b.verify_jwt_token(token, crypto_a.get_ed25519_public_key_b64(), audience="entity-b")
+    print(f"JWT valid: {decoded is not None}")
+    if decoded:
+        print(f"JWT payload: {decoded}")
+    
+    # リプレイ防止テスト
+    print("\n--- Replay Protection Test ---")
+    import time
+    nonce1 = crypto_a.generate_nonce()
+    ts = time.time()
+    
+    result1 = crypto_b.check_and_record_nonce(nonce1, ts)
+    print(f"First nonce check: {result1}")
+    
+    result2 = crypto_b.check_and_record_nonce(nonce1, ts)
+    print(f"Replay check (should fail): {result2}")
+    
+    # 古いタイムスタンプテスト
+    old_ts = ts - 120  # 2分前
+    old_nonce = crypto_a.generate_nonce()
+    result3 = crypto_b.check_and_record_nonce(old_nonce, old_ts)
+    print(f"Old timestamp check (should fail): {result3}")
+    
+    # セキュアメッセージテスト
+    print("\n--- Secure Message Test ---")
+    
+    # 共有鍵の事前交換（実際にはハンドシェイクで行う）
+    crypto_a.derive_shared_key(crypto_b.get_x25519_public_key_b64(), "entity-b")
+    crypto_b.derive_shared_key(crypto_a.get_x25519_public_key_b64(), "entity-a")
+    
+    secure_msg = crypto_a.create_secure_message(
+        payload={"from": "entity-a", "type": "hello", "data": "world"},
+        encrypt=True,
+        peer_public_key_b64=crypto_b.get_x25519_public_key_b64(),
+        peer_id="entity-b",
+        include_jwt=True,
+        jwt_audience="entity-b"
+    )
+    print(f"Secure message created: type={type(secure_msg)}")
+    
+    verified = crypto_b.verify_and_decrypt_message(
+        secure_msg,
+        peer_id="entity-a",
+        verify_jwt=True,
+        jwt_audience="entity-b"
+    )
+    print(f"Message verified and decrypted: {verified is not None}")
+    if verified:
+        print(f"Payload: {verified}")
+    
+    print("\n=== All tests completed ===")
+
+
+class WalletManager:
+    """ウォレット永続化管理クラス
+    
+    Ed25519鍵ペアをAES-256-GCMで暗号化してファイルに保存・読み込みする。
+    PBKDF2を使用してパスワードから暗号化鍵を導出する。
+    """
+    
+    # 定数
+    WALLET_VERSION = 1
+    PBKDF2_ITERATIONS = 600000  # OWASP推奨値
+    SALT_SIZE_BYTES = 32  # 256-bit salt
+    NONCE_SIZE_BYTES = 12  # 96-bit nonce for AES-GCM
+    
+    def __init__(self, wallet_path: Optional[str] = None):
+        """WalletManagerを初期化
+        
+        Args:
+            wallet_path: ウォレットファイルのパス（省略時は ~/.peer_service/wallet.json）
+        """
+        if wallet_path is None:
+            wallet_path = os.path.expanduser("~/.peer_service/wallet.json")
+        
+        self.wallet_path = wallet_path
+        self._wallet_dir = os.path.dirname(wallet_path)
+        self._private_key_hex: Optional[str] = None
+        self._public_key_hex: Optional[str] = None
+    
+    def wallet_exists(self) -> bool:
+        """ウォレットファイルが存在するかチェック
+        
+        Returns:
+            ウォレットファイルが存在すればTrue
+        """
+        return os.path.exists(self.wallet_path)
+    
+    def _ensure_wallet_directory(self) -> None:
+        """ウォレットディレクトリが存在しない場合は作成"""
+        if self._wallet_dir and not os.path.exists(self._wallet_dir):
+            os.makedirs(self._wallet_dir, mode=0o700)  # 所有者のみアクセス可能
+    
+    def _derive_key_from_password(self, password: str, salt: bytes) -> bytes:
+        """パスワードからPBKDF2で暗号化鍵を導出
+        
+        Args:
+            password: ユーザーのパスワード
+            salt: ランダムソルト
+            
+        Returns:
+            32バイトの暗号化鍵
+        """
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=AES_KEY_SIZE_BYTES,
+            salt=salt,
+            iterations=self.PBKDF2_ITERATIONS,
+        )
+        return kdf.derive(password.encode("utf-8"))
+    
+    def create_wallet(self, password: str) -> Tuple[str, str]:
+        """新しいウォレットを作成して保存
+        
+        Args:
+            password: ウォレットを保護するパスワード
+            
+        Returns:
+            (private_key_hex, public_key_hex)のタプル
+            
+        Raises:
+            ValueError: パスワードが空の場合
+            FileExistsError: ウォレットが既に存在する場合
+        """
+        if not password:
+            raise ValueError("Password cannot be empty")
+        
+        if self.wallet_exists():
+            raise FileExistsError(f"Wallet already exists at {self.wallet_path}")
+        
+        # 新しい鍵ペアを生成
+        private_key_hex, public_key_hex = generate_entity_keypair()
+        
+        # 暗号化用のソルトとnonceを生成
+        salt = secrets.token_bytes(self.SALT_SIZE_BYTES)
+        nonce = secrets.token_bytes(self.NONCE_SIZE_BYTES)
+        
+        # パスワードから暗号化鍵を導出
+        encryption_key = self._derive_key_from_password(password, salt)
+        
+        # 秘密鍵をAES-256-GCMで暗号化
+        private_key_bytes = bytes.fromhex(private_key_hex)
+        aesgcm = AESGCM(encryption_key)
+        ciphertext = aesgcm.encrypt(nonce, private_key_bytes, None)
+        
+        # ウォレットデータを構築
+        wallet_data = {
+            "version": self.WALLET_VERSION,
+            "public_key": public_key_hex,
+            "encrypted_private_key": base64.b64encode(ciphertext).decode("ascii"),
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "nonce": base64.b64encode(nonce).decode("ascii"),
+        }
+        
+        # ディレクトリを作成して保存
+        self._ensure_wallet_directory()
+        with open(self.wallet_path, "w", encoding="utf-8") as f:
+            json.dump(wallet_data, f, indent=2)
+        
+        # パーミッションを設定（所有者のみ読み書き）
+        os.chmod(self.wallet_path, 0o600)
+        
+        # メモリに保持
+        self._private_key_hex = private_key_hex
+        self._public_key_hex = public_key_hex
+        
+        logger.info(f"Wallet created successfully at {self.wallet_path}")
+        return private_key_hex, public_key_hex
+    
+    def load_wallet(self, password: str) -> Tuple[str, str]:
+        """既存のウォレットを読み込み
+        
+        Args:
+            password: ウォレットのパスワード
+            
+        Returns:
+            (private_key_hex, public_key_hex)のタプル
+            
+        Raises:
+            FileNotFoundError: ウォレットが存在しない場合
+            ValueError: パスワードが間違っているか形式が無効な場合
+        """
+        if not self.wallet_exists():
+            raise FileNotFoundError(f"Wallet not found at {self.wallet_path}")
+        
+        # ウォレットファイルを読み込み
+        with open(self.wallet_path, "r", encoding="utf-8") as f:
+            wallet_data = json.load(f)
+        
+        # バージョンチェック
+        version = wallet_data.get("version")
+        if version != self.WALLET_VERSION:
+            raise ValueError(f"Unsupported wallet version: {version}")
+        
+        # データをデコード
+        try:
+            ciphertext = base64.b64decode(wallet_data["encrypted_private_key"])
+            salt = base64.b64decode(wallet_data["salt"])
+            nonce = base64.b64decode(wallet_data["nonce"])
+            public_key_hex = wallet_data["public_key"]
+        except (KeyError, base64.binascii.Error) as e:
+            raise ValueError(f"Invalid wallet format: {e}")
+        
+        # パスワードから暗号化鍵を導出
+        encryption_key = self._derive_key_from_password(password, salt)
+        
+        # 秘密鍵を復号
+        try:
+            aesgcm = AESGCM(encryption_key)
+            private_key_bytes = aesgcm.decrypt(nonce, ciphertext, None)
+        except Exception as e:
+            raise ValueError("Invalid password or corrupted wallet data") from e
+        
+        private_key_hex = private_key_bytes.hex()
+        
+        # 整合性チェック：公開鍵が一致するか確認
+        try:
+            private_key = Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+            derived_public_key = private_key.public_key()
+            derived_public_bytes = derived_public_key.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            )
+            if derived_public_bytes.hex() != public_key_hex:
+                raise ValueError("Public key mismatch: wallet may be corrupted")
+        except Exception as e:
+            raise ValueError(f"Key validation failed: {e}")
+        
+        # メモリに保持
+        self._private_key_hex = private_key_hex
+        self._public_key_hex = public_key_hex
+        
+        logger.info(f"Wallet loaded successfully from {self.wallet_path}")
+        return private_key_hex, public_key_hex
+    
+    def get_keys(self) -> Tuple[Optional[str], Optional[str]]:
+        """メモリにロードされた鍵を取得
+        
+        Returns:
+            (private_key_hex, public_key_hex)のタプル（未ロード時はNone）
+        """
+        return self._private_key_hex, self._public_key_hex
+    
+    def delete_wallet(self) -> None:
+        """ウォレットファイルを削除
+        
+        Raises:
+            FileNotFoundError: ウォレットが存在しない場合
+        """
+        if not self.wallet_exists():
+            raise FileNotFoundError(f"Wallet not found at {self.wallet_path}")
+        
+        os.remove(self.wallet_path)
+        self._private_key_hex = None
+        self._public_key_hex = None
+        logger.info(f"Wallet deleted: {self.wallet_path}")
+
+
+def _test_wallet_manager():
+    """WalletManagerのテスト"""
+    import tempfile
+    import shutil
+    
+    print("\n=== Testing WalletManager ===")
+    
+    # テスト用の一時ディレクトリを作成
+    test_dir = tempfile.mkdtemp()
+    wallet_path = os.path.join(test_dir, "test_wallet.json")
+    
+    try:
+        wallet = WalletManager(wallet_path)
+        password = "test_password_123"
+        
+        # テスト1: 存在確認（まだ存在しない）
+        print("\n--- Test 1: Wallet Existence Check ---")
+        exists = wallet.wallet_exists()
+        print(f"Wallet exists (should be False): {exists}")
+        assert not exists, "Wallet should not exist initially"
+        
+        # テスト2: ウォレット作成
+        print("\n--- Test 2: Create Wallet ---")
+        priv_key, pub_key = wallet.create_wallet(password)
+        print(f"Wallet created")
+        print(f"  Public key: {pub_key[:32]}...")
+        print(f"  Private key: {priv_key[:16]}...")
+        
+        exists = wallet.wallet_exists()
+        print(f"Wallet exists (should be True): {exists}")
+        assert exists, "Wallet should exist after creation"
+        
+        # ファイルパーミッションチェック
+        mode = os.stat(wallet_path).st_mode
+        print(f"File permissions: {oct(mode & 0o777)}")
+        
+        # テスト3: 既存ウォレットで作成しようとするとエラー
+        print("\n--- Test 3: Duplicate Creation Prevention ---")
+        try:
+            wallet.create_wallet(password)
+            assert False, "Should have raised FileExistsError"
+        except FileExistsError as e:
+            print(f"Correctly prevented duplicate: {e}")
+        
+        # テスト4: 新しいインスタンスで読み込み
+        print("\n--- Test 4: Load Wallet ---")
+        wallet2 = WalletManager(wallet_path)
+        loaded_priv, loaded_pub = wallet2.load_wallet(password)
+        print(f"Wallet loaded successfully")
+        print(f"  Public key matches: {loaded_pub == pub_key}")
+        print(f"  Private key matches: {loaded_priv == priv_key}")
+        assert loaded_pub == pub_key, "Public keys should match"
+        assert loaded_priv == priv_key, "Private keys should match"
+        
+        # テスト5: 間違ったパスワード
+        print("\n--- Test 5: Wrong Password ---")
+        try:
+            wallet2.load_wallet("wrong_password")
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            print(f"Correctly rejected wrong password: {e}")
+        
+        # テスト6: CryptoManagerとの連携
+        print("\n--- Test 6: Integration with CryptoManager ---")
+        os.environ["ENTITY_PRIVATE_KEY"] = loaded_priv
+        crypto = CryptoManager("test-entity")
+        
+        # 署名テスト
+        test_payload = {"type": "wallet_test", "message": "hello"}
+        signature = crypto.sign_message(test_payload)
+        print(f"Signature created with loaded key: {signature[:32]}...")
+        
+        # 自分で検証
+        is_valid = crypto.verify_signature(
+            test_payload, 
+            signature, 
+            crypto.get_ed25519_public_key_b64()
+        )
+        print(f"Self-verification: {is_valid}")
+        assert is_valid, "Signature should be valid"
+        
+        # テスト7: ウォレットファイルの内容確認
+        print("\n--- Test 7: Wallet File Structure ---")
+        with open(wallet_path, "r") as f:
+            wallet_content = json.load(f)
+        print(f"Wallet version: {wallet_content['version']}")
+        print(f"Has public_key: {'public_key' in wallet_content}")
+        print(f"Has encrypted_private_key: {'encrypted_private_key' in wallet_content}")
+        print(f"Has salt: {'salt' in wallet_content}")
+        print(f"Has nonce: {'nonce' in wallet_content}")
+        
+        # テスト8: 空パスワード拒否
+        print("\n--- Test 8: Empty Password Rejection ---")
+        empty_wallet_path = os.path.join(test_dir, "empty_wallet.json")
+        empty_wallet = WalletManager(empty_wallet_path)
+        try:
+            empty_wallet.create_wallet("")
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            print(f"Correctly rejected empty password: {e}")
+        
+        # テスト9: 存在しないウォレット読み込みエラー
+        print("\n--- Test 9: Non-existent Wallet Load ---")
+        nonexistent_wallet = WalletManager(os.path.join(test_dir, "nonexistent.json"))
+        try:
+            nonexistent_wallet.load_wallet(password)
+            assert False, "Should have raised FileNotFoundError"
+        except FileNotFoundError as e:
+            print(f"Correctly reported missing wallet: {e}")
+        
+        print("\n=== All WalletManager tests passed ===")
+        
+    finally:
+        # クリーンアップ
+        shutil.rmtree(test_dir)
+        print(f"\nCleaned up test directory: {test_dir}")
+
+
+if __name__ == "__main__":
+    _test_crypto()
+    _test_wallet_manager()

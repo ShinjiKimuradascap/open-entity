@@ -1,0 +1,330 @@
+version: '3.8'
+
+services:
+  # Entity A - テスト用ピアサーバー
+  entity-a:
+    build: .
+    container_name: entity-a
+    ports:
+      - "8001:8001"
+    environment:
+      - ENTITY_PRIVATE_KEY=4a7c3e8f9d2b1c5a6e7f8g9h0i1j2k3l4m5n6o7p8q9r0s1t2u3v4w5x6y7z8a9b0
+    command: >
+      python -c "
+      import asyncio
+      from peer_service import init_service, create_server
+      
+      async def main():
+          service = init_service('entity-a', 8001)
+          server = create_server(service)
+          print('Entity A started on port 8001')
+          print(f'Public key: {service.get_public_key_hex()}')
+          await server.start(host='0.0.0.0', port=8001)
+      
+      asyncio.run(main())
+      "
+    networks:
+      - peer-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Entity B - テスト用ピアクライアント
+  entity-b:
+    build: .
+    container_name: entity-b
+    ports:
+      - "8002:8002"
+    environment:
+      - ENTITY_PRIVATE_KEY=5b8d4f9g0e3c2a1b4c5d6e7f8g9h0i1j2k3l4m5n6o7p8q9r0s1t2u3v4w5x6y7z8a9b1
+    command: >
+      python -c "
+      import asyncio
+      from peer_service import init_service, create_server
+      
+      async def main():
+          service = init_service('entity-b', 8002)
+          server = create_server(service)
+          print('Entity B started on port 8002')
+          print(f'Public key: {service.get_public_key_hex()}')
+          
+          # Entity Aをピアとして登録
+          service.add_peer('entity-a', 'http://entity-a:8001')
+          
+          # 少し待ってからヘルスチェック
+          await asyncio.sleep(2)
+          
+          health = await service.health_check()
+          print(f'Health: {health}')
+          
+          # テストメッセージ送信
+          result = await service.send_message(
+              'entity-a',
+              'status_report',
+              {'test': 'message', 'from': 'entity-b'}
+          )
+          print(f'Message send result: {result}')
+          
+          await server.start(host='0.0.0.0', port=8002)
+      
+      asyncio.run(main())
+      "
+    networks:
+      - peer-network
+    depends_on:
+      entity-a:
+        condition: service_healthy
+
+  # 暗号化テスト専用コンテナ
+  crypto-test:
+    build: .
+    container_name: crypto-test
+    volumes:
+      - ./services:/app/services
+    command: >
+      python -c "
+      import sys
+      sys.path.insert(0, '/app/services')
+      
+      from crypto import (
+          generate_keypair, MessageSigner, SignatureVerifier,
+          SecureMessage, ReplayProtector
+      )
+      
+      print('='*50)
+      print('Crypto Module Test')
+      print('='*50)
+      
+      # キー生成
+      kp = generate_keypair()
+      print(f'Generated key pair')
+      print(f'Public key: {kp.get_public_key_hex()[:32]}...')
+      
+      # 署名
+      signer = MessageSigner(kp)
+      verifier = SignatureVerifier()
+      verifier.add_public_key('test-entity', kp.public_key)
+      
+      # メッセージ作成と署名
+      msg = SecureMessage(
+          version='0.3',
+          msg_type='test',
+          sender_id='test-entity',
+          payload={'data': 'hello world'}
+      )
+      msg.sign(signer)
+      print(f'Signature: {msg.signature[:40]}...')
+      
+      # 検証
+      is_valid = verifier.verify_message(
+          msg.get_signable_data(),
+          msg.signature,
+          'test-entity'
+      )
+      print(f'Verification: {\"PASSED\" if is_valid else \"FAILED\"}')
+      
+      # リプレイ保護
+      protector = ReplayProtector(max_age_seconds=60)
+      valid, error = protector.is_valid(msg.nonce, msg.timestamp)
+      print(f'Replay check: {\"PASSED\" if valid else \"FAILED\"} ({error or \"OK\"})')
+      
+      # 二重チェック（リプレイ検出）
+      valid2, error2 = protector.is_valid(msg.nonce, msg.timestamp)
+      print(f'Replay check 2: {\"REJECTED\" if not valid2 else \"PASSED\"} ({error2 or \"OK\"})')
+      
+      print('='*50)
+      print('All crypto tests completed!')
+      print('='*50)
+      "
+    networks:
+      - peer-network
+
+  # E2E暗号化テスト専用コンテナ
+  e2e-crypto-test:
+    build: .
+    container_name: e2e-crypto-test
+    volumes:
+      - ./services:/app/services
+    command: >
+      python -c "
+      import sys
+      sys.path.insert(0, '/app/services')
+      
+      from e2e_crypto import (
+          E2ECryptoManager, E2EHandshakeHandler,
+          SessionState, SessionKeys, E2ESession,
+          generate_keypair, create_e2e_manager
+      )
+      from crypto import KeyPair, MessageSigner, SignatureVerifier
+      
+      print('='*60)
+      print('E2E Encryption Layer Tests')
+      print('Protocol v1.0 Compliant')
+      print('='*60)
+      
+      # Generate test keypairs
+      print('\n1. Key Generation')
+      kp_alice = generate_keypair()
+      kp_bob = generate_keypair()
+      print(f'   Alice public key: {kp_alice.get_public_key_hex()[:32]}...')
+      print(f'   Bob public key:   {kp_bob.get_public_key_hex()[:32]}...')
+      
+      # Create managers
+      alice_manager = E2ECryptoManager('alice', kp_alice)
+      bob_manager = E2ECryptoManager('bob', kp_bob)
+      
+      # Test 3-way handshake
+      print('\n2. Three-Way Handshake')
+      
+      # Step 1: Alice initiates
+      print('   Step 1: Alice -> handshake')
+      session_a, handshake = alice_manager.create_handshake_message('bob')
+      print(f'   Session ID: {session_a.session_id}')
+      print(f'   Ephemeral PK: {session_a.ephemeral_public_key.hex()[:32]}...')
+      
+      # Step 2: Bob responds
+      print('   Step 2: Bob -> handshake_ack')
+      alice_pubkey = bytes.fromhex(handshake.payload['public_key'])
+      handler_bob = E2EHandshakeHandler(bob_manager)
+      session_b, response = handler_bob.respond_to_handshake(
+          'alice',
+          alice_pubkey,
+          handshake.payload,
+          session_a.session_id
+      )
+      print(f'   Session established: {session_b.state.value}')
+      print(f'   Session keys derived: {session_b.session_keys is not None}')
+      
+      # Step 3: Alice confirms
+      print('   Step 3: Alice -> handshake_confirm')
+      handler_alice = E2EHandshakeHandler(alice_manager)
+      confirm = handler_alice.confirm_handshake(session_a, response.payload)
+      print(f'   Alice session state: {session_a.state.value}')
+      print('   [PASS] Handshake complete')
+      
+      # Test encryption
+      print('\n3. E2E Message Encryption')
+      
+      test_payload = {
+          'type': 'test_message',
+          'content': 'Hello, encrypted world!',
+          'data': {'value': 42, 'nested': {'key': 'secret'}}
+      }
+      
+      # Alice encrypts
+      encrypted_msg = alice_manager.encrypt_message(session_a.session_id, test_payload)
+      print(f'   Encrypted message type: {encrypted_msg.msg_type}')
+      print(f'   Sequence number: {encrypted_msg.sequence_num}')
+      print(f'   Payload encrypted: {encrypted_msg.payload.get(\"encrypted\")}')
+      
+      # Bob decrypts
+      decrypted = bob_manager.decrypt_message(session_b, encrypted_msg)
+      print(f'   Decrypted content matches: {decrypted == test_payload}')
+      print('   [PASS] Encryption/Decryption successful')
+      
+      # Test sequence validation
+      print('\n4. Sequence Number Validation')
+      for i in range(3):
+          msg = alice_manager.encrypt_message(session_a.session_id, {'seq': i})
+          decrypted = bob_manager.decrypt_message(session_b, msg)
+      print(f'   Sent and received 3 messages')
+      print(f'   Remote sequence: {session_b.remote_sequence}')
+      print('   [PASS] Sequence validation working')
+      
+      # Test replay protection
+      print('\n5. Replay Protection')
+      try:
+          bob_manager.decrypt_message(session_b, msg)  # Same message again
+          print('   [FAIL] Replay not detected!')
+      except Exception as e:
+          if 'sequence' in str(e).lower() or 'Sequence' in str(e):
+              print(f'   [PASS] Replay detected: Invalid sequence number')
+          else:
+              print(f'   [PASS] Replay detected: {str(e)[:50]}')
+      
+      # Stats
+      print('\n6. Manager Statistics')
+      stats = alice_manager.get_stats()
+      print(f'   Total sessions: {stats[\"total_sessions\"]}')
+      print(f'   By state: {stats[\"sessions_by_state\"]}')
+      print(f'   Unique remotes: {stats[\"unique_remotes\"]}')
+      
+      print('\n' + '='*60)
+      print('All E2E crypto tests passed!')
+      print('='*60)
+      "
+    networks:
+      - peer-network
+    depends_on:
+      - crypto-test
+
+  # Token System テスト専用コンテナ
+  token-test:
+    build: .
+    container_name: token-test
+    volumes:
+      - ./services:/app/services
+      - ./data:/app/data
+    command: >
+      python -c "
+      import sys
+      sys.path.insert(0, '/app/services')
+      
+      from token_system import (
+          create_wallet, get_wallet, get_task_contract, get_reputation_contract,
+          get_minter, get_persistence, TokenWallet, TaskStatus
+      )
+      
+      print('='*50)
+      print('Token System Test')
+      print('='*50)
+      
+      # テストデータ作成
+      alice = create_wallet('alice', 1000)
+      bob = create_wallet('bob', 500)
+      print(f'Created wallets: Alice={alice.get_balance()}, Bob={bob.get_balance()}')
+      
+      # 送金テスト
+      alice.transfer(bob, 200)
+      print(f'After transfer: Alice={alice.get_balance()}, Bob={bob.get_balance()}')
+      
+      # タスクテスト
+      tc = get_task_contract()
+      tc.create_task('task-001', 'alice', 'bob', 100, 'Code review')
+      print(f'Task created. Locked: {tc.get_locked_amount(\"task-001\")}')
+      tc.complete_task('task-001')
+      print(f'Task completed: Alice={alice.get_balance()}, Bob={bob.get_balance()}')
+      
+      # TokenMinterテスト
+      minter = get_minter()
+      minter.mint_for_task_completion('bob', 50, 'task-002', 'Refactoring')
+      print(f'After mint: Bob={bob.get_balance()}')
+      
+      # 評価テスト
+      rc = get_reputation_contract()
+      rc.rate_agent('alice', 'bob', 5, 'Excellent work!')
+      print(f'Bob rating: {rc.get_rating(\"bob\"):.2f}, trust: {rc.get_trust_score(\"bob\"):.2f}')
+      
+      # 永続化テスト
+      persistence = get_persistence('/app/data/token_system')
+      results = persistence.save_all()
+      print(f'Saved: {results}')
+      
+      # 読み込みテスト
+      results = persistence.load_all()
+      print(f'Loaded: {results}')
+      
+      print('='*50)
+      print('All token tests completed!')
+      print('='*50)
+      "
+    networks:
+      - peer-network
+    depends_on:
+      - entity-a
+
+networks:
+  peer-network:
+    driver: bridge

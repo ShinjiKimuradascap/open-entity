@@ -23,6 +23,7 @@ from .skill_tools import load_skill, list_loaded_skills, execute_skill
 from .project_context import get_project_context
 from .mobile import NotifyMobileTool, RequestLocationTool, send_file_to_mobile, get_pending_artifacts, clear_artifacts, set_current_session
 from .scheduler import schedule_task, list_scheduled_tasks, remove_scheduled_task
+from .peer import talk_to_peer, wake_up_peer, report_to_peer, check_peer_alive, restart_peer
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ TOOL_MAP = {
     "wake_up_peer": wake_up_peer,
     "report_to_peer": report_to_peer,
     "check_peer_alive": check_peer_alive,
+    "restart_peer": restart_peer,
     # NOTE: browser_* ツールは discovery.py で自動的に読み込まれる
 }
 

@@ -3,7 +3,7 @@
 
 from typing import Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 
 @dataclass
@@ -16,7 +16,7 @@ class ServiceInfo:
     last_heartbeat: datetime
     
     def is_alive(self, timeout_sec: int = 60) -> bool:
-        delta = datetime.utcnow() - self.last_heartbeat
+        delta = datetime.now(timezone.utc) - self.last_heartbeat
         return delta.seconds < timeout_sec
 
 
@@ -29,7 +29,7 @@ class ServiceRegistry:
     def register(self, entity_id: str, name: str, endpoint: str, 
                  capabilities: List[str]) -> bool:
         """Register a new service"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         self._services[entity_id] = ServiceInfo(
             entity_id=entity_id,
             entity_name=name,
@@ -50,7 +50,7 @@ class ServiceRegistry:
     def heartbeat(self, entity_id: str) -> bool:
         """Update heartbeat timestamp"""
         if entity_id in self._services:
-            self._services[entity_id].last_heartbeat = datetime.utcnow()
+            self._services[entity_id].last_heartbeat = datetime.now(timezone.utc)
             return True
         return False
         

@@ -36,5 +36,5 @@ USER moco
 # ポート
 EXPOSE 8000
 
-# デフォルトコマンド
-CMD ["open-entity", "ui", "--host", "0.0.0.0"]
+# デフォルトコマンド（--reload でホットリロード有効）
+CMD ["open-entity", "ui", "--host", "0.0.0.0", "--reload"]
