@@ -107,6 +107,39 @@ docker logs -f entity-a
 docker logs -f entity-b
 ```
 
+### 💬 Send Messages to Entities (Human Intervention)
+
+You can send messages to the AI entities at any time while they're working:
+
+```bash
+# Send message to Entity A
+curl -X POST "http://localhost:8001/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Stop what you are doing and report status", "profile": "cursor", "provider": "moonshot"}'
+
+# Send message to Entity B
+curl -X POST "http://localhost:8002/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Focus on fixing bugs first", "profile": "cursor", "provider": "openrouter"}'
+```
+
+**Example Use Cases:**
+- Give new instructions: `"Implement feature X next"`
+- Ask for status: `"What are you working on?"`
+- Stop current task: `"Stop and wait for further instructions"`
+- Priority change: `"This is urgent, do it now"`
+
+**Using the Web UI:**
+1. Open http://localhost:8001 (Entity A) or http://localhost:8002 (Entity B)
+2. Type your message in the chat input
+3. The entity will respond and incorporate your instructions
+
+### Stop the System
+
+```bash
+docker compose -f docker-compose.pair.yml stop
+```
+
 ---
 
 ## 🔧 Architecture
