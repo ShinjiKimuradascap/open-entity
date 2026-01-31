@@ -37,4 +37,4 @@ USER moco
 EXPOSE 8000
 
 # デフォルトコマンド
-CMD ["moco", "ui", "--host", "0.0.0.0"]
+CMD ["open-entity", "ui", "--host", "0.0.0.0"]

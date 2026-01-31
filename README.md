@@ -47,6 +47,8 @@ MOCO is an orchestration framework that supports multiple LLM providers (Gemini,
 - **🔒 Loop Detection**: Automatically detect and stop infinite tool-calling loops.
 - **💾 Checkpoints**: Save conversation states and restore them later.
 
+### AI-to-AI (A2A) Communication
+
 ## CLI Commands
 
 ### Basic Commands

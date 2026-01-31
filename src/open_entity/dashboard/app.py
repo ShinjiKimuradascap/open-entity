@@ -15,6 +15,9 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+# A2A Registry
+from .registry import AgentRegistry, get_registry, RegisteredAgent
+
 # FastAPI（オプション依存）
 try:
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
@@ -193,6 +196,14 @@ def create_dashboard_app(
             }
         )
     
+    @app.get("/registry", response_class=HTMLResponse)
+    async def registry_page(request: Request):
+        """A2A Agent Registry UI"""
+        return templates.TemplateResponse(
+            "registry.html",
+            {"request": request}
+        )
+    
     @app.get("/api/sessions")
     async def list_sessions(
         limit: int = Query(default=20, ge=1, le=100),
@@ -361,11 +372,69 @@ def create_dashboard_app(
         logs = await log_buffer.get_recent(limit)
         return {"traces": logs}
     
+    # =========================================================================
+    # A2A Registry Endpoints
+    # =========================================================================
+    
+    @app.get("/api/registry/agents")
+    async def list_registered_agents(
+        online_only: bool = Query(default=False),
+        discover: bool = Query(default=False),
+    ):
+        """登録されたA2Aエージェント一覧"""
+        registry = get_registry()
+        
+        # ローカル発見を実行（オプション）
+        if discover:
+            try:
+                await registry.discover_local_agents(timeout=3.0)
+            except Exception as e:
+                logger.warning(f"Discovery failed: {e}")
+        
+        # エージェントリストを取得
+        if online_only:
+            agents = registry.get_online_agents()
+        else:
+            agents = registry.get_all_agents()
+        
+        return {
+            "agents": [agent.to_dict() for agent in agents],
+            "count": len(agents),
+            "online_count": len(registry.get_online_agents()),
+        }
+    
+    @app.post("/api/registry/discover")
+    async def trigger_discovery(timeout: float = 5.0):
+        """ローカルエージェント発見を実行"""
+        registry = get_registry()
+        discovered = await registry.discover_local_agents(timeout=timeout)
+        
+        return {
+            "discovered": len(discovered),
+            "agents": [agent.to_dict() for agent in discovered],
+        }
+    
+    @app.get("/api/registry/agents/{agent_id}")
+    async def get_agent_detail(agent_id: str):
+        """エージェント詳細情報"""
+        registry = get_registry()
+        agent = registry.get_agent_by_id(agent_id)
+        
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        return agent.to_dict()
+    
+    # =========================================================================
+    # Stats & Health
+    # =========================================================================
+    
     @app.get("/api/stats")
     async def get_stats():
         """統計情報"""
         sl = get_session_logger()
         ct = get_cost_tracker()
+        registry = get_registry()
         
         stats = {
             "websocket_connections": ws_manager.connection_count,

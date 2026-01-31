@@ -25,6 +25,9 @@ try:
     ZEROCO_AVAILABLE = True
 except ImportError:
     ZEROCO_AVAILABLE = False
+    # ダミークラス（インポートエラー回避用）
+    class ServiceListener:
+        pass
 
 logger = logging.getLogger(__name__)
 
