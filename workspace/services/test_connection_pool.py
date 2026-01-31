@@ -235,6 +235,85 @@ async def test_metrics_rolling_average():
     print("\n✅ Metrics rolling average test passed")
 
 
+async def test_peer_service_integration():
+    """Test Connection Pool integration with PeerService"""
+    print("\n=== PeerService Integration Test ===\n")
+    
+    # Check if PeerService can be imported
+    try:
+        from services.peer_service import PeerService
+        print("✅ PeerService imported successfully")
+    except ImportError as e:
+        print(f"⚠️ PeerService not available: {e}")
+        print("Skipping integration test")
+        return
+    
+    # Create PeerService with connection pool enabled
+    try:
+        service = PeerService(
+            entity_id="test-entity",
+            port=9999,
+            enable_connection_pool=True,
+            connection_pool_max_connections=5,
+            connection_pool_keepalive_timeout=10
+        )
+        
+        # Verify connection pool is initialized
+        assert hasattr(service, '_connection_pool'), "PeerService should have _connection_pool attribute"
+        assert service._connection_pool is not None, "Connection pool should be initialized"
+        assert service._enable_connection_pool, "Connection pool should be enabled"
+        print("✅ Connection pool initialized in PeerService")
+        
+        # Test pool configuration
+        pool = service._connection_pool
+        assert pool.default_max_connections == 5, "Max connections should be 5"
+        assert pool.default_keepalive_timeout == 10, "Keepalive timeout should be 10"
+        print("✅ Connection pool configuration correct")
+        
+        # Test peer registration through pool
+        pool.register_peer(
+            peer_id="test-peer",
+            base_url="http://localhost:8888",
+            max_connections=3
+        )
+        assert "test-peer" in pool._pools, "Peer should be registered"
+        assert pool._pools["test-peer"].max_connections == 3, "Peer-specific config should be 3"
+        print("✅ Peer registration works")
+        
+        print("\n✅ PeerService integration test passed")
+        
+    except Exception as e:
+        print(f"❌ PeerService integration test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+async def test_peer_service_pool_disabled():
+    """Test PeerService with connection pool disabled"""
+    print("\n=== PeerService Pool Disabled Test ===\n")
+    
+    try:
+        from services.peer_service import PeerService
+    except ImportError:
+        print("⚠️ PeerService not available, skipping")
+        return
+    
+    # Create PeerService with connection pool disabled
+    service = PeerService(
+        entity_id="test-entity-2",
+        port=9998,
+        enable_connection_pool=False
+    )
+    
+    # Verify connection pool is NOT initialized
+    assert service._connection_pool is None, "Connection pool should be None when disabled"
+    assert not service._enable_connection_pool, "Connection pool should be disabled"
+    print("✅ Connection pool correctly disabled")
+    
+    print("\n✅ Pool disabled test passed")
+
+
 async def run_all_tests():
     """Run all connection pool tests"""
     print("\n" + "="*60)
@@ -252,6 +331,8 @@ async def run_all_tests():
         ("Connection Manager Init", test_connection_manager_init),
         ("Circuit Breaker Concurrent", test_circuit_breaker_concurrent),
         ("Metrics Rolling Average", test_metrics_rolling_average),
+        ("PeerService Integration", test_peer_service_integration),
+        ("PeerService Pool Disabled", test_peer_service_pool_disabled),
     ]
     
     passed = 0

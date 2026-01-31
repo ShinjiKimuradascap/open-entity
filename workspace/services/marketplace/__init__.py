@@ -14,6 +14,22 @@ from .matching_engine import (
     MatchResult,
     MatchStrategy
 )
+from .transaction_protocol import (
+    TransactionProtocol,
+    TaskProposal,
+    TaskQuote,
+    Agreement,
+    Transaction,
+    MessageType,
+    TransactionStatus,
+    create_transaction_protocol
+)
+from .bidding import (
+    BiddingEngine,
+    Bid,
+    BidRequest,
+    BidStatus
+)
 
 __all__ = [
     "ServiceRegistry",
@@ -32,4 +48,16 @@ __all__ = [
     "MatchScore",
     "MatchResult",
     "MatchStrategy",
+    "TransactionProtocol",
+    "TaskProposal",
+    "TaskQuote",
+    "Agreement",
+    "Transaction",
+    "MessageType",
+    "TransactionStatus",
+    "create_transaction_protocol",
+    "BiddingEngine",
+    "Bid",
+    "BidRequest",
+    "BidStatus",
 ]

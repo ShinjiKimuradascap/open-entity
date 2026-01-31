@@ -133,18 +133,6 @@ except ImportError:
     except ImportError:
         pass  # CHUNKED_TRANSFER_AVAILABLE = False
 
-# Multi-hop Routerのインポート（v1.2 Store-and-Forward）
-MULTI_HOP_AVAILABLE = False
-try:
-    from services.multi_hop_router import MultiHopRouter, MessageStatus, QueuedMessage
-    MULTI_HOP_AVAILABLE = True
-except ImportError:
-    try:
-        from multi_hop_router import MultiHopRouter, MessageStatus, QueuedMessage
-        MULTI_HOP_AVAILABLE = True
-    except ImportError:
-        pass  # MULTI_HOP_AVAILABLE = False
-
 # SessionManagerインポート（新しいUUIDベースのセッション管理）
 SESSION_MANAGER_AVAILABLE = False
 try:
@@ -1722,9 +1710,7 @@ class PeerService:
         connection_pool_keepalive_timeout: int = 30,
         dht_registry: Optional[Any] = None,
         use_dht_discovery: bool = False,
-        session_manager: Optional['NewSessionManager'] = None,
-        multi_hop_router: Optional['MultiHopRouter'] = None,
-        use_multi_hop: bool = False
+        session_manager: Optional['NewSessionManager'] = None
     ) -> None:
         """PeerServiceを初期化
         
@@ -1754,8 +1740,6 @@ class PeerService:
             connection_pool_keepalive_timeout: キープアライブタイムアウト（秒、デフォルト: 30）
             dht_registry: DHTレジストリインスタンス（オプション、デフォルト: None）
             use_dht_discovery: DHTを使用したピア発見を有効にする（デフォルト: False）
-            multi_hop_router: Multi-hop routerインスタンス（オプション、デフォルト: None）
-            use_multi_hop: マルチホップルーティングを有効にする（デフォルト: False）
         """
         self.entity_id: str = entity_id
         self.port: int = port
@@ -1766,8 +1750,6 @@ class PeerService:
         self._registry = registry
         self._dht_registry = dht_registry
         self._use_dht_discovery = use_dht_discovery
-        self._multi_hop_router = multi_hop_router
-        self._use_multi_hop = use_multi_hop and MULTI_HOP_AVAILABLE
         
         # require_signaturesが指定されていればenable_verificationを上書き
         if not require_signatures:
@@ -3365,11 +3347,6 @@ class PeerService:
         # SessionManagerを開始
         if self._session_manager:
             await self._session_manager.start()
-        
-        # Connection Poolを開始
-        if self._connection_pool:
-            await self._connection_pool.start()
-            logger.info("Connection Pool started")
         
         # DHTRegistryを開始
         if self._dht_registry:
@@ -6402,6 +6379,11 @@ if __name__ == "__main__":
     
     # テスト実行
     service = asyncio.run(run_tests())
+
+
+# =============================================================================
+# E2E Encryption Methods (v1.1)
+# =============================================================================
 
 async def initiate_e2e_handshake(
     self,

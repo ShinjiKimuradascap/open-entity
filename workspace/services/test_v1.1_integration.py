@@ -55,22 +55,7 @@ async def test_chunked_message_transfer():
     priv_a, pub_a, priv_b, pub_b = setup_test_keys()
     port = get_free_port()
     
-    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
-        # PeerService初期化（chunk機能はデフォルトで有効）
-        service = PeerService(
-            "entity-a",
-            port,
-            private_key_hex=priv_a
-        )
-    
-    # 大きなペイロードを作成（chunkingが必要なサイズ）
-    large_payload = {
-        "type": "large_data",
-        "data": "x" * 20000,  # 20KBのデータ
-        "metadata": {"timestamp": datetime.now(timezone.utc).isoformat()}
-    }
-    
-    # ChunkInfoのテスト
+    # ChunkInfoのテスト（環境変数不要）
     chunk_info = ChunkInfo(chunk_id="test-chunk-001", total_chunks=3)
     assert chunk_info.chunk_id == "test-chunk-001"
     assert chunk_info.total_chunks == 3
@@ -89,6 +74,14 @@ async def test_chunked_message_transfer():
     assert reconstructed is not None
     print("✓ Payload reconstructed")
     
+    with patch.dict(os.environ, {"ENTITY_PRIVATE_KEY": priv_a}):
+        # PeerService初期化（chunk機能はデフォルトで有効）
+        service = PeerService(
+            "entity-a",
+            port,
+            private_key_hex=priv_a
+        )
+        
         # cleanup_old_chunksテスト
         service._chunk_buffer["old-chunk"] = chunk_info
         cleaned = await service.cleanup_old_chunks(max_age_seconds=0)  # 即時クリーンアップ

@@ -1,0 +1,9 @@
+{
+  "default_test_path": "services/",
+  "default_schedule": "0 2 * * *",
+  "notify_on_success": false,
+  "notify_on_failure": true,
+  "max_history_size": 10,
+  "slack_webhook_url": "",
+  "pytest_options": ["-v", "--tb=short"]
+}

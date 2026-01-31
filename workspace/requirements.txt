@@ -30,6 +30,7 @@ pytest-asyncio>=0.21.0
 pytest-xdist>=3.3.0
 pytest-cov>=4.1.0
 pytest-timeout>=2.2.0
+pytest-html>=4.1.0
 
 # Distributed Registry (DHT)
 kademlia>=2.0.0

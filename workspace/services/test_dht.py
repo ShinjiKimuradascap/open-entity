@@ -8,12 +8,26 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.dht import (
-    KademliaDHT, KBucket, NodeInfo, DHTValue,
-    generate_node_id, xor_distance, compute_dht_key,
-    node_id_to_hex, hex_to_node_id, DHTPeerDiscovery,
-    K_BUCKET_SIZE, ALPHA_PARALLELISM, T_EXPIRE, T_REFRESH
-)
+# dht.pyファイルを直接インポート（dhtパッケージではなく）
+import importlib.util
+spec = importlib.util.spec_from_file_location("dht", os.path.join(os.path.dirname(__file__), "dht.py"))
+dht_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(dht_module)
+
+KademliaDHT = dht_module.KademliaDHT
+KBucket = dht_module.KBucket
+NodeInfo = dht_module.NodeInfo
+DHTValue = dht_module.DHTValue
+generate_node_id = dht_module.generate_node_id
+xor_distance = dht_module.xor_distance
+compute_dht_key = dht_module.compute_dht_key
+node_id_to_hex = dht_module.node_id_to_hex
+hex_to_node_id = dht_module.hex_to_node_id
+DHTPeerDiscovery = dht_module.DHTPeerDiscovery
+K_BUCKET_SIZE = dht_module.K_BUCKET_SIZE
+ALPHA_PARALLELISM = dht_module.ALPHA_PARALLELISM
+T_EXPIRE = dht_module.T_EXPIRE
+T_REFRESH = dht_module.T_REFRESH
 from datetime import datetime, timezone
 
 

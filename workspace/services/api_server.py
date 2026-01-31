@@ -284,6 +284,15 @@ class WalletBalanceResponse(BaseModel):
     currency: str = "AIC"
 
 
+class WalletInfoResponse(BaseModel):
+    entity_id: str
+    balance: float
+    total_earned: float
+    total_spent: float
+    transaction_count: int
+    reputation_score: Optional[float] = None
+
+
 class TransferRequest(BaseModel):
     to_entity_id: str = Field(..., description="Destination entity ID to receive the transfer", example="entity_b")
     amount: float = Field(..., gt=0, description="Amount to transfer (must be positive)", example=100.0)
@@ -3897,6 +3906,266 @@ async def get_marketplace_stats():
         orderbook_stats=orderbook_stats,
         timestamp=datetime.now(timezone.utc).isoformat()
     )
+
+
+# ============ Service Registry API Endpoints (v1.3) ============
+
+class ServiceRegisterRequest(BaseModel):
+    """Request model for service registration"""
+    provider_id: str = Field(..., description="ID of the service provider")
+    service_type: str = Field(..., description="Service type (compute, storage, data, analysis, llm, vision, audio)")
+    description: str = Field(..., min_length=1, max_length=2000, description="Service description")
+    pricing_model: str = Field(..., description="Pricing model (per_request, per_hour, per_gb, fixed)")
+    price: float = Field(..., ge=0, description="Service price")
+    capabilities: List[str] = Field(default=[], description="List of service capabilities")
+    endpoint: str = Field(..., description="Service endpoint URL")
+    terms_hash: str = Field(..., description="Hash of service terms")
+
+
+class ServiceRegisterResponse(BaseModel):
+    """Response model for service registration"""
+    success: bool
+    service_id: Optional[str] = None
+    message: str
+    listing: Optional[Dict[str, Any]] = None
+
+
+class ServiceSearchRequest(BaseModel):
+    """Request model for service search"""
+    service_type: Optional[str] = Field(default=None, description="Filter by service type")
+    capabilities: Optional[List[str]] = Field(default=None, description="Required capabilities")
+    min_reputation: float = Field(default=0.0, ge=0, le=5, description="Minimum reputation score")
+    max_price: Optional[float] = Field(default=None, ge=0, description="Maximum price")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum results")
+
+
+class ServiceSearchResponse(BaseModel):
+    """Response model for service search"""
+    services: List[Dict[str, Any]]
+    total: int
+    filters: Dict[str, Any]
+
+
+class ServiceUnregisterResponse(BaseModel):
+    """Response model for service unregistration"""
+    success: bool
+    service_id: str
+    message: str
+
+
+class ServiceDetailResponse(BaseModel):
+    """Response model for service details"""
+    service: Optional[Dict[str, Any]] = None
+    found: bool
+    service_id: str
+
+
+# Global ServiceRegistry instance for /services endpoints
+_service_registry: Optional[Any] = None
+
+async def get_service_registry() -> Any:
+    """Get or initialize ServiceRegistry instance"""
+    global _service_registry
+    if _service_registry is None:
+        try:
+            from services.marketplace import ServiceRegistry
+        except ImportError:
+            from marketplace import ServiceRegistry
+        _service_registry = ServiceRegistry(storage_path="data/services/registry.json")
+    return _service_registry
+
+
+@app.post("/services/register", response_model=ServiceRegisterResponse)
+async def register_service_endpoint(
+    req: ServiceRegisterRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Register a new service listing.
+    Requires JWT authentication.
+    """
+    registry = await get_service_registry()
+    
+    try:
+        from services.marketplace import ServiceListing, ServiceType, PricingModel
+    except ImportError:
+        from marketplace import ServiceListing, ServiceType, PricingModel
+    
+    from decimal import Decimal
+    import uuid
+    
+    # Validate service type
+    try:
+        svc_type = ServiceType(req.service_type.lower())
+    except ValueError:
+        valid_types = [t.value for t in ServiceType]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid service_type. Valid types: {', '.join(valid_types)}"
+        )
+    
+    # Validate pricing model
+    try:
+        pricing = PricingModel(req.pricing_model.lower())
+    except ValueError:
+        valid_models = [m.value for m in PricingModel]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid pricing_model. Valid models: {', '.join(valid_models)}"
+        )
+    
+    # Create service listing
+    service_id = str(uuid.uuid4())
+    listing = ServiceListing(
+        service_id=service_id,
+        provider_id=req.provider_id,
+        service_type=svc_type,
+        description=req.description,
+        pricing_model=pricing,
+        price=Decimal(str(req.price)),
+        capabilities=req.capabilities,
+        endpoint=req.endpoint,
+        terms_hash=req.terms_hash
+    )
+    
+    success = await registry.register_service(listing)
+    
+    if success:
+        return ServiceRegisterResponse(
+            success=True,
+            service_id=service_id,
+            message="Service registered successfully",
+            listing=listing.to_dict()
+        )
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to register service"
+        )
+
+
+@app.post("/services/search", response_model=ServiceSearchResponse)
+async def search_services_endpoint(
+    req: ServiceSearchRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Search for services with filters.
+    Requires JWT authentication.
+    """
+    registry = await get_service_registry()
+    
+    try:
+        from services.marketplace import ServiceType
+    except ImportError:
+        from marketplace import ServiceType
+    
+    from decimal import Decimal
+    
+    # Parse service type
+    type_enum = None
+    if req.service_type:
+        try:
+            type_enum = ServiceType(req.service_type.lower())
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid service_type: {req.service_type}")
+    
+    # Convert max_price to Decimal
+    max_price_decimal = Decimal(str(req.max_price)) if req.max_price is not None else None
+    
+    # Search services
+    results = await registry.search_services(
+        service_type=type_enum,
+        capabilities=req.capabilities,
+        min_reputation=req.min_reputation,
+        max_price=max_price_decimal,
+        limit=req.limit
+    )
+    
+    return ServiceSearchResponse(
+        services=[s.to_dict() for s in results],
+        total=len(results),
+        filters={
+            "service_type": req.service_type,
+            "capabilities": req.capabilities,
+            "min_reputation": req.min_reputation,
+            "max_price": req.max_price
+        }
+    )
+
+
+@app.get("/services/provider/{provider_id}", response_model=ServiceSearchResponse)
+async def get_provider_services_endpoint(
+    provider_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Get all services by a specific provider.
+    Requires JWT authentication.
+    """
+    registry = await get_service_registry()
+    
+    results = await registry.get_provider_services(provider_id)
+    
+    return ServiceSearchResponse(
+        services=[s.to_dict() for s in results],
+        total=len(results),
+        filters={"provider_id": provider_id}
+    )
+
+
+@app.get("/services/{service_id}", response_model=ServiceDetailResponse)
+async def get_service_detail_endpoint(
+    service_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Get details of a specific service.
+    Requires JWT authentication.
+    """
+    registry = await get_service_registry()
+    
+    listing = await registry.get_service(service_id)
+    
+    if listing:
+        return ServiceDetailResponse(
+            service=listing.to_dict(),
+            found=True,
+            service_id=service_id
+        )
+    else:
+        return ServiceDetailResponse(
+            service=None,
+            found=False,
+            service_id=service_id
+        )
+
+
+@app.delete("/services/{service_id}", response_model=ServiceUnregisterResponse)
+async def unregister_service_endpoint(
+    service_id: str,
+    provider_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Unregister a service (only by the provider).
+    Requires JWT authentication.
+    """
+    registry = await get_service_registry()
+    
+    success = await registry.unregister_service(service_id, provider_id)
+    
+    if success:
+        return ServiceUnregisterResponse(
+            success=True,
+            service_id=service_id,
+            message="Service unregistered successfully"
+        )
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Service not found or provider mismatch"
+        )
 
 
 if __name__ == "__main__":

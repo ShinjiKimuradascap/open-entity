@@ -76,6 +76,7 @@ class SecureMessage:
     sender_public_key: Optional[str] = None  # Optional: sender's Ed25519 public key (Base64)
     jwt_token: Optional[str] = None  # Optional: JWT token for session auth
     sender_id: Optional[str] = None  # Sender entity ID
+    recipient_id: Optional[str] = None  # Recipient entity ID
     session_id: Optional[str] = None  # Session UUID (v1.0)
     sequence_num: Optional[int] = None  # Sequence number (v1.0)
     # Test compatibility fields
@@ -98,6 +99,7 @@ class SecureMessage:
             sender_public_key=data.get("sender_public_key"),
             jwt_token=data.get("jwt_token"),
             sender_id=data.get("sender_id"),
+            recipient_id=data.get("recipient_id"),
             session_id=data.get("session_id"),
             sequence_num=data.get("sequence_num"),
             version=data.get("version", "1.0"),

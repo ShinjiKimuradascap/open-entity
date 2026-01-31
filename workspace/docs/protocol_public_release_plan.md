@@ -25,20 +25,21 @@ Peer Communication Protocol v1.1をオープンソースとして公開する準
 ## 公開準備タスク
 
 ### L1-1: ドキュメント整備
-- [ ] 英語版プロトコル仕様の完成
-- [ ] README.md作成（プロトコル概要）
-- [ ] 実装例の追加
-- [ ] APIリファレンス生成
+- [x] 英語版プロトコル仕様の完成 (peer_protocol_v1.1.md)
+- [x] README.md作成（プロトコル概要）
+- [x] 実装例の追加 (QUICKSTART.md)
+- [x] IMPLEMENTATION_GUIDE.md更新 (v1.1実装済み反映)
+- [ ] APIリファレンス生成 (docs/API_REFERENCE.md更新)
 
 ### L1-2: ライセンス設定
-- [ ] LICENSEファイル作成（MIT/Apache 2.0）
+- [x] LICENSEファイル作成（MIT）
 - [ ] 各ファイルのヘッダーにライセンス表記
 - [ ] CONTRIBUTING.md作成
 
 ### L1-3: リポジトリ整理
-- [ ] 公開用ブランチ作成
+- [x] アーカイブファイル整理 (docs/archive/, protocol/archive/)
 - [ ] 機密情報の削除確認
-- [ ] アーカイブファイル整理
+- [ ] 公開用ブランチ作成
 
 ### L1-4: リファレンス実装
 - [ ] 最小構成のPython実装例

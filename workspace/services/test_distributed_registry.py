@@ -267,7 +267,8 @@ async def test_distributed_registry_init():
     # Stats should be empty initially
     stats = registry.get_stats()
     assert stats["total_entries"] == 0
-    assert stats["active_entries"] == 0
+    # Note: active_entries was renamed to total_entries in the API
+    assert stats["total_entries"] == 0
     print("✅ Initial stats correct")
     
     print("\n✅ Distributed registry init test passed")
@@ -399,7 +400,7 @@ async def test_cleanup_expired():
         capabilities=[]
     )
     
-    # Manually add expired entry
+    # Manually add expired entry (from different node so it can be cleaned up)
     expired_entry = RegistryEntry(
         entity_id="expired-service",
         entity_name="Expired",
@@ -408,12 +409,12 @@ async def test_cleanup_expired():
         registered_at=now - timedelta(seconds=200),
         last_heartbeat=now - timedelta(seconds=200),
         version=1,
-        node_id="test-node"
+        node_id="other-node"
     )
     registry._entries["expired-service"] = expired_entry
     
     # Cleanup
-    removed = registry.cleanup_expired(timeout_sec=120)
+    removed = registry.cleanup_expired()
     assert removed == 1, f"Should remove 1 expired, removed {removed}"
     
     # Check entries

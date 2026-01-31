@@ -13,6 +13,7 @@ Test Coverage:
 Usage:
     pytest services/test_entity_a_b_integration.py -v
     pytest services/test_entity_a_b_integration.py -v --cov=services
+    pytest services/test_entity_a_b_integration.py -v -m "e2e"
 """
 
 import pytest
@@ -84,6 +85,9 @@ def crypto_b(entity_b_keys) -> CryptoManager:
 # Handshake Tests
 # =============================================================================
 
+@pytest.mark.e2e
+@pytest.mark.integration
+@pytest.mark.security
 class TestEntityABHandshake:
     """Test Entity A-B handshake protocol."""
     
@@ -146,6 +150,9 @@ class TestEntityABHandshake:
 # Encrypted Communication Tests
 # =============================================================================
 
+@pytest.mark.e2e
+@pytest.mark.integration
+@pytest.mark.crypto
 class TestEncryptedCommunication:
     """Test encrypted message exchange between entities."""
     
@@ -199,6 +206,9 @@ class TestEncryptedCommunication:
 # =============================================================================
 
 @pytest.mark.asyncio
+@pytest.mark.e2e
+@pytest.mark.integration
+@pytest.mark.session
 class TestCrossEntitySession:
     """Test session management between entities."""
     
@@ -244,6 +254,9 @@ class TestCrossEntitySession:
 # Token Transfer Tests
 # =============================================================================
 
+@pytest.mark.e2e
+@pytest.mark.integration
+@pytest.mark.token
 class TestCrossEntityTokenTransfer:
     """Test token transfer between entities."""
     

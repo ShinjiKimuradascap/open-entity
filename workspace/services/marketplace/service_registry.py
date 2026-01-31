@@ -3,6 +3,7 @@
 Service Registry for AI Multi-Agent Marketplace
 
 Manages service listings, search, and provider reputation.
+Integrated with ReputationEngine for advanced reputation calculation.
 """
 
 import json
@@ -13,6 +14,16 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Set, Callable
 from enum import Enum
+
+# Import ReputationEngine
+try:
+    from .reputation_engine import (
+        ReputationEngine, ServiceMetrics, RatingEntry
+    )
+except ImportError:
+    from reputation_engine import (
+        ReputationEngine, ServiceMetrics, RatingEntry
+    )
 
 
 class ServiceType(Enum):
@@ -50,6 +61,9 @@ class ServiceListing:
     created_at: datetime = None
     updated_at: datetime = None
     is_active: bool = True
+    # Extended metrics for ranking
+    completion_rate: float = 0.0
+    avg_response_time_ms: float = 0.0
     
     def __post_init__(self):
         if self.created_at is None:
@@ -76,6 +90,9 @@ class ServiceListing:
         data['price'] = Decimal(data['price'])
         data['created_at'] = datetime.fromisoformat(data['created_at']) if data.get('created_at') else None
         data['updated_at'] = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else None
+        # Handle new fields with defaults for backward compatibility
+        data.setdefault('completion_rate', 0.0)
+        data.setdefault('avg_response_time_ms', 0.0)
         return cls(**data)
     
     def compute_hash(self) -> str:
@@ -85,9 +102,13 @@ class ServiceListing:
 
 
 class ServiceRegistry:
-    """Central registry for AI services"""
+    """Central registry for AI services with advanced reputation"""
     
-    def __init__(self, storage_path: Optional[str] = None):
+    def __init__(
+        self,
+        storage_path: Optional[str] = None,
+        reputation_engine: Optional[ReputationEngine] = None
+    ):
         self._listings: Dict[str, ServiceListing] = {}
         self._provider_services: Dict[str, Set[str]] = {}
         self._type_index: Dict[ServiceType, Set[str]] = {t: set() for t in ServiceType}
@@ -95,8 +116,23 @@ class ServiceRegistry:
         self._storage_path = storage_path
         self._lock = asyncio.Lock()
         
+        # Initialize reputation engine
+        if reputation_engine:
+            self._reputation_engine = reputation_engine
+        elif storage_path:
+            # Use same directory for reputation storage
+            rep_path = storage_path.replace('.json', '_reputation.json')
+            self._reputation_engine = ReputationEngine(rep_path)
+        else:
+            self._reputation_engine = ReputationEngine()
+        
         if storage_path:
             self._load_from_storage()
+    
+    @property
+    def reputation_engine(self) -> ReputationEngine:
+        """Access the reputation engine"""
+        return self._reputation_engine
     
     async def register_service(self, listing: ServiceListing) -> bool:
         """Register a new service listing"""
@@ -302,6 +338,142 @@ class ServiceRegistry:
                     if self._listings else 0.0
                 )
             }
+    
+    async def match_by_requirements(
+        self,
+        requirements: Dict[str, Any],
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """
+        Match services based on structured requirements.
+        
+        Args:
+            requirements: Dict with keys:
+                - 'service_type': str (optional)
+                - 'capabilities': List[str] (optional)
+                - 'min_reputation': float (optional, default 0.0)
+                - 'max_budget': str/Decimal (optional)
+                - 'preferred_providers': List[str] (optional)
+                - 'exclude_providers': List[str] (optional)
+        
+        Returns:
+            List of matching services with match scores
+        """
+        async with self._lock:
+            candidates = set(self._listings.keys())
+            
+            # Filter by service type
+            if 'service_type' in requirements:
+                try:
+                    svc_type = ServiceType(requirements['service_type'])
+                    candidates &= self._type_index.get(svc_type, set())
+                except ValueError:
+                    pass
+            
+            # Filter by capabilities (must have all)
+            if 'capabilities' in requirements:
+                for cap in requirements['capabilities']:
+                    candidates &= self._capability_index.get(cap, set())
+            
+            # Exclude providers
+            if 'exclude_providers' in requirements:
+                for provider_id in requirements['exclude_providers']:
+                    excluded = self._provider_services.get(provider_id, set())
+                    candidates -= excluded
+            
+            # Score and rank candidates
+            scored_results = []
+            for sid in candidates:
+                listing = self._listings[sid]
+                
+                # Skip inactive
+                if not listing.is_active:
+                    continue
+                
+                # Check minimum reputation
+                min_rep = requirements.get('min_reputation', 0.0)
+                if listing.reputation_score < min_rep:
+                    continue
+                
+                # Check budget
+                if 'max_budget' in requirements:
+                    from decimal import Decimal
+                    max_bud = Decimal(requirements['max_budget'])
+                    if listing.price > max_bud:
+                        continue
+                
+                # Calculate match score (0-100)
+                score = self._calculate_match_score(listing, requirements)
+                
+                scored_results.append({
+                    'service': listing,
+                    'match_score': score,
+                    'match_details': {
+                        'reputation_match': listing.reputation_score >= min_rep,
+                        'capabilities_match': all(
+                            cap in listing.capabilities 
+                            for cap in requirements.get('capabilities', [])
+                        ),
+                        'price_within_budget': (
+                            listing.price <= Decimal(requirements['max_budget'])
+                            if 'max_budget' in requirements else True
+                        )
+                    }
+                })
+            
+            # Sort by match score (descending)
+            scored_results.sort(key=lambda x: x['match_score'], reverse=True)
+            
+            return scored_results[:limit]
+    
+    def _calculate_match_score(
+        self,
+        listing: ServiceListing,
+        requirements: Dict[str, Any]
+    ) -> float:
+        """Calculate match score (0-100) for a service listing"""
+        score = 0.0
+        
+        # Reputation score (up to 40 points)
+        score += (listing.reputation_score / 5.0) * 40
+        
+        # Success rate (up to 30 points)
+        if listing.total_reviews > 0:
+            success_rate = listing.successful_transactions / listing.total_reviews
+            score += success_rate * 30
+        else:
+            # New provider bonus
+            score += 15
+        
+        # Price competitiveness (up to 20 points)
+        if 'max_budget' in requirements:
+            from decimal import Decimal
+            max_bud = Decimal(requirements['max_budget'])
+            if max_bud > 0:
+                price_ratio = 1.0 - (float(listing.price) / float(max_bud))
+                score += max(0, price_ratio * 20)
+        else:
+            score += 10  # Neutral if no budget specified
+        
+        # Preferred provider bonus (up to 10 points)
+        if 'preferred_providers' in requirements:
+            if listing.provider_id in requirements['preferred_providers']:
+                score += 10
+        
+        return min(100.0, score)
+    
+    async def find_best_match(
+        self,
+        requirements: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find the single best matching service for given requirements.
+        
+        Returns:
+            Best match with score, or None if no matches
+        """
+        matches = await self.match_by_requirements(requirements, limit=1)
+        return matches[0] if matches else None
 
 
 # Convenience functions for async usage

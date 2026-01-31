@@ -1,0 +1,49 @@
+{
+  "stun_servers": [
+    {
+      "host": "stun.l.google.com",
+      "port": 19302,
+      "region": "global",
+      "provider": "Google"
+    },
+    {
+      "host": "stun1.l.google.com",
+      "port": 19302,
+      "region": "global",
+      "provider": "Google"
+    },
+    {
+      "host": "stun2.l.google.com",
+      "port": 19302,
+      "region": "global",
+      "provider": "Google"
+    },
+    {
+      "host": "stun.openstreetmap.org",
+      "port": 3478,
+      "region": "global",
+      "provider": "OpenStreetMap"
+    },
+    {
+      "host": "stun.nextcloud.com",
+      "port": 3478,
+      "region": "global",
+      "provider": "Nextcloud"
+    }
+  ],
+  "turn_servers": [
+    {
+      "host": "",
+      "port": 3478,
+      "username": "",
+      "password": "",
+      "region": "global",
+      "note": "Configure your TURN server credentials"
+    }
+  ],
+  "options": {
+    "timeout_ms": 5000,
+    "retry_count": 3,
+    "cache_ttl_seconds": 300
+  }
+}

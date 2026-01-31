@@ -189,9 +189,30 @@ api_server.py (78 endpoints) と peer_service.py (24+ core methods) の連携構
 | S4: Review | Complete |
 | S5: /moltbook/status fix | Complete |
 | S6: Wallet API analysis | Complete |
-| S7: peer_service.py split | Pending |
+| S7: peer_service.py split | Complete | Plan created |
+| M1: api_server.py split | Complete | Router-based split planned |
+
+## M1: API Server Split Plan
+
+**Source:** services/api_server.py (4172 lines, 78 endpoints)
+
+**Proposed Structure:**
+- services/api/routes/auth.py (3 endpoints)
+- services/api/routes/agents.py (5 endpoints)
+- services/api/routes/wallet.py (8 endpoints)
+- services/api/routes/token.py (16 endpoints)
+- services/api/routes/tasks.py (6 endpoints)
+- services/api/routes/governance.py (4 endpoints)
+- services/api/routes/moltbook.py (7 endpoints)
+- services/api/routes/admin.py (12 endpoints)
+- services/api/routes/websocket.py (4 endpoints)
+- services/api/routes/health.py (2 endpoints)
+
+**Total After Split:** ~2750 lines (11 modules, ~250 lines each)
+
+**Timeline:** ~17 hours
 
 ## Next Actions
-1. Wallet API consolidation implementation
-2. peer_service.py split plan
-3. Test coverage check
+1. Phase 1: Create directory structure
+2. Phase 2: Extract dependencies
+3. Phase 3: Migrate routes one by one

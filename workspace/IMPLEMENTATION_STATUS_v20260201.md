@@ -70,15 +70,20 @@ All core components have been implemented. The platform is ready for integration
    - ✅ OrderBook.sol (726 lines) - Order management & settlement
    - ✅ Contract Integration Tests - Python mock tests
    - ✅ Deploy script updated - 7 contracts with proper linking
-   - 🔄 WebSocket bidding protocol (next)
-   - 🔄 AgentRegistry service integration
+   - ✅ WebSocket bidding protocol - services/bidding_protocol.py (304 lines)
+   - ✅ AgentRegistry service - services/marketplace_models.py expanded
+   - ✅ DHT Compatibility Layer - services/dht_compat.py (163 lines)
 
-### Short-term (Next 2 Weeks)
+### Short-term (Next 2 Weeks) - IN PROGRESS 🔄
 2. **DHT Consolidation** - Unify duplicate DHT implementations
-   - Code review completed: dht_node.py selected as primary
-   - Plan: Migrate dht.py/dht_registry.py to archive/deprecated/
-   - Update distributed_registry.py imports
-3. **Integration Testing** - Run full test suite with v1.3 features
+   - ✅ Code review completed: dht_node.py selected as primary
+   - ✅ Unified interface: services/dht_compat.py created
+   - 🔄 Migration: Update distributed_registry.py imports
+3. **v1.3 Integration** - Marketplace service integration
+   - ✅ WebSocket bidding protocol
+   - ✅ AgentRegistry with competitive bidding
+   - 🔄 TaskEscrow contract integration
+4. **Integration Testing** - Run full test suite with v1.3 features
 
 ### Medium-term (Next Month)
 4. **Cross-chain Bridge** - Design cross-chain token bridge

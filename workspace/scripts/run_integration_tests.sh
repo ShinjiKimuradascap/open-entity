@@ -20,10 +20,15 @@ VENV_DIR="${VENV_DIR:-./.venv}"
 REPORT_DIR="${REPORT_DIR:-./test_reports}"
 
 # Test categories
-PHASE1_TESTS="test_session_manager.py test_crypto_integration.py test_signature.py test_wallet.py"
-PHASE2_TESTS="test_e2e_crypto.py test_security.py test_handshake_protocol.py"
-PHASE3_TESTS="test_peer_service_integration.py"
-PHASE4_TESTS="test_integration_scenarios.py"
+PHASE1_TESTS="test_session_manager.py test_crypto_integration.py test_signature.py test_wallet.py test_crypto.py"
+PHASE2_TESTS="test_e2e_crypto.py test_e2e_crypto_integration.py test_security.py test_handshake_protocol.py test_handshake_integration.py"
+PHASE3_TESTS="test_peer_service_integration.py test_peer_service_e2e.py test_peer_service_e2e_integration.py"
+PHASE4_TESTS="test_integration_scenarios.py test_moltbook_integration.py"
+
+# Test results tracking
+TEST_RESULTS_FILE="$REPORT_DIR/test_results_$(date +%Y%m%d_%H%M%S).json"
+TESTS_PASSED=0
+TESTS_FAILED=0
 
 # Functions
 log_info() {
@@ -109,11 +114,13 @@ run_phase1() {
     [[ "$JUNIT" == "true" ]] && pytest_args="$pytest_args --junitxml=../$REPORT_DIR/junit-phase1.xml"
     [[ "$PARALLEL" == "true" ]] && pytest_args="$pytest_args -n auto"
     
-    if python -m pytest $PHASE1_TESTS $pytest_args; then
+    if python -m pytest $PHASE1_TESTS $pytest_args 2>&1 | tee ../$REPORT_DIR/phase1_output.log; then
         log_success "Phase 1 tests passed"
+        ((TESTS_PASSED++))
         return 0
     else
         log_error "Phase 1 tests failed"
+        ((TESTS_FAILED++))
         return 1
     fi
 }
@@ -128,11 +135,13 @@ run_phase2() {
     [[ "$JUNIT" == "true" ]] && pytest_args="$pytest_args --junitxml=../$REPORT_DIR/junit-phase2.xml"
     [[ "$PARALLEL" == "true" ]] && pytest_args="$pytest_args -n auto"
     
-    if python -m pytest $PHASE2_TESTS $pytest_args; then
+    if python -m pytest $PHASE2_TESTS $pytest_args 2>&1 | tee ../$REPORT_DIR/phase2_output.log; then
         log_success "Phase 2 tests passed"
+        ((TESTS_PASSED++))
         return 0
     else
         log_error "Phase 2 tests failed"
+        ((TESTS_FAILED++))
         return 1
     fi
 }
@@ -142,11 +151,13 @@ run_phase3() {
     
     cd "$SERVICES_DIR"
     
-    if python test_peer_service_integration.py; then
+    if python test_peer_service_integration.py 2>&1 | tee ../$REPORT_DIR/phase3_output.log; then
         log_success "Phase 3 tests passed"
+        ((TESTS_PASSED++))
         return 0
     else
         log_error "Phase 3 tests failed"
+        ((TESTS_FAILED++))
         return 1
     fi
 }
@@ -160,11 +171,13 @@ run_phase4() {
     [[ "$COVERAGE" == "true" ]] && pytest_args="$pytest_args --cov=. --cov-append"
     [[ "$JUNIT" == "true" ]] && pytest_args="$pytest_args --junitxml=../$REPORT_DIR/junit-phase4.xml"
     
-    if python -m pytest $PHASE4_TESTS $pytest_args; then
+    if python -m pytest $PHASE4_TESTS $pytest_args 2>&1 | tee ../$REPORT_DIR/phase4_output.log; then
         log_success "Phase 4 tests passed"
+        ((TESTS_PASSED++))
         return 0
     else
         log_error "Phase 4 tests failed"
+        ((TESTS_FAILED++))
         return 1
     fi
 }
@@ -193,6 +206,18 @@ generate_report() {
     if [[ "$JUNIT" == "true" ]]; then
         log_info "JUnit reports saved to $REPORT_DIR/"
     fi
+    
+    # Generate JSON test results summary
+    cat > "$TEST_RESULTS_FILE" << EOF
+{
+    "timestamp": "$(date -Iseconds)",
+    "phase": "$PHASE",
+    "tests_passed": $TESTS_PASSED,
+    "tests_failed": $TESTS_FAILED,
+    "overall_result": "$([ $TESTS_FAILED -eq 0 ] && echo "PASSED" || echo "FAILED")"
+}
+EOF
+    log_info "Test results saved to: $TEST_RESULTS_FILE"
 }
 
 cleanup() {

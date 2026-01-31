@@ -157,20 +157,29 @@ class PracticalTestRunner:
                 "data": {"api_key": "sk-1234567890abcdef", "password": "secret123"}
             }
             
-            # Verify shared key exists for decryption
+            # Ensure shared key exists for decryption (B decrypts messages from A)
+            # B derives shared key using A's public key and stores it under A's ID
             if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
-                # Re-derive if missing
                 self.crypto_b.derive_shared_key(
                     self.crypto_a.get_x25519_public_key_b64(),
                     TEST_ENTITY_A_ID
                 )
             
+            # A encrypts message for B (stores shared key under B's ID)
             message = self.crypto_a.create_secure_message(
                 payload,
                 encrypt=True,
                 peer_public_key_b64=self.crypto_b.get_x25519_public_key_b64(),
                 peer_id=TEST_ENTITY_B_ID
             )
+            
+            # Also ensure B has the shared key for decryption
+            # Need to derive it again with correct peer_id if not present
+            if TEST_ENTITY_A_ID not in self.crypto_b._shared_keys:
+                self.crypto_b.derive_shared_key(
+                    self.crypto_a.get_x25519_public_key_b64(),
+                    TEST_ENTITY_A_ID
+                )
             
             print(f"  Message created: encrypted_payload length = {len(message.encrypted_payload) if message.encrypted_payload else 0}")
             print(f"  Sender public key present: {bool(message.sender_public_key)}")

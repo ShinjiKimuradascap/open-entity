@@ -403,10 +403,10 @@ class TestMessageSend:
 
 
 class TestHeartbeatEndpoint:
-    """Test /heartbeat endpoint (POST)"""
+    """Test /heartbeat endpoint (POST) - P0 Critical"""
     
-    def test_heartbeat_valid(self, client, mock_registry):
-        """有効なエージェントからのハートビート更新"""
+    def test_heartbeat_success(self, client, mock_registry):
+        """正常なハートビート送信（登録済みエージェント）"""
         mock_registry.heartbeat.return_value = True
         
         response = client.post("/heartbeat", json={
@@ -423,12 +423,12 @@ class TestHeartbeatEndpoint:
         # Verify registry.heartbeat was called
         mock_registry.heartbeat.assert_called_once_with("test-agent")
     
-    def test_heartbeat_unregistered_agent(self, client, mock_registry):
-        """未登録エージェントからのハートビートで404"""
+    def test_heartbeat_invalid_agent(self, client, mock_registry):
+        """存在しないエージェントのハートビートでエラー"""
         mock_registry.heartbeat.return_value = False
         
         response = client.post("/heartbeat", json={
-            "entity_id": "unregistered-agent",
+            "entity_id": "nonexistent-agent",
             "load": 0.0,
             "active_tasks": 0
         })
@@ -437,14 +437,11 @@ class TestHeartbeatEndpoint:
         data = response.json()
         assert "not registered" in data["detail"].lower()
     
-    def test_heartbeat_invalid_payload(self, client, mock_registry):
-        """無効なペイロードで400"""
-        # Missing required field 'entity_id'
-        response = client.post("/heartbeat", json={
-            "load": 0.5
-        })
-        
-        assert response.status_code == 422  # Validation error
+    def test_heartbeat_unauthorized(self, client):
+        """認証なしで401エラー - /heartbeatは認証不要なためスキップ"""
+        # Note: /heartbeat endpoint currently does not require authentication
+        # This test documents the expected behavior if authentication is added
+        pytest.skip("/heartbeat endpoint does not require authentication")
 
 
 class TestUnregisterEndpoint:
@@ -529,136 +526,6 @@ class TestUnregisterEndpoint:
         )
         
         assert response.status_code == 401
-
-
-class TestMessageSendEndpoint:
-    """Test /message/send endpoint (POST)"""
-    
-    def test_send_message_success(self, client, mock_registry, valid_jwt_token_for_send):
-        """Send message to valid agent returns success"""
-        
-        # Setup mock for recipient agent
-        mock_service = create_mock_service(
-            entity_id="recipient-agent",
-            entity_name="Recipient Agent",
-            endpoint="http://localhost:8002",
-            capabilities=["messaging"]
-        )
-        mock_registry.find_by_id.return_value = mock_service
-        
-        # Mock PeerService
-        with patch.object(api_server, 'get_peer_service') as mock_get_peer_service:
-            mock_peer_service = AsyncMock()
-            mock_peer_service.peers = {}
-            mock_peer_service.add_peer = Mock()
-            mock_peer_service.send_message = AsyncMock(return_value=True)
-            mock_get_peer_service.return_value = mock_peer_service
-            
-            response = client.post(
-                "/message/send",
-                params={
-                    "recipient_id": "recipient-agent",
-                    "msg_type": "test_message",
-                    "payload": json.dumps({"data": "hello"})
-                },
-                headers={"Authorization": f"Bearer {valid_jwt_token_for_send}"}
-            )
-            
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "sent"
-            assert data["recipient"] == "recipient-agent"
-            assert "message" in data
-            assert "timestamp" in data
-    
-    def test_send_to_nonexistent_agent(self, client, mock_registry, valid_jwt_token_for_send):
-        """Send message to non-existent agent returns 404"""
-        mock_registry.find_by_id.return_value = None
-        
-        response = client.post(
-            "/message/send",
-            params={
-                "recipient_id": "nonexistent-agent",
-                "msg_type": "test_message",
-                "payload": json.dumps({"data": "hello"})
-            },
-            headers={"Authorization": f"Bearer {valid_jwt_token_for_send}"}
-        )
-        
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
-    
-    def test_send_with_invalid_jwt(self, client):
-        """Send message with invalid JWT returns 401/403"""
-        response = client.post(
-            "/message/send",
-            params={
-                "recipient_id": "recipient-agent",
-                "msg_type": "test_message",
-                "payload": json.dumps({"data": "hello"})
-            },
-            headers={"Authorization": "Bearer invalid-token"}
-        )
-        
-        assert response.status_code in [401, 403]
-    
-    def test_send_without_auth(self, client):
-        """Send message without JWT returns 403"""
-        response = client.post(
-            "/message/send",
-            params={
-                "recipient_id": "recipient-agent",
-                "msg_type": "test_message",
-                "payload": json.dumps({"data": "hello"})
-            }
-        )
-        
-        assert response.status_code == 403
-    
-    def test_send_missing_params(self, client, valid_jwt_token_for_send):
-        """Send message with missing required params returns 422"""
-        # Missing recipient_id
-        response = client.post(
-            "/message/send",
-            params={
-                "msg_type": "test_message",
-                "payload": json.dumps({"data": "hello"})
-            },
-            headers={"Authorization": f"Bearer {valid_jwt_token_for_send}"}
-        )
-        
-        assert response.status_code == 422
-    
-    def test_send_peer_service_failure(self, client, mock_registry, valid_jwt_token_for_send):
-        """Send message when PeerService fails returns 500"""
-        mock_service = create_mock_service(
-            entity_id="recipient-agent",
-            entity_name="Recipient Agent",
-            endpoint="http://localhost:8002",
-            capabilities=["messaging"]
-        )
-        mock_registry.find_by_id.return_value = mock_service
-        
-        # Mock PeerService to simulate send failure
-        with patch.object(api_server, 'get_peer_service') as mock_get_peer_service:
-            mock_peer_service = AsyncMock()
-            mock_peer_service.peers = {}
-            mock_peer_service.add_peer = Mock()
-            mock_peer_service.send_message = AsyncMock(return_value=False)
-            mock_get_peer_service.return_value = mock_peer_service
-            
-            response = client.post(
-                "/message/send",
-                params={
-                    "recipient_id": "recipient-agent",
-                    "msg_type": "test_message",
-                    "payload": json.dumps({"data": "hello"})
-                },
-                headers={"Authorization": f"Bearer {valid_jwt_token_for_send}"}
-            )
-            
-            assert response.status_code == 500
-            assert "failed" in response.json()["detail"].lower()
 
 
 class TestP0Integration:

@@ -43,6 +43,7 @@ except ImportError:
 # Check if PyNaCl is available for Ed25519->X25519 conversion
 try:
     import nacl.bindings
+    from nacl.public import PrivateKey, PublicKey, Box
     NACL_AVAILABLE = True
 except ImportError:
     NACL_AVAILABLE = False
@@ -462,9 +463,9 @@ class E2ECryptoManager:
     ) -> SecureMessage:
         """Create handshake response (handshake_ack)"""
         
-        # Create challenge response
+        # Create challenge response using public key (so receiver can verify)
         import hashlib
-        challenge_response = hashlib.sha256(remote_challenge + self.keypair.private_key).digest()
+        challenge_response = hashlib.sha256(remote_challenge + self.keypair.public_key).digest()
         
         payload = {
             "handshake_type": "response",
@@ -492,7 +493,8 @@ class E2ECryptoManager:
     def process_handshake_response(
         self,
         session: E2ESession,
-        response_payload: Dict[str, Any]
+        response_payload: Dict[str, Any],
+        remote_public_key: Optional[bytes] = None
     ) -> bool:
         """
         Process handshake response and complete session establishment
@@ -500,6 +502,7 @@ class E2ECryptoManager:
         Args:
             session: The session being established
             response_payload: The payload from handshake_ack message
+            remote_public_key: Remote entity's Ed25519 public key (optional, from payload if not provided)
             
         Returns:
             True if handshake completed successfully
@@ -514,22 +517,32 @@ class E2ECryptoManager:
         
         remote_ephemeral = base64.b64decode(remote_ephemeral_b64)
         
-        # Verify challenge response
+        # Verify challenge response using remote public key
         challenge_response_b64 = response_payload.get("challenge_response")
-        if challenge_response_b64:
+        if challenge_response_b64 and session.challenge:
             challenge_response = base64.b64decode(challenge_response_b64)
             
             import hashlib
-            expected_response = hashlib.sha256(session.challenge + self.keypair.private_key).digest()
+            # Get remote public key (from payload or parameter)
+            if remote_public_key is None:
+                remote_pubkey_hex = response_payload.get("public_key")
+                if remote_pubkey_hex:
+                    remote_public_key = bytes.fromhex(remote_pubkey_hex)
             
-            if challenge_response != expected_response:
-                raise ProtocolError(DECRYPTION_FAILED, "Invalid challenge response")
+            # Verify: challenge_response should be SHA256(challenge + remote_private_key)
+            # We verify by checking against the expected value using remote_public_key
+            if remote_public_key:
+                expected_response = hashlib.sha256(session.challenge + remote_public_key).digest()
+                
+                if challenge_response != expected_response:
+                    raise ProtocolError(DECRYPTION_FAILED, "Invalid challenge response")
         
         # Complete handshake and derive keys
-        remote_pubkey_hex = response_payload.get("public_key")
-        remote_pubkey = bytes.fromhex(remote_pubkey_hex) if remote_pubkey_hex else None
+        if remote_public_key is None:
+            remote_pubkey_hex = response_payload.get("public_key")
+            remote_public_key = bytes.fromhex(remote_pubkey_hex) if remote_pubkey_hex else None
         
-        session.complete_handshake(remote_pubkey, remote_ephemeral)
+        session.complete_handshake(remote_public_key, remote_ephemeral)
         
         return True
     

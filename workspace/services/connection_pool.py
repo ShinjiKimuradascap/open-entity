@@ -606,6 +606,9 @@ class WebSocketConnectionConfig:
     failure_threshold: int = 5
     recovery_timeout: float = 30.0
     half_open_max_calls: int = 3
+    
+    # Rate limiting settings
+    max_messages_per_minute: int = 120
 
 
 @dataclass
@@ -695,6 +698,9 @@ class WebSocketConnectionPool:
         
         # Message handlers: peer_id -> Callable
         self._message_handlers: Dict[str, Callable[[Dict], Awaitable[None]]] = {}
+        
+        # Message rate counters: peer_id -> List[timestamp]
+        self._message_counters: Dict[str, List[float]] = defaultdict(list)
         
         self._lock = asyncio.Lock()
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -879,6 +885,26 @@ class WebSocketConnectionPool:
         
         logger.info(f"Disconnected peer {peer_id}")
     
+    async def _check_rate_limit(self, peer_id: str) -> bool:
+        """
+        Check if sending a message would exceed the rate limit
+        
+        Args:
+            peer_id: Peer identifier
+            
+        Returns:
+            True if within rate limit, False if exceeded
+        """
+        now = time.time()
+        minute_ago = now - 60
+        # 直近1分のメッセージのみカウント
+        self._message_counters[peer_id] = [
+            t for t in self._message_counters[peer_id] if t > minute_ago
+        ]
+        config = self._configs.get(peer_id)
+        limit = config.max_messages_per_minute if config else 120
+        return len(self._message_counters[peer_id]) < limit
+    
     async def send_message(self, peer_id: str, message: Dict[str, Any]) -> bool:
         """
         Send a message to a peer via WebSocket
@@ -889,7 +915,18 @@ class WebSocketConnectionPool:
             
         Returns:
             True if sent successfully, False otherwise
+            
+        Raises:
+            RateLimitExceeded: If rate limit is exceeded
         """
+        # Check rate limit before sending
+        if not await self._check_rate_limit(peer_id):
+            from services.rate_limiter import RateLimitExceeded
+            raise RateLimitExceeded(f"Rate limit exceeded for peer {peer_id}")
+        
+        # Record message timestamp for rate limiting
+        self._message_counters[peer_id].append(time.time())
+        
         websocket = self._connections.get(peer_id)
         metrics = self._metrics.get(peer_id)
         
@@ -936,23 +973,20 @@ class WebSocketConnectionPool:
         Returns:
             Dict mapping peer_id to send success status
         """
-        results = {}
         tasks = []
+        peer_ids = []
         
         for peer_id in self._connections.keys():
             if peer_id != exclude:
-                task = self.send_message(peer_id, message)
-                tasks.append((peer_id, task))
+                tasks.append(self.send_message(peer_id, message))
+                peer_ids.append(peer_id)
         
-        # Execute sends concurrently
-        for peer_id, task in tasks:
-            try:
-                results[peer_id] = await task
-            except Exception as e:
-                logger.warning(f"Broadcast to {peer_id} failed: {e}")
-                results[peer_id] = False
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        return results
+        return {
+            peer_id: result if not isinstance(result, Exception) else False
+            for peer_id, result in zip(peer_ids, results)
+        }
     
     async def receive_message(self, peer_id: str) -> Optional[Dict[str, Any]]:
         """

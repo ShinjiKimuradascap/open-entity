@@ -13,6 +13,7 @@ X25519 + HKDF-SHA256 + AES-256-GCM の暗号化・復号フローをテストし
 import asyncio
 import sys
 import os
+import base64
 from typing import Optional
 
 # パス設定
@@ -85,24 +86,33 @@ class E2ECryptoManagerTest:
         print(f"✅ Alice created handshake message")
         print(f"   Challenge: {self.session_alice.challenge.hex()[:16]}...")
 
-        # Bobがセッションを作成し、ハンドシェイク応答
+        # Bobがセッションを作成
         self.session_bob = self.manager_bob.create_session("alice")
         print(f"✅ Bob created session: {self.session_bob.session_id[:8]}...")
 
         # BobがAliceのハンドシェイクを処理して応答を生成
-        session_bob, response_msg = self.manager_bob.create_handshake_response(
-            remote_entity_id="alice",
-            incoming_message=handshake_msg,
-            session=self.session_bob
+        # challengeをハンドシェイクメッセージから取得
+        challenge = base64.b64decode(handshake_msg.payload.get("challenge", ""))
+        response_msg = self.manager_bob.create_handshake_response(
+            session=self.session_bob,
+            remote_challenge=challenge
         )
         print(f"✅ Bob created handshake response")
 
         # Aliceが応答を処理してセッション確立
         self.manager_alice.process_handshake_response(
             session=self.session_alice,
-            message=response_msg
+            response_payload=response_msg.payload
         )
         print(f"✅ Alice processed handshake response")
+
+        # Bobもハンドシェイクを完了（Aliceの公開鍵で共有鍵を導出）
+        alice_pubkey = bytes.fromhex(handshake_msg.payload.get("public_key", ""))
+        self.session_bob.complete_handshake(
+            remote_public_key=alice_pubkey,
+            remote_ephemeral_key=self.session_alice.ephemeral_public_key
+        )
+        print(f"✅ Bob completed handshake")
 
         # 両方のセッションが確立されたことを確認
         assert self.session_alice.state == SessionState.ESTABLISHED, "Alice session not established!"
