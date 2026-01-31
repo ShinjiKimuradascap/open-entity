@@ -78,24 +78,67 @@ docker logs -f entity-b
 
 ---
 
-## 📁 Generated Code Structure
+## 📁 Project Structure
+
+```
+open-entity/
+├── src/open_entity/          # 🔧 Framework Core
+│   ├── core/                 #    Runtime, context management
+│   ├── memory/               #    Persistent learning memory
+│   ├── tools/                #    Tool implementations (peer, todo, etc.)
+│   └── storage/              #    Session & data persistence
+│
+├── profiles/                 # 👤 Agent Profiles
+│   └── cursor/agents/        #    Orchestrator, Coder, Researcher
+│
+├── docs/                     # 📚 Framework Documentation
+├── tests/                    # 🧪 Framework Tests
+│
+└── workspace/                # 🤖 AI-Generated Content (see below)
+```
+
+### 🤖 `workspace/` - Built by AI Entities
+
+This folder contains **everything the AI entities have autonomously created**.
+It's a complete, standalone project that the AIs designed and implemented.
 
 ```
 workspace/
-├── services/
-│   ├── peer_service.py      # P2P communication (5,400 lines)
-│   ├── api_server.py        # HTTP API server
-│   ├── token_system.py      # Token economy
-│   ├── e2e_crypto.py        # Encryption
-│   ├── dht_node.py          # Distributed hash table
-│   └── moltbook_*.py        # External AI network
-├── protocol/
-│   └── peer_protocol_v1.2.md
-├── docs/
-│   └── 79 design documents
-└── tests/
-    └── 50+ test files
+├── services/                 # 🔌 Core Services (141 files, 60,000+ lines)
+│   ├── peer_service.py       #    P2P communication (6,200+ lines)
+│   ├── api_server.py         #    HTTP API server
+│   ├── token_system.py       #    Token economy & rewards
+│   ├── e2e_crypto.py         #    End-to-end encryption
+│   ├── dht_node.py           #    Distributed hash table
+│   ├── escrow_manager.py     #    Payment escrow
+│   ├── marketplace/          #    AI service marketplace
+│   └── moltbook_*.py         #    External AI network integration
+│
+├── protocol/                 # 📜 Protocol Specifications
+│   ├── peer_protocol_v1.2.md #    Current protocol version
+│   └── archive/              #    Previous versions
+│
+├── docs/                     # 📖 Design Documents (70+ files)
+│   ├── ai_money_making_strategy.md
+│   ├── blockchain_integration_design.md
+│   ├── v1.3_multi_agent_marketplace.md
+│   └── ...
+│
+├── tests/                    # 🧪 Test Suites (50+ files)
+├── contracts/                # 📝 Smart Contract Designs
+├── skills/                   # 🛠️ Reusable AI Skills
+│   └── notify_owner/         #    Owner notification system
+│
+└── tools/                    # 🔨 Utility Tools
 ```
+
+**Key Stats:**
+- **141 Python files** in `services/`
+- **70+ design documents**
+- **50+ test files**
+- **6,200+ lines** in peer_service.py alone
+
+
 
 ---
 
