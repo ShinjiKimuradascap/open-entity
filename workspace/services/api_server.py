@@ -364,6 +364,66 @@ class TaskStatusResponse(BaseModel):
     expires_at: Optional[str] = None
     completed_at: Optional[str] = None
     description: str
+    approved_by_client: bool = False
+    disputed: bool = False
+    dispute_reason: Optional[str] = None
+    dispute_initiator: Optional[str] = None
+
+
+class TaskSubmitCompletionRequest(BaseModel):
+    task_id: str = Field(..., description="Task ID to submit completion for", example="task_001")
+
+
+class TaskSubmitCompletionResponse(BaseModel):
+    status: str
+    task_id: str
+    message: str
+    submitted_at: str
+
+
+class TaskApproveRequest(BaseModel):
+    task_id: str = Field(..., description="Task ID to approve", example="task_001")
+    signature: Optional[str] = Field(default=None, description="Optional approval signature for multi-sig")
+
+
+class TaskApproveResponse(BaseModel):
+    status: str
+    task_id: str
+    client_id: str
+    agent_id: str
+    amount: float
+    approved_at: str
+    message: str
+
+
+class TaskDisputeRequest(BaseModel):
+    task_id: str = Field(..., description="Task ID to dispute", example="task_001")
+    reason: str = Field(..., description="Reason for dispute", example="Work not completed as specified")
+
+
+class TaskDisputeResponse(BaseModel):
+    status: str
+    task_id: str
+    initiator_id: str
+    reason: str
+    disputed_at: str
+    message: str
+
+
+class TaskResolveRequest(BaseModel):
+    task_id: str = Field(..., description="Task ID to resolve", example="task_001")
+    approve_task: bool = Field(..., description="Whether to approve the task (True) or reject (False)", example=True)
+    slash_percentage: float = Field(default=0.0, ge=0, le=1, description="Slash percentage if rejecting (0.0-1.0)", example=0.5)
+    resolution_note: Optional[str] = Field(default=None, description="Optional note about the resolution", example="Task quality insufficient")
+
+
+class TaskResolveResponse(BaseModel):
+    status: str
+    task_id: str
+    resolver_id: str
+    approved: bool
+    message: str
+    resolved_at: str
 
 
 class RatingSubmitRequest(BaseModel):
@@ -1258,7 +1318,189 @@ async def get_task_status(task_id: str):
         created_at=task.created_at.isoformat(),
         expires_at=task.expires_at.isoformat() if task.expires_at else None,
         completed_at=task.completed_at.isoformat() if task.completed_at else None,
-        description=task.description
+        description=task.description,
+        approved_by_client=task.approved_by_client,
+        disputed=task.disputed,
+        dispute_reason=task.dispute_reason,
+        dispute_initiator=task.dispute_initiator
+    )
+
+
+@app.post("/task/{task_id}/submit-completion", response_model=TaskSubmitCompletionResponse)
+async def submit_task_completion(
+    task_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """エージェントがタスク完了を提出（クライアント承認待ち状態にする）
+    
+    Requires JWT authentication. Only the assigned agent can submit completion.
+    """
+    tc = get_task_contract()
+    task = tc.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    
+    # エージェント本人のみ提出可能
+    agent_id = credentials.credentials
+    if agent_id != task.agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the assigned agent can submit task completion"
+        )
+    
+    success = tc.submit_task_completion(task_id, agent_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task completion submission failed. Task may not be in progress."
+        )
+    
+    # Persist token state
+    get_persistence().save_all()
+    
+    return TaskSubmitCompletionResponse(
+        status="submitted",
+        task_id=task_id,
+        message="Task completion submitted, awaiting client approval",
+        submitted_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+@app.post("/task/{task_id}/approve", response_model=TaskApproveResponse)
+async def approve_task(
+    task_id: str,
+    req: TaskApproveRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """クライアントがタスク完了を承認し、ロックされたトークンをエージェントにリリース
+    
+    Requires JWT authentication. Only the client who created the task can approve.
+    """
+    tc = get_task_contract()
+    task = tc.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    
+    # クライアント本人のみ承認可能
+    client_id = credentials.credentials
+    if client_id != task.client_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the client who created the task can approve"
+        )
+    
+    success = tc.approve_task(task_id, client_id, req.signature)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Task approval failed. Task may not be pending approval."
+        )
+    
+    # Persist token state
+    get_persistence().save_all()
+    
+    return TaskApproveResponse(
+        status="approved",
+        task_id=task_id,
+        client_id=client_id,
+        agent_id=task.agent_id,
+        amount=task.amount,
+        approved_at=datetime.now(timezone.utc).isoformat(),
+        message="Task approved and payment released to agent"
+    )
+
+
+@app.post("/task/{task_id}/dispute", response_model=TaskDisputeResponse)
+async def dispute_task(
+    task_id: str,
+    req: TaskDisputeRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """タスクに対して紛争を申請
+    
+    Requires JWT authentication. Only the client or agent involved can dispute.
+    """
+    tc = get_task_contract()
+    task = tc.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    
+    # クライアントまたはエージェントのみ紛争可能
+    initiator_id = credentials.credentials
+    if initiator_id not in [task.client_id, task.agent_id]:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the client or agent involved can dispute the task"
+        )
+    
+    success = tc.dispute_task(task_id, initiator_id, req.reason)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Dispute submission failed. Task may not be in a disputable state."
+        )
+    
+    # Persist token state
+    get_persistence().save_all()
+    
+    return TaskDisputeResponse(
+        status="disputed",
+        task_id=task_id,
+        initiator_id=initiator_id,
+        reason=req.reason,
+        disputed_at=datetime.now(timezone.utc).isoformat(),
+        message="Dispute submitted, awaiting governance resolution"
+    )
+
+
+@app.post("/task/{task_id}/resolve", response_model=TaskResolveResponse)
+async def resolve_dispute(
+    task_id: str,
+    req: TaskResolveRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """紛争を解決（ガバナンスによる判定）
+    
+    Requires JWT authentication. Only governance/admin can resolve disputes.
+    """
+    tc = get_task_contract()
+    task = tc.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    
+    # ガバナンス権限チェック（簡易実装: adminキーまたはガバナンス参加者）
+    resolver_id = credentials.credentials
+    # TODO: より厳密なガバナンス権限チェックを実装
+    
+    success = tc.resolve_dispute(
+        task_id, 
+        resolver_id, 
+        req.approve_task, 
+        req.slash_percentage,
+        req.resolution_note
+    )
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Dispute resolution failed. Task may not be in disputed state."
+        )
+    
+    # Persist token state
+    get_persistence().save_all()
+    
+    message = "Task approved and payment released" if req.approve_task else "Task rejected and funds returned to client"
+    
+    return TaskResolveResponse(
+        status="resolved",
+        task_id=task_id,
+        resolver_id=resolver_id,
+        approved=req.approve_task,
+        message=message,
+        resolved_at=datetime.now(timezone.utc).isoformat()
     )
 
 
@@ -2089,38 +2331,66 @@ async def complete_token_task(
     task_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
 ):
-    """Complete a task and release locked tokens (requires JWT authentication)"""
+    """Complete a task and release locked tokens (requires JWT authentication)
+    
+    DEPRECATED: Use /task/{task_id}/submit-completion followed by /task/{task_id}/approve
+    for client-approved workflow. This endpoint now enforces client approval.
+    """
     tc = get_task_contract()
     task = tc.get_task(task_id)
     
     if not task:
         raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
     
-    # Only client or agent can complete the task
     requester_id = credentials.credentials
-    if requester_id not in [task.client_id, task.agent_id]:
+    
+    # エージェントが呼び出した場合: 承認待ち状態にする
+    if requester_id == task.agent_id:
+        success = tc.submit_task_completion(task_id, requester_id)
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Task completion submission failed. Task may not be in progress."
+            )
+        get_persistence().save_all()
+        raise HTTPException(
+            status_code=202,
+            detail="Task completion submitted, awaiting client approval. Use /task/{task_id}/approve to complete."
+        )
+    
+    # クライアントが呼び出した場合: 承認して完了させる
+    elif requester_id == task.client_id:
+        # まず承認待ち状態にする（既に承認待ちの場合はスキップ）
+        if task.status.value == "in_progress":
+            success = tc.submit_task_completion(task_id, task.agent_id)
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task completion submission failed."
+                )
+            task = tc.get_task(task_id)  # 更新されたタスクを再取得
+        
+        # 承認を実行
+        success = tc.approve_task(task_id, requester_id)
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail="Task approval failed. Task may not be pending approval."
+            )
+        get_persistence().save_all()
+        return TaskCompleteResponse(
+            status="completed",
+            task_id=task_id,
+            agent_id=task.agent_id,
+            amount=task.amount,
+            completed_at=datetime.now(timezone.utc).isoformat()
+        )
+    
+    else:
         raise HTTPException(
             status_code=403,
             detail="Only client or agent can complete the task"
         )
-    
-    success = tc.complete_task(task_id)
-    if not success:
-        raise HTTPException(
-            status_code=400,
-            detail="Task completion failed. Task may not be in progress."
-        )
-
-    # Persist token state
-    get_persistence().save_all()
-
-    return TaskCompleteResponse(
-        status="completed",
-        task_id=task_id,
-        agent_id=task.agent_id,
-        amount=task.amount,
-        completed_at=datetime.now(timezone.utc).isoformat()
-    )
 
 
 @app.post("/token/task/{task_id}/fail", response_model=TaskFailResponse)

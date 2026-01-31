@@ -46,10 +46,13 @@ class TaskStatus(Enum):
     """タスクの状態"""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
+    PENDING_CLIENT_APPROVAL = "pending_client_approval"  # クライアント承認待ち
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
     EXPIRED = "expired"
+    DISPUTED = "disputed"  # 紛争中
+    RESOLVED = "resolved"  # 紛争解決済み
 
 
 class TransactionType(Enum):
@@ -395,6 +398,13 @@ class Task:
         expires_at: 期限日時（Noneの場合は期限なし）
         completed_at: 完了日時
         description: タスクの説明
+        approved_by_client: クライアントが承認したか
+        approval_signature: 承認署名（マルチシグ用）
+        disputed: 紛争中か
+        dispute_reason: 紛争理由
+        dispute_initiator: 紛争を開始したエンティティID
+        disputed_at: 紛争開始日時
+        dispute_resolved_by: 紛争を解決したエンティティID（ガバナンス）
     """
     task_id: str
     client_id: str
@@ -405,6 +415,16 @@ class Task:
     expires_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     description: str = ""
+    # クライアント承認関連
+    approved_by_client: bool = False
+    approval_signature: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    # 紛争解決関連
+    disputed: bool = False
+    dispute_reason: Optional[str] = None
+    dispute_initiator: Optional[str] = None
+    disputed_at: Optional[datetime] = None
+    dispute_resolved_by: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """辞書形式に変換"""
@@ -417,7 +437,17 @@ class Task:
             "created_at": self.created_at.isoformat(),
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
-            "description": self.description
+            "description": self.description,
+            # クライアント承認関連
+            "approved_by_client": self.approved_by_client,
+            "approval_signature": self.approval_signature,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            # 紛争解決関連
+            "disputed": self.disputed,
+            "dispute_reason": self.dispute_reason,
+            "dispute_initiator": self.dispute_initiator,
+            "disputed_at": self.disputed_at.isoformat() if self.disputed_at else None,
+            "dispute_resolved_by": self.dispute_resolved_by
         }
     
     @classmethod
@@ -432,7 +462,17 @@ class Task:
             created_at=_parse_iso_datetime(data["created_at"]),
             expires_at=_parse_iso_datetime(data.get("expires_at")),
             completed_at=_parse_iso_datetime(data.get("completed_at")),
-            description=data.get("description", "")
+            description=data.get("description", ""),
+            # クライアント承認関連
+            approved_by_client=data.get("approved_by_client", False),
+            approval_signature=data.get("approval_signature"),
+            approved_at=_parse_iso_datetime(data.get("approved_at")),
+            # 紛争解決関連
+            disputed=data.get("disputed", False),
+            dispute_reason=data.get("dispute_reason"),
+            dispute_initiator=data.get("dispute_initiator"),
+            disputed_at=_parse_iso_datetime(data.get("disputed_at")),
+            dispute_resolved_by=data.get("dispute_resolved_by")
         )
 
 
@@ -698,6 +738,193 @@ class TaskContract:
         del self._locked_amounts[task_id]
         
         logger.info(f"Task {task_id} expired. Refunded {amount} AIC to {task.client_id}")
+        return True
+    
+    def submit_task_completion(self, task_id: str, agent_id: str) -> bool:
+        """エージェントがタスク完了を提出（クライアント承認待ち状態にする）
+        
+        Args:
+            task_id: タスクID
+            agent_id: エージェントID（本人確認用）
+            
+        Returns:
+            成功した場合True
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"Task {task_id} not found")
+            return False
+        
+        if task.status != TaskStatus.IN_PROGRESS:
+            logger.warning(f"Task {task_id} is not in progress: {task.status}")
+            return False
+        
+        # エージェント本人のみ提出可能
+        if agent_id != task.agent_id:
+            logger.warning(f"Only assigned agent can submit completion. Requested by: {agent_id}")
+            return False
+        
+        # タスク状態を承認待ちに変更
+        task.status = TaskStatus.PENDING_CLIENT_APPROVAL
+        logger.info(f"Task {task_id} completion submitted by agent {agent_id}, awaiting client approval")
+        return True
+    
+    def approve_task(self, task_id: str, client_id: str, signature: Optional[str] = None) -> bool:
+        """クライアントがタスク完了を承認し、ロックされたトークンをエージェントにリリース
+        
+        Args:
+            task_id: タスクID
+            client_id: クライアントID（本人確認用）
+            signature: 承認署名（オプション、マルチシグ対応）
+            
+        Returns:
+            成功した場合True
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"Task {task_id} not found")
+            return False
+        
+        # 承認待ち状態のみ承認可能
+        if task.status != TaskStatus.PENDING_CLIENT_APPROVAL:
+            logger.warning(f"Task {task_id} is not pending approval: {task.status}")
+            return False
+        
+        # クライアント本人のみ承認可能
+        if client_id != task.client_id:
+            logger.warning(f"Only client can approve task. Requested by: {client_id}")
+            return False
+        
+        agent_wallet = self._wallets.get(task.agent_id)
+        if not agent_wallet:
+            logger.warning(f"Agent wallet not found: {task.agent_id}")
+            return False
+        
+        amount = self._locked_amounts.get(task_id, 0)
+        
+        # エージェントに入金
+        agent_wallet.deposit(amount, description=f"Payment for approved task {task_id}",
+                             related_task_id=task_id)
+        
+        # タスク状態を更新
+        task.status = TaskStatus.COMPLETED
+        task.completed_at = datetime.now(timezone.utc)
+        task.approved_by_client = True
+        task.approved_at = datetime.now(timezone.utc)
+        task.approval_signature = signature
+        
+        # ロックを解除
+        del self._locked_amounts[task_id]
+        
+        logger.info(f"Task {task_id} approved by client {client_id}. Released {amount} AIC to {task.agent_id}")
+        return True
+    
+    def dispute_task(self, task_id: str, initiator_id: str, reason: str) -> bool:
+        """タスクに対して紛争を申請
+        
+        Args:
+            task_id: タスクID
+            initiator_id: 紛争を開始するエンティティID（クライアントまたはエージェント）
+            reason: 紛争理由
+            
+        Returns:
+            成功した場合True
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"Task {task_id} not found")
+            return False
+        
+        # 紛争可能な状態をチェック
+        if task.status not in [TaskStatus.IN_PROGRESS, TaskStatus.PENDING_CLIENT_APPROVAL]:
+            logger.warning(f"Task {task_id} cannot be disputed in status: {task.status}")
+            return False
+        
+        # クライアントまたはエージェントのみ紛争可能
+        if initiator_id not in [task.client_id, task.agent_id]:
+            logger.warning(f"Only client or agent can dispute task. Requested by: {initiator_id}")
+            return False
+        
+        # タスク状態を紛争中に変更
+        task.status = TaskStatus.DISPUTED
+        task.disputed = True
+        task.dispute_reason = reason
+        task.dispute_initiator = initiator_id
+        task.disputed_at = datetime.now(timezone.utc)
+        
+        logger.info(f"Task {task_id} disputed by {initiator_id}. Reason: {reason}")
+        return True
+    
+    def resolve_dispute(
+        self, 
+        task_id: str, 
+        resolver_id: str, 
+        approve_task: bool, 
+        slash_percentage: float = 0.0,
+        resolution_note: Optional[str] = None
+    ) -> bool:
+        """紛争を解決（ガバナンスによる判定）
+        
+        Args:
+            task_id: タスクID
+            resolver_id: 紛争を解決するエンティティID（ガバナンス）
+            approve_task: Trueの場合タスクを承認、Falseの場合却下
+            slash_percentage: スラッシュ率（却下時のみ適用、0.0-1.0）
+            resolution_note: 解決メモ
+            
+        Returns:
+            成功した場合True
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            logger.warning(f"Task {task_id} not found")
+            return False
+        
+        if task.status != TaskStatus.DISPUTED:
+            logger.warning(f"Task {task_id} is not in dispute: {task.status}")
+            return False
+        
+        if not 0 <= slash_percentage <= 1:
+            logger.warning(f"Slash percentage must be between 0 and 1: {slash_percentage}")
+            return False
+        
+        amount = self._locked_amounts.get(task_id, 0)
+        
+        if approve_task:
+            # タスク承認: エージェントに全額支払い
+            agent_wallet = self._wallets.get(task.agent_id)
+            if not agent_wallet:
+                logger.warning(f"Agent wallet not found: {task.agent_id}")
+                return False
+            
+            agent_wallet.deposit(amount, description=f"Payment for disputed task {task_id} (resolved)",
+                                 related_task_id=task_id)
+            task.status = TaskStatus.COMPLETED
+            logger.info(f"Dispute resolved for task {task_id}: task approved by {resolver_id}")
+        else:
+            # タスク却下: クライアントに返却（スラッシュ適用）
+            client_wallet = self._wallets.get(task.client_id)
+            if not client_wallet:
+                logger.warning(f"Client wallet not found: {task.client_id}")
+                return False
+            
+            slash_amount = amount * slash_percentage
+            return_amount = amount - slash_amount
+            
+            client_wallet.deposit(return_amount, 
+                                  description=f"Refund for disputed task {task_id} (resolved)",
+                                  related_task_id=task_id)
+            task.status = TaskStatus.RESOLVED
+            logger.info(f"Dispute resolved for task {task_id}: task rejected by {resolver_id}, "
+                       f"slashed {slash_amount} AIC, returned {return_amount} AIC to client")
+        
+        # タスク状態を更新
+        task.completed_at = datetime.now(timezone.utc)
+        task.dispute_resolved_by = resolver_id
+        
+        # ロックを解除
+        del self._locked_amounts[task_id]
+        
         return True
     
     def check_expired_tasks(self) -> List[str]:

@@ -107,3 +107,5 @@ workspace/nodejs/
 workspace/.npm-cache/
 *.db
 __pycache__/
+skills
+*/skills
