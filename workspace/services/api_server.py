@@ -421,7 +421,10 @@ marketplace_registry = None
 marketplace_orderbook = None
 try:
     if marketplace_module and ServiceRegistry:
-        from marketplace import OrderBook
+        try:
+            from services.marketplace import OrderBook
+        except ImportError:
+            from marketplace import OrderBook
         marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
         marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
         logger.info("Marketplace components initialized")
