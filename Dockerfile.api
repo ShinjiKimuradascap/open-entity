@@ -28,7 +28,8 @@ RUN pip install --no-cache-dir \
     aiohttp \
     networkx \
     sqlmodel \
-    pycryptodome
+    pycryptodome \
+    PyJWT
 
 # Create data directories
 RUN mkdir -p /app/data/marketplace /app/data/tokens /app/data/economy
