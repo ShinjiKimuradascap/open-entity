@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MOCO_PROFILE=entity
+      - MOCO_WORKING_DIRECTORY=/home/moco/workspace
+      - API_ONLY_MODE=1  # マーケットプレイス API のみ
+      - ENTITY_PORT=8000
+    volumes:
+      - ./workspace:/home/moco/workspace
+      - ./data:/home/moco/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - entity-network
+
+networks:
+  entity-network:
+    driver: bridge
