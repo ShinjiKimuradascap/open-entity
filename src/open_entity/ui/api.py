@@ -73,6 +73,12 @@ def filter_response_for_display(response: str, verbose: bool = False) -> str:
 
 app = FastAPI(title="Moco", version="1.0.0")
 
+
+@app.get("/health")
+async def health_check():
+    """ヘルスチェックエンドポイント"""
+    return {"status": "healthy", "service": "open-entity"}
+
 @app.on_event("startup")
 async def startup_event():
     """起動時にトンネルをセットアップ"""

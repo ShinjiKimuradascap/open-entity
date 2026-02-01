@@ -41,9 +41,14 @@ echo ""
 echo "🌍 ビジョン: 世界を素晴らしくすること"
 echo ""
 
+# .envファイルを読み込んで環境変数をエクスポート
+if [ -f ../.env ]; then
+  export $(grep -v '^#' ../.env | xargs)
+fi
+
 # Docker Compose で起動
 echo "📦 Docker コンテナを起動中..."
-docker compose -f docker-compose.pair.yml --env-file ../.env up -d
+docker compose -f docker-compose.pair.yml up -d
 
 # 起動完了まで待機
 echo "⏳ 起動を待機中..."
@@ -74,7 +79,7 @@ curl -s -X POST "http://localhost:8001/api/chat" \
     -d "{
         \"message\": $(echo "$INITIAL_PROMPT" | jq -Rs .),
         \"profile\": \"entity\",
-        \"provider\": \"${LLM_PROVIDER:-openrouter}\"
+        \"provider\": \"moonshot\"
     }" > /tmp/initial_response.json 2>&1 &
 
 echo ""

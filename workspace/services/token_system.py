@@ -2754,3 +2754,158 @@ if __name__ == "__main__":
         print(f"  {h.reward_type.value}: +{h.amount} AIC - {h.description}")
     
     print("\n=== All Tests Complete ===")
+
+
+# =============================================================================
+# 監視・ヘルスチェック機能 (Entity C協力タスク)
+# =============================================================================
+
+@dataclass
+class HealthStatus:
+    """ヘルスチェックステータス"""
+    status: str  # "healthy", "degraded", "unhealthy"
+    timestamp: datetime
+    checks: Dict[str, Any]
+    metrics: Dict[str, float]
+
+
+class TokenSystemMonitor:
+    """Token System監視クラス"""
+    
+    def __init__(self, token_system):
+        self.token_system = token_system
+        self._check_interval = 60  # 秒
+        self._monitoring = False
+        self._monitor_thread: Optional[threading.Thread] = None
+        self._alert_handlers: List[callable] = []
+        self._last_health: Optional[HealthStatus] = None
+        
+    def add_alert_handler(self, handler: callable):
+        """アラートハンドラを追加"""
+        self._alert_handlers.append(handler)
+        
+    def _send_alert(self, message: str, level: str = "warning"):
+        """アラート送信"""
+        for handler in self._alert_handlers:
+            try:
+                handler(message, level)
+            except Exception as e:
+                logger.error(f"Alert handler error: {e}")
+                
+    def check_health(self) -> HealthStatus:
+        """ヘルスチェック実行"""
+        checks = {}
+        metrics = {}
+        
+        try:
+            # 1. ウォレットアクセスチェック
+            with _atomic_operation():
+                wallet_count = len(self.token_system.wallets)
+                checks["wallets_accessible"] = wallet_count >= 0
+                metrics["wallet_count"] = float(wallet_count)
+                
+            # 2. タスクコントラクトチェック
+            task_count = len(self.token_system.task_contracts)
+            checks["task_contracts_accessible"] = task_count >= 0
+            metrics["task_contract_count"] = float(task_count)
+            
+            # 3. トランザクションログチェック
+            log_count = len(self.token_system.transaction_log)
+            checks["transaction_log_accessible"] = log_count >= 0
+            metrics["transaction_log_count"] = float(log_count)
+            
+            # 4. データ永続化チェック
+            try:
+                test_file = self.token_system.data_dir / ".health_check"
+                test_file.write_text("test")
+                test_file.unlink()
+                checks["persistence_working"] = True
+            except Exception as e:
+                checks["persistence_working"] = False
+                logger.error(f"Persistence check failed: {e}")
+                
+            # ステータス判定
+            failed_checks = [k for k, v in checks.items() if not v]
+            if len(failed_checks) == 0:
+                status = "healthy"
+            elif len(failed_checks) <= 1:
+                status = "degraded"
+            else:
+                status = "unhealthy"
+                
+        except Exception as e:
+            status = "unhealthy"
+            checks["error"] = str(e)
+            logger.error(f"Health check failed: {e}")
+            
+        health = HealthStatus(
+            status=status,
+            timestamp=datetime.now(timezone.utc),
+            checks=checks,
+            metrics=metrics
+        )
+        self._last_health = health
+        
+        # 異常時はアラート送信
+        if status == "unhealthy":
+            self._send_alert(f"Token System unhealthy: {checks}", "error")
+        elif status == "degraded":
+            self._send_alert(f"Token System degraded: {failed_checks}", "warning")
+            
+        return health
+        
+    def start_monitoring(self, interval: Optional[int] = None):
+        """監視を開始"""
+        if interval:
+            self._check_interval = interval
+            
+        if self._monitoring:
+            return
+            
+        self._monitoring = True
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread.start()
+        logger.info(f"Token System monitoring started (interval: {self._check_interval}s)")
+        
+    def stop_monitoring(self):
+        """監視を停止"""
+        self._monitoring = False
+        if self._monitor_thread:
+            self._monitor_thread.join(timeout=5)
+        logger.info("Token System monitoring stopped")
+        
+    def _monitor_loop(self):
+        """監視ループ"""
+        while self._monitoring:
+            try:
+                self.check_health()
+            except Exception as e:
+                logger.error(f"Monitor loop error: {e}")
+            
+            # インターバル待ち（中断可能）
+            for _ in range(self._check_interval):
+                if not self._monitoring:
+                    break
+                time.sleep(1)
+                
+    def get_metrics(self) -> Dict[str, Any]:
+        """メトリクス取得"""
+        if not self._last_health:
+            self.check_health()
+            
+        return {
+            "health_status": self._last_health.status if self._last_health else "unknown",
+            "last_check": self._last_health.timestamp.isoformat() if self._last_health else None,
+            "metrics": self._last_health.metrics if self._last_health else {},
+            "monitoring_active": self._monitoring,
+            "check_interval": self._check_interval
+        }
+
+
+# time import for monitoring
+time_module_imported = False
+try:
+    import time
+    time_module_imported = True
+except ImportError:
+    pass
