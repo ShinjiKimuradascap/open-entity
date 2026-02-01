@@ -34,6 +34,7 @@ class ServiceInfo:
     capabilities: List[str]
     registered_at: datetime
     last_heartbeat: datetime
+    solana_address: Optional[str] = None  # Solana wallet address for self-custody model
     
     def is_alive(self, timeout_sec: int = 60) -> bool:
         """サービスが生存しているかチェック"""
@@ -48,7 +49,8 @@ class ServiceInfo:
             "endpoint": self.endpoint,
             "capabilities": self.capabilities,
             "registered_at": self.registered_at.isoformat(),
-            "last_heartbeat": self.last_heartbeat.isoformat()
+            "last_heartbeat": self.last_heartbeat.isoformat(),
+            "solana_address": self.solana_address
         }
     
     @classmethod
@@ -60,7 +62,8 @@ class ServiceInfo:
             endpoint=data["endpoint"],
             capabilities=data.get("capabilities", []),
             registered_at=datetime.fromisoformat(data["registered_at"]),
-            last_heartbeat=datetime.fromisoformat(data["last_heartbeat"])
+            last_heartbeat=datetime.fromisoformat(data["last_heartbeat"]),
+            solana_address=data.get("solana_address")  # Backwards compatible
         )
 
 
@@ -177,7 +180,8 @@ class ServiceRegistry:
         entity_id: str,
         name: str,
         endpoint: str,
-        capabilities: List[str]
+        capabilities: List[str],
+        solana_address: Optional[str] = None
     ) -> bool:
         """
         サービスを登録
@@ -187,6 +191,7 @@ class ServiceRegistry:
             name: エージェント名
             endpoint: エンドポイントURL
             capabilities: 提供できる機能のリスト
+            solana_address: Solanaウォレットアドレス（オプション）
         
         Returns:
             登録成功時True
@@ -198,7 +203,8 @@ class ServiceRegistry:
             endpoint=endpoint,
             capabilities=capabilities,
             registered_at=now,
-            last_heartbeat=now
+            last_heartbeat=now,
+            solana_address=solana_address
         )
         
         # 自動保存
@@ -213,7 +219,8 @@ class ServiceRegistry:
         entity_id: str,
         name: str,
         endpoint: str,
-        capabilities: List[str]
+        capabilities: List[str],
+        solana_address: Optional[str] = None
     ) -> bool:
         """
         サービスを登録（非同期版）
@@ -223,6 +230,7 @@ class ServiceRegistry:
             name: エージェント名
             endpoint: エンドポイントURL
             capabilities: 提供できる機能のリスト
+            solana_address: Solanaウォレットアドレス（オプション）
         
         Returns:
             登録成功時True
@@ -235,7 +243,8 @@ class ServiceRegistry:
                 endpoint=endpoint,
                 capabilities=capabilities,
                 registered_at=now,
-                last_heartbeat=now
+                last_heartbeat=now,
+                solana_address=solana_address
             )
         
         # 自動保存
@@ -244,6 +253,55 @@ class ServiceRegistry:
         
         logger.info(f"Registered agent: {name} ({entity_id})")
         return True
+    
+    def update_solana_address(self, entity_id: str, solana_address: str) -> bool:
+        """
+        Solanaアドレスを更新
+        
+        Args:
+            entity_id: エージェントID
+            solana_address: Solanaウォレットアドレス
+        
+        Returns:
+            更新成功時True
+        """
+        if entity_id in self._services:
+            self._services[entity_id].solana_address = solana_address
+            
+            # 自動保存
+            if self._auto_save:
+                self._save_to_disk_sync()
+            
+            logger.info(f"Updated Solana address for {entity_id}: {solana_address}")
+            return True
+        
+        logger.warning(f"Agent not found for Solana address update: {entity_id}")
+        return False
+    
+    async def update_solana_address_async(self, entity_id: str, solana_address: str) -> bool:
+        """
+        Solanaアドレスを更新（非同期版）
+        
+        Args:
+            entity_id: エージェントID
+            solana_address: Solanaウォレットアドレス
+        
+        Returns:
+            更新成功時True
+        """
+        async with self._lock:
+            if entity_id in self._services:
+                self._services[entity_id].solana_address = solana_address
+                
+                # 自動保存
+                if self._auto_save:
+                    await self._save_to_disk()
+                
+                logger.info(f"Updated Solana address for {entity_id}: {solana_address}")
+                return True
+        
+        logger.warning(f"Agent not found for Solana address update: {entity_id}")
+        return False
     
     def unregister(self, entity_id: str) -> bool:
         """

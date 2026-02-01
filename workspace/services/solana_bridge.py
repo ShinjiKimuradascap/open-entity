@@ -113,38 +113,28 @@ def transfer_tokens(
     order_id: str = ""
 ) -> Dict[str, Any]:
     """
-    Transfer SPL tokens between entities
+    [DEPRECATED - Self-Custody Model]
+    Server-side token transfers are disabled in the self-custody model.
+    Entities must sign and broadcast transactions locally.
+    
+    Use confirm_payment_on_chain() after the buyer submits their transaction.
     
     Args:
-        from_entity: Sender entity ID
-        to_entity: Recipient entity ID
-        amount: Amount to transfer (in tokens)
+        from_entity: Sender entity ID (ignored)
+        to_entity: Recipient entity ID (ignored)
+        amount: Amount to transfer (ignored)
         order_id: Optional order ID for reference
         
     Returns:
-        Transaction result with signature
+        Error response indicating self-custody requirement
     """
-    if amount <= 0:
-        return {
-            "success": False,
-            "error": "Amount must be positive"
-        }
-    
-    result = _run_bridge_command(
-        "transfer",
-        from_entity,
-        to_entity,
-        str(amount),
-        order_id
-    )
-    
-    if result.get("success"):
-        logger.info(f"Solana transfer: {amount} tokens from {from_entity} to {to_entity}")
-        logger.info(f"Signature: {result.get('signature')}")
-    else:
-        logger.error(f"Solana transfer failed: {result.get('error')}")
-    
-    return result
+    logger.warning("Server-side token transfer attempted but disabled (self-custody model)")
+    return {
+        "success": False,
+        "error": "Server-side transfers disabled. Use self-custody model: sign transaction locally and submit tx signature for verification.",
+        "order_id": order_id,
+        "self_custody_required": True
+    }
 
 
 def request_airdrop(entity_id: str, amount_sol: float = 1.0) -> Dict[str, Any]:
@@ -227,40 +217,32 @@ def execute_marketplace_payment(
     order_id: str
 ) -> Dict[str, Any]:
     """
-    Execute marketplace payment on Solana blockchain
+    [DEPRECATED - Self-Custody Model]
+    Server-side marketplace payments are disabled in the self-custody model.
     
-    This function is designed to be called from approve_order()
-    after internal token transfer succeeds.
+    Payment flow (self-custody):
+    1. Buyer gets provider's Solana address from GET /agent/{provider_id}
+    2. Buyer signs and broadcasts transaction locally
+    3. Buyer submits tx signature to POST /orders/{order_id}/confirm-payment
+    4. API verifies transaction on-chain
     
     Args:
-        buyer_id: Buyer entity ID
-        provider_id: Provider entity ID
-        amount: Payment amount
+        buyer_id: Buyer entity ID (ignored)
+        provider_id: Provider entity ID (ignored)
+        amount: Payment amount (ignored)
         order_id: Order identifier
         
     Returns:
-        Blockchain transaction result
+        Error response with self-custody instructions
     """
-    logger.info(f"Executing Solana payment for order {order_id}")
-    logger.info(f"Buyer: {buyer_id}, Provider: {provider_id}, Amount: {amount}")
-    
-    try:
-        result = transfer_tokens(buyer_id, provider_id, amount, order_id)
-        
-        if result.get("success"):
-            logger.info(f"✅ Solana payment successful: {result.get('signature')}")
-        else:
-            logger.error(f"❌ Solana payment failed: {result.get('error')}")
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Solana payment exception: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "order_id": order_id
-        }
+    logger.warning("Server-side marketplace payment attempted but disabled (self-custody model)")
+    return {
+        "success": False,
+        "error": "Server-side payments disabled. Use self-custody flow: GET provider address → sign locally → POST /orders/{order_id}/confirm-payment",
+        "order_id": order_id,
+        "self_custody_required": True,
+        "alternative_endpoint": f"/orders/{order_id}/confirm-payment"
+    }
 
 
 # Testing

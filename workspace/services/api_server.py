@@ -473,12 +473,27 @@ _server_keypair: Optional[KeyPair] = None
 _server_signer: Optional[MessageSigner] = None
 
 
-def get_server_keypair() -> KeyPair:
+def get_server_keypair() -> Optional[KeyPair]:
     """Get or create server key pair"""
     global _server_keypair, _server_signer
     if _server_keypair is None:
-        _server_keypair = load_key_from_env("ENTITY_PRIVATE_KEY") or generate_keypair()
-        _server_signer = MessageSigner(_server_keypair)
+        try:
+            if crypto_module is None:
+                logger.warning("Crypto module not loaded, cannot create keypair")
+                return None
+            # Try to load from env, or generate new
+            private_key_hex = load_key_from_env("ENTITY_PRIVATE_KEY")
+            if private_key_hex:
+                logger.info("Loading server keypair from environment")
+                _server_keypair = KeyPair.from_private_key_hex(private_key_hex)
+            else:
+                logger.info("Generating new server keypair")
+                _server_keypair = KeyPair.generate()
+            if _server_keypair and MessageSigner:
+                _server_signer = MessageSigner(_server_keypair)
+        except Exception as e:
+            logger.error(f"Failed to initialize server keypair: {e}")
+            return None
     return _server_keypair
 
 
@@ -515,6 +530,7 @@ class RegisterRequest(BaseModel):
     endpoint: str
     capabilities: List[str]
     public_key: Optional[str] = Field(None, description="Hex-encoded Ed25519 public key")
+    solana_address: Optional[str] = Field(None, description="Solana wallet address for self-custody model", example="B399QMKxawQDoqJKRaaEh74pwwmTbuNe5Tx1FBwCKjG9")
 
 
 class HeartbeatRequest(BaseModel):
@@ -574,6 +590,41 @@ class StatsResponse(BaseModel):
     server_public_key: str
     timestamp: str
     features: List[str]
+
+
+# Solana Self-Custody Models
+class SolanaAddressRequest(BaseModel):
+    solana_address: str = Field(..., description="Solana wallet address", example="B399QMKxawQDoqJKRaaEh74pwwmTbuNe5Tx1FBwCKjG9")
+
+
+class SolanaAddressResponse(BaseModel):
+    status: str
+    entity_id: str
+    solana_address: str
+    token_mint: str = "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
+
+
+class AgentBalanceResponse(BaseModel):
+    entity_id: str
+    solana_address: Optional[str]
+    balance: float
+    token_symbol: str = "$ENTITY"
+    token_mint: str = "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
+    last_updated: str
+
+
+class ConfirmPaymentRequest(BaseModel):
+    tx_signature: str = Field(..., description="Solana transaction signature", example="5nLSvKU6xRMdA6pRXJhJpymZANns1FFszLm7wFHZ8XQDZ7Py9rVgsU6ukXjZjhZDySZjV6eu6LyR9tZsV6ZKBKt9")
+
+
+class ConfirmPaymentResponse(BaseModel):
+    status: str
+    order_id: str
+    tx_signature: str
+    amount_verified: float
+    from_address: str = Field(..., alias="from")
+    to_address: str = Field(..., alias="to")
+    confirmed_at: str
 
 
 # Token System Models
@@ -971,12 +1022,13 @@ api_key_bearer = APIKeyBearer(api_key_auth)
 
 @app.post("/register")
 async def register_agent(req: RegisterRequest):
-    """Register a new AI agent with optional public key"""
+    """Register a new AI agent with optional public key and Solana address"""
     success = registry.register(
         entity_id=req.entity_id,
         name=req.name,
         endpoint=req.endpoint,
-        capabilities=req.capabilities
+        capabilities=req.capabilities,
+        solana_address=req.solana_address
     )
     
     if success:
@@ -996,7 +1048,8 @@ async def register_agent(req: RegisterRequest):
             "entity_id": req.entity_id,
             "registered_at": datetime.now(timezone.utc).isoformat(),
             "api_key": api_key,
-            "public_key_stored": req.public_key is not None
+            "public_key_stored": req.public_key is not None,
+            "solana_address": req.solana_address
         }
     
     raise HTTPException(status_code=400, detail="Registration failed")
@@ -1057,7 +1110,7 @@ async def discover_agents(capability: Optional[str] = None):
 
 @app.get("/agent/{entity_id}")
 async def get_agent(entity_id: str):
-    """Get agent details"""
+    """Get agent details including Solana address"""
     service = registry.find_by_id(entity_id)
     if service:
         return {
@@ -1067,9 +1120,107 @@ async def get_agent(entity_id: str):
             "capabilities": service.capabilities,
             "registered_at": service.registered_at.isoformat(),
             "last_heartbeat": service.last_heartbeat.isoformat(),
-            "alive": service.is_alive()
+            "alive": service.is_alive(),
+            "solana_address": service.solana_address,
+            "token_mint": "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
         }
     raise HTTPException(status_code=404, detail="Entity not found")
+
+
+@app.put("/agent/{entity_id}/solana-address", response_model=SolanaAddressResponse)
+async def update_agent_solana_address(entity_id: str, req: SolanaAddressRequest):
+    """Update Solana address for an agent (self-custody model)"""
+    # Validate Solana address format (32-44 characters, base58 encoded)
+    if not req.solana_address or len(req.solana_address) < 32 or len(req.solana_address) > 44:
+        raise HTTPException(status_code=400, detail="Invalid Solana address format")
+    
+    service = registry.find_by_id(entity_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    
+    # Update the Solana address
+    success = registry.update_solana_address(entity_id, req.solana_address)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update Solana address")
+    
+    return SolanaAddressResponse(
+        status="ok",
+        entity_id=entity_id,
+        solana_address=req.solana_address,
+        token_mint="2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
+    )
+
+
+@app.get("/agent/{entity_id}/balance", response_model=AgentBalanceResponse)
+async def get_agent_balance(entity_id: str):
+    """Get $ENTITY token balance for an agent from Solana blockchain (read-only)"""
+    service = registry.find_by_id(entity_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    
+    if not service.solana_address:
+        raise HTTPException(status_code=400, detail="Solana address not registered")
+    
+    # Query Solana RPC for token balance
+    try:
+        balance = await _query_solana_token_balance(service.solana_address)
+    except Exception as e:
+        logger.error(f"Failed to query Solana balance: {e}")
+        balance = 0.0
+    
+    return AgentBalanceResponse(
+        entity_id=entity_id,
+        solana_address=service.solana_address,
+        balance=balance,
+        token_symbol="$ENTITY",
+        token_mint="2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1",
+        last_updated=datetime.now(timezone.utc).isoformat()
+    )
+
+
+async def _query_solana_token_balance(solana_address: str) -> float:
+    """Query $ENTITY token balance from Solana blockchain via RPC"""
+    import aiohttp
+    
+    # Solana Devnet RPC endpoint
+    rpc_url = "https://api.devnet.solana.com"
+    token_mint = "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
+    
+    # Get token accounts by owner
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTokenAccountsByOwner",
+        "params": [
+            solana_address,
+            {"mint": token_mint},
+            {"encoding": "jsonParsed"}
+        ]
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(rpc_url, json=payload, timeout=10) as resp:
+                data = await resp.json()
+                
+                if "result" in data and "value" in data["result"]:
+                    accounts = data["result"]["value"]
+                    if accounts:
+                        # Sum balances from all token accounts
+                        total_balance = 0
+                        for account in accounts:
+                            if "account" in account and "data" in account["account"]:
+                                parsed = account["account"]["data"].get("parsed", {})
+                                info = parsed.get("info", {})
+                                token_amount = info.get("tokenAmount", {})
+                                amount = int(token_amount.get("amount", 0))
+                                decimals = token_amount.get("decimals", 9)
+                                total_balance += amount / (10 ** decimals)
+                        return total_balance
+                return 0.0
+    except Exception as e:
+        logger.error(f"Solana RPC error: {e}")
+        return 0.0
 
 
 @app.post("/message")
@@ -1248,38 +1399,59 @@ async def verify_signature(req: VerifyRequest):
 @app.get("/stats", response_model=StatsResponse)
 async def get_stats():
     """Get server statistics and capabilities"""
-    keypair = get_server_keypair()
-    services = registry.list_all()
-    active = [s for s in services if s.is_alive()]
+    try:
+        keypair = get_server_keypair()
+        public_key = keypair.get_public_key_hex() if keypair else "not_initialized"
+    except Exception as e:
+        logger.error(f"Failed to get server keypair: {e}")
+        public_key = "error"
+    
+    try:
+        services = registry.list_all() if registry else []
+        active = [s for s in services if hasattr(s, 'is_alive') and s.is_alive()]
+    except Exception as e:
+        logger.error(f"Failed to list services: {e}")
+        services = []
+        active = []
+    
+    # Check available features based on loaded modules
+    features = ["JWT_authentication", "API_key_authentication"]
+    if crypto_module:
+        features.extend(["Ed25519_signatures", "Replay_protection", "Message_encryption"])
     
     return StatsResponse(
-        version="0.4.0",
+        version="0.5.1",
         registered_agents=len(services),
         active_agents=len(active),
-        server_public_key=keypair.get_public_key_hex(),
+        server_public_key=public_key,
         timestamp=datetime.now(timezone.utc).isoformat(),
-        features=[
-            "Ed25519_signatures",
-            "JWT_authentication",
-            "API_key_authentication",
-            "Replay_protection",
-            "Message_encryption"
-        ]
+        features=features
     )
 
 
 @app.get("/health")
 async def health_check():
     """API health check"""
+    try:
+        registered_count = len(registry.list_all()) if registry else 0
+    except Exception:
+        registered_count = 0
+    
     return {
         "status": "healthy",
-        "version": "0.4.0",
-        "registered_agents": len(registry.list_all()),
+        "version": "0.5.1",
+        "registered_agents": registered_count,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "security_features": {
-            "ed25519_signatures": True,
+            "ed25519_signatures": crypto_module is not None,
             "jwt_authentication": True,
-            "replay_protection": True
+            "replay_protection": crypto_module is not None
+        },
+        "modules_loaded": {
+            "crypto": crypto_module is not None,
+            "registry": registry_module is not None,
+            "peer_service": peer_service_module is not None,
+            "token_system": token_system_module is not None
         }
     }
 
@@ -5131,6 +5303,170 @@ async def approve_order_result(
         new_status="completed",
         message=message
     )
+
+
+@app.post("/orders/{order_id}/confirm-payment", response_model=ConfirmPaymentResponse)
+async def confirm_order_payment(order_id: str, req: ConfirmPaymentRequest):
+    """
+    Confirm payment for an order using on-chain verification (self-custody model).
+    The buyer submits a transaction signature, and the API verifies it on Solana.
+    """
+    # Get order from orderbook
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    order = await marketplace_orderbook.get_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+    
+    # Get provider's Solana address
+    service = registry.find_by_id(order.provider_id)
+    if not service or not service.solana_address:
+        raise HTTPException(
+            status_code=400, 
+            detail="Provider Solana address not registered"
+        )
+    
+    # Verify transaction on Solana
+    try:
+        tx_info = await _verify_solana_transaction(
+            tx_signature=req.tx_signature,
+            expected_to=service.solana_address,
+            expected_amount=order.total_amount
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to verify transaction: {e}")
+        raise HTTPException(status_code=500, detail="Failed to verify transaction on-chain")
+    
+    if not tx_info.get("verified"):
+        raise HTTPException(
+            status_code=400, 
+            detail=tx_info.get("error", "Transaction verification failed")
+        )
+    
+    # Update order status to completed
+    success = await marketplace_orderbook.approve_order(
+        order_id=order_id,
+        buyer_id=order.buyer_id
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to complete order")
+    
+    return ConfirmPaymentResponse(
+        status="confirmed",
+        order_id=order_id,
+        tx_signature=req.tx_signature,
+        amount_verified=tx_info.get("amount", 0),
+        from_address=tx_info.get("from", ""),
+        to_address=tx_info.get("to", ""),
+        confirmed_at=datetime.now(timezone.utc).isoformat()
+    )
+
+
+async def _verify_solana_transaction(
+    tx_signature: str,
+    expected_to: str,
+    expected_amount: float
+) -> dict:
+    """
+    Verify a Solana transaction on-chain.
+    Returns transaction details if verified, raises exception otherwise.
+    """
+    import aiohttp
+    
+    rpc_url = "https://api.devnet.solana.com"
+    token_mint = "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1"
+    
+    # Get transaction details
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getTransaction",
+        "params": [
+            tx_signature,
+            {"encoding": "jsonParsed", "commitment": "confirmed"}
+        ]
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(rpc_url, json=payload, timeout=15) as resp:
+                data = await resp.json()
+                
+                if "error" in data:
+                    return {"verified": False, "error": f"Transaction not found: {data['error']}"}
+                
+                if "result" not in data or data["result"] is None:
+                    return {"verified": False, "error": "Transaction not found on-chain"}
+                
+                tx_data = data["result"]
+                meta = tx_data.get("meta", {})
+                
+                # Check transaction status
+                if meta.get("err"):
+                    return {"verified": False, "error": "Transaction failed on-chain"}
+                
+                # Parse token transfers
+                pre_balances = {}
+                post_balances = {}
+                
+                # Get pre-token balances
+                for balance in meta.get("preTokenBalances", []):
+                    if balance.get("mint") == token_mint:
+                        owner = balance.get("owner", "")
+                        amount = float(balance.get("uiTokenAmount", {}).get("uiAmount", 0))
+                        pre_balances[owner] = amount
+                
+                # Get post-token balances
+                for balance in meta.get("postTokenBalances", []):
+                    if balance.get("mint") == token_mint:
+                        owner = balance.get("owner", "")
+                        amount = float(balance.get("uiTokenAmount", {}).get("uiAmount", 0))
+                        post_balances[owner] = amount
+                
+                # Find transfer to expected recipient
+                actual_amount = 0
+                sender = ""
+                
+                for owner in post_balances:
+                    if owner == expected_to:
+                        pre = pre_balances.get(owner, 0)
+                        post = post_balances.get(owner, 0)
+                        actual_amount = post - pre
+                    else:
+                        # Track potential sender
+                        pre = pre_balances.get(owner, 0)
+                        post = post_balances.get(owner, 0)
+                        if post < pre:
+                            sender = owner
+                
+                if actual_amount <= 0:
+                    return {"verified": False, "error": "No $ENTITY token transfer found to recipient"}
+                
+                # Allow small rounding differences (0.01 tolerance)
+                if abs(actual_amount - expected_amount) > 0.01:
+                    return {
+                        "verified": False, 
+                        "error": f"Payment amount mismatch: expected {expected_amount}, got {actual_amount}"
+                    }
+                
+                return {
+                    "verified": True,
+                    "amount": actual_amount,
+                    "from": sender,
+                    "to": expected_to,
+                    "signature": tx_signature
+                }
+                
+    except aiohttp.ClientError as e:
+        logger.error(f"RPC connection error: {e}")
+        return {"verified": False, "error": "Failed to connect to Solana RPC"}
+    except Exception as e:
+        logger.error(f"Transaction verification error: {e}")
+        return {"verified": False, "error": f"Verification error: {str(e)}"}
 
 
 @app.post("/marketplace/orders/{order_id}/start", response_model=StartOrderResponse)
