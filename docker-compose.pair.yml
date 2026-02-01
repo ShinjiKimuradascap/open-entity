@@ -28,11 +28,11 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    read_only: true
+    # read_only removed to allow pytest and file writes
     tmpfs:
-      - /tmp:size=100M,mode=1777
-      - /var/tmp:size=50M,mode=1777
-      - /home/moco/.moco:size=50M,mode=1777
+      - /tmp:size=200M,mode=1777
+      - /var/tmp:size=100M,mode=1777
+      - /home/moco/.moco:size=100M,mode=1777
     cap_drop:
       - ALL
     cap_add:
@@ -58,7 +58,7 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
       - MOCO_PROFILE=${MOCO_PROFILE:-entity}
-      - LLM_PROVIDER=openrouter
+      - LLM_PROVIDER=moonshot
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
       - MOCO_WORKING_DIRECTORY=/home/moco/workspace
       # ピア設定（コンテナ内は8000）
@@ -68,11 +68,11 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    read_only: true
+    # read_only removed to allow pytest and file writes
     tmpfs:
-      - /tmp:size=100M,mode=1777
-      - /var/tmp:size=50M,mode=1777
-      - /home/moco/.moco:size=50M,mode=1777
+      - /tmp:size=200M,mode=1777
+      - /var/tmp:size=100M,mode=1777
+      - /home/moco/.moco:size=100M,mode=1777
     cap_drop:
       - ALL
     cap_add:

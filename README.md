@@ -96,8 +96,8 @@ docker logs entity-b --tail 20
 
 | Entity | URL | LLM Provider |
 |--------|-----|--------------|
-| Entity A | http://localhost:8001 | Moonshot (kimi-k2.5) |
-| Entity B | http://localhost:8002 | OpenRouter |
+| Entity A | http://localhost:8001 | Moonshot (kimi-for-coding) |
+| Entity B | http://localhost:8002 | Moonshot (kimi-for-coding) |
 
 ### Watch Them Work
 
@@ -120,7 +120,7 @@ curl -X POST "http://localhost:8001/api/chat" \
 # Send message to Entity B
 curl -X POST "http://localhost:8002/api/chat" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Focus on fixing bugs first", "profile": "entity", "provider": "openrouter"}'
+  -d '{"message": "Focus on fixing bugs first", "profile": "entity", "provider": "moonshot"}'
 ```
 
 **Example Use Cases:**
@@ -134,10 +134,63 @@ curl -X POST "http://localhost:8002/api/chat" \
 2. Type your message in the chat input
 3. The entity will respond and incorporate your instructions
 
+### 🚀 Kickstart the Pair
+
+After entities are running, send a startup prompt to get them working:
+
+```bash
+# Start Entity A
+curl -s -X POST "http://localhost:8001/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "🔥 Start working!\n\n1. todoread() to check tasks\n2. talk_to_peer() to coordinate with Entity B\n3. Execute tasks by priority\n4. Run pytest\n5. git commit & push\n6. report_to_peer() every 20 actions",
+    "profile": "entity",
+    "provider": "moonshot"
+  }'
+
+# Start Entity B
+curl -s -X POST "http://localhost:8002/api/chat" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "🔥 Start working!\n\n1. todoread() to check tasks\n2. Coordinate with Entity A via talk_to_peer()\n3. Work on assigned tasks\n4. report_to_peer() periodically",
+    "profile": "entity",
+    "provider": "moonshot"
+  }'
+```
+
 ### Stop the System
 
 ```bash
-docker compose -f docker-compose.pair.yml stop
+docker compose -f docker-compose.pair.yml down
+```
+
+---
+
+## 🔑 Moonshot Kimi for Coding Setup
+
+Both entities use **kimi-for-coding** model from Moonshot, which provides:
+- 🧠 Reasoning capabilities with `reasoning_content`
+- 🔧 Optimized for code generation and analysis
+- 💰 Free tier available
+
+### Get Your API Key
+
+1. Sign up at [platform.moonshot.ai](https://platform.moonshot.ai/)
+2. Create an API key with **kimi-for-coding** access
+3. Add to your `.env` file:
+
+```bash
+MOONSHOT_API_KEY="sk-kimi-your-key-here"
+```
+
+### Verify API Access
+
+```bash
+curl -s "https://api.kimi.com/coding/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MOONSHOT_API_KEY" \
+  -H "User-Agent: Kilo-Code/1.0.0" \
+  -d '{"model": "kimi-for-coding", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 50}'
 ```
 
 ---
