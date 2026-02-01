@@ -4,7 +4,7 @@ services:
   api-server:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     container_name: entity-api
     ports:
       - "8000:8000"
