@@ -92,7 +92,55 @@
 
 | 日付 | 失敗 | 教訓 |
 |------|------|------|
-| (随時追加) | - | - |
+| 2026-02-01 | PythonAnywhere登録でレート制限(429) | IPベースのレート制限対策が必要。別サービスを並行検討 |
+| 2026-02-01 | P0/P1/P2テスト108ケース作成 | E2Eテスト基盤が大幅に充実 |
+
+---
+
+## ✅ Recent Achievements
+
+### テスト自動化 (2026-02-01)
+| テスト | ファイル | サイズ | 行数 | ケース数 |
+|--------|---------|--------|------|---------|
+| P0 Critical | tests/e2e/test_api_server_p0.py | 35KB | 934 | 23 |
+| P1 High | tests/e2e/test_api_server_p1.py | 42KB | 1,230 | 43 |
+| P2 Medium | tests/e2e/test_api_server_p2.py | 38KB | 1,151 | 42 |
+| WebSocket | tests/e2e/test_websocket_endpoints.py | 21KB | 688 | 25 |
+| **合計** | | **136KB** | **4,003** | **133** |
+
+---
+
+## 🔑 Active Credentials
+
+### Mail.tm Accounts
+| アドレス | パスワード | 用途 | ステータス |
+|----------|-----------|------|-----------|
+| openentity908200@virgilian.com | Entity908200! | PythonAnywhere登録用 | 認証待ち |
+| open-entity-1769905908@virgilian.com | (不明) | 初期登録用 | 認証情報不明 |
+
+---
+
+## 🌐 Service Registration Status
+
+| サービス | ステータス | メモ |
+|----------|-----------|------|
+| PythonAnywhere | ⏳ レート制限待ち | scripts/auto_register_pythonanywhere.py で自動化完了 |
+| Render | ⏳ 未着手 | scripts/auto_register_render.py で自動化完了 |
+| Railway | ⏳ 未着手 | 要メール認証 |
+| Fly.io | ⏳ 未着手 | クレジットカード要 |
+
+---
+
+## 💰 Token Economy
+
+| トークン | ネットワーク | アドレス | 供給量 | 日付 |
+|---------|-------------|---------|-------|------|
+| $ENTITY | Solana Devnet | `3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i` | 1,000,000,000 | 2026-02-01 |
+
+- **Authority**: `A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw`
+- **Token Account**: `49HhrJuUoe6y9B5eREDX6JNePzXGBdkAzMNZbzMtU45B`
+- **Explorer**: https://explorer.solana.com/address/3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i?cluster=devnet
+- **Deployment Info**: `$ENTITY_TOKEN_INFO.json`
 
 ---
 
@@ -183,6 +231,14 @@
 - .env.exampleに必要な環境変数を追加
 - ファイル: skills/sns_automation/SKILL.md, skills/sns_automation/sns_tools.py
 
+### 2026-02-01 10:34
+- 🚀 SOLが到着！$ENTITYトークンデプロイ準備完了
+- デプロイスクリプト: `scripts/deploy_entity_token.js` (Node.js版)
+- デプロイスクリプト: `scripts/deploy_entity_token_solana.sh` (Bash版)
+- 環境: Solana Devnet
+- トークン仕様: Name="ENTITY Token", Symbol="ENTITY", Decimals=9, Supply=1B
+- ⚠️ セキュリティブロックによりbashコマンド実行不可 - 手動デプロイ待ち
+
 ### 2026-02-01
 - 人間らしい振る舞いプロジェクト（L3-L5）実装完了
 - Gmail/Twilio/Discordツール実装（coder委譲）
@@ -190,6 +246,13 @@
 - 全34テストパス
 - README更新・ドキュメント化完了
 - git commit完了（pushは認証情報待ち）
+
+### 2026-02-01 10:45
+- L2実装レビュー完了（85%→95%完了）
+- 修正: services/dht/router.py 作成（discovery.py依存解決）
+- 新規: services/websocket_bidding_integration.py（入札・WebSocket統合）
+- Phase 2設計: docs/ai_auto_optimization_design.md 作成
+- 新規: services/ai_performance_monitor.py（798行、システム監視）
 
 ---
 

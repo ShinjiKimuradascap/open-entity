@@ -7,7 +7,7 @@ DHT peer discovery, governance system, and rate limiting
 
 from fastapi import FastAPI, HTTPException, Header, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import uvicorn
@@ -3402,6 +3402,30 @@ class WebSocketMessage(BaseModel):
     sender: Optional[str] = Field(default=None, description="Sender entity ID")
 
 
+class BidNotification(BaseModel):
+    """Bid notification message for real-time marketplace updates"""
+    type: str = Field(..., description="Notification type: bid.new, bid.closed, bid.won, auction.started, auction.ended, error")
+    auction_id: Optional[str] = Field(default=None, description="Auction/request ID")
+    service_id: Optional[str] = Field(default=None, description="Service ID related to the bid")
+    provider_id: Optional[str] = Field(default=None, description="Provider ID who made/submitted the bid")
+    bid_amount: Optional[float] = Field(default=None, ge=0, description="Bid amount in tokens")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(), description="ISO format timestamp")
+    details: Optional[Dict[str, Any]] = Field(default=None, description="Additional notification details")
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "type": "bid.new",
+                "auction_id": "550e8400-e29b-41d4-a716-446655440000",
+                "service_id": "service-123",
+                "provider_id": "provider-456",
+                "bid_amount": 100.0,
+                "timestamp": "2026-02-01T10:00:00Z",
+                "details": {"category": "code_review", "urgency": "high"}
+            }
+        }
+
+
 # Import WebSocket connection pool
 try:
     from services.connection_pool import (
@@ -3766,6 +3790,132 @@ class ServiceListingRequest(BaseModel):
     terms_hash: str = Field(..., description="Hash of service terms")
 
 
+# v1.3 Multi-Agent Marketplace Phase 1 - New Request/Response Models
+class ServiceCreateRequest(BaseModel):
+    """Request model for creating a new service (v1.3)"""
+    name: str = Field(..., min_length=1, max_length=200, description="Service name")
+    description: str = Field(..., min_length=1, max_length=2000, description="Service description")
+    category: str = Field(..., description="Service category")
+    tags: List[str] = Field(default=[], description="List of service tags")
+    capabilities: List[str] = Field(..., min_length=1, description="List of service capabilities (at least one required)")
+    pricing_model: str = Field(..., description="Pricing model (per_request, per_hour, per_gb, fixed)")
+    price: float = Field(..., ge=0, description="Service price (must be >= 0)")
+    currency: str = Field(default="AIC", description="Currency code")
+    endpoint: str = Field(..., description="Service endpoint URL")
+    terms_hash: Optional[str] = Field(default=None, description="Hash of service terms")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Input JSON schema")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Output JSON schema")
+    max_concurrent: int = Field(default=1, ge=1, description="Maximum concurrent requests")
+    
+    @validator('endpoint')
+    def validate_endpoint(cls, v):
+        """Validate endpoint URL format"""
+        import re
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain
+            r'localhost|'  # localhost
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ip
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        if not url_pattern.match(v):
+            raise ValueError('Invalid endpoint URL format')
+        return v
+    
+    @validator('capabilities')
+    def validate_capabilities(cls, v):
+        """Validate capabilities is not empty"""
+        if not v or len(v) == 0:
+            raise ValueError('At least one capability is required')
+        return v
+
+
+class ServiceUpdateRequest(BaseModel):
+    """Request model for updating a service (v1.3)"""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200, description="Service name")
+    description: Optional[str] = Field(default=None, min_length=1, max_length=2000, description="Service description")
+    category: Optional[str] = Field(default=None, description="Service category")
+    tags: Optional[List[str]] = Field(default=None, description="List of service tags")
+    capabilities: Optional[List[str]] = Field(default=None, description="List of service capabilities")
+    pricing_model: Optional[str] = Field(default=None, description="Pricing model")
+    price: Optional[float] = Field(default=None, ge=0, description="Service price (must be >= 0)")
+    currency: Optional[str] = Field(default=None, description="Currency code")
+    endpoint: Optional[str] = Field(default=None, description="Service endpoint URL")
+    terms_hash: Optional[str] = Field(default=None, description="Hash of service terms")
+    input_schema: Optional[Dict[str, Any]] = Field(default=None, description="Input JSON schema")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="Output JSON schema")
+    max_concurrent: Optional[int] = Field(default=None, ge=1, description="Maximum concurrent requests")
+    is_active: Optional[bool] = Field(default=None, description="Service active status")
+    
+    @validator('endpoint')
+    def validate_endpoint(cls, v):
+        """Validate endpoint URL format"""
+        if v is None:
+            return v
+        import re
+        url_pattern = re.compile(
+            r'^https?://'
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+            r'localhost|'
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+            r'(?::\d+)?'
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        if not url_pattern.match(v):
+            raise ValueError('Invalid endpoint URL format')
+        return v
+    
+    @validator('capabilities')
+    def validate_capabilities(cls, v):
+        """Validate capabilities is not empty if provided"""
+        if v is not None and len(v) == 0:
+            raise ValueError('Capabilities cannot be empty if provided')
+        return v
+
+
+class ServiceSearchRequest(BaseModel):
+    """Request model for searching services (v1.3)"""
+    query: Optional[str] = Field(default=None, description="Search query string")
+    category: Optional[str] = Field(default=None, description="Filter by category")
+    tags: Optional[List[str]] = Field(default=None, description="Filter by tags (OR matching)")
+    capabilities: Optional[List[str]] = Field(default=None, description="Filter by capabilities (AND matching)")
+    min_price: Optional[float] = Field(default=None, ge=0, description="Minimum price")
+    max_price: Optional[float] = Field(default=None, ge=0, description="Maximum price")
+    min_rating: Optional[float] = Field(default=None, ge=0, le=5, description="Minimum rating (0-5)")
+    provider_id: Optional[str] = Field(default=None, description="Filter by provider")
+    available_only: bool = Field(default=True, description="Only show available services")
+    sort_by: str = Field(default="reputation", description="Sort field (reputation, price, created_at)")
+    sort_order: str = Field(default="desc", description="Sort order (asc, desc)")
+    limit: int = Field(default=20, ge=1, le=100, description="Maximum results")
+    offset: int = Field(default=0, ge=0, description="Result offset for pagination")
+
+
+class ServiceResponse(BaseModel):
+    """Response model for a single service (v1.3)"""
+    service_id: str
+    provider_id: str
+    name: str
+    description: str
+    category: str
+    tags: List[str]
+    capabilities: List[str]
+    pricing_model: str
+    price: str
+    currency: str
+    endpoint: str
+    reputation_score: float
+    total_reviews: int
+    successful_transactions: int
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    terms_hash: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Dict[str, Any]] = None
+    max_concurrent: int = 1
+    completion_rate: float = 0.0
+    avg_response_time_ms: float = 0.0
+
+
 class ServiceListingResponse(BaseModel):
     """Response model for service listing operations"""
     success: bool
@@ -3897,11 +4047,14 @@ async def list_services(
 
 
 @app.post("/marketplace/services", response_model=ServiceListingResponse)
-async def register_service(req: ServiceListingRequest):
+async def register_service(
+    req: ServiceListingRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
     """
     Register a new service listing.
     
-    TODO: Add authentication check for provider_id
+    Requires JWT authentication. The authenticated entity becomes the provider.
     """
     if marketplace_registry is None:
         raise HTTPException(status_code=503, detail="Marketplace service unavailable")
@@ -3913,6 +4066,13 @@ async def register_service(req: ServiceListingRequest):
     
     from decimal import Decimal
     import uuid
+    
+    # Get provider_id from JWT token
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        provider_id = payload.get("sub", "")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     
     # Validate service type
     try:
@@ -3934,11 +4094,11 @@ async def register_service(req: ServiceListingRequest):
             detail=f"Invalid pricing_model. Valid models: {', '.join(valid_models)}"
         )
     
-    # Create service listing
+    # Create service listing (provider_id from JWT, not request)
     service_id = str(uuid.uuid4())
     listing = ServiceListing(
         service_id=service_id,
-        provider_id=req.provider_id,
+        provider_id=provider_id,  # From JWT token, not request
         service_type=svc_type,
         description=req.description,
         pricing_model=pricing,
@@ -3975,14 +4135,24 @@ async def get_service(service_id: str):
 
 
 @app.delete("/marketplace/services/{service_id}")
-async def delete_service(service_id: str, provider_id: str):
+async def delete_service(
+    service_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
     """
     Unregister a service listing.
     
-    TODO: Add authentication check for provider_id
+    Requires JWT authentication. Only the service provider can delete their service.
     """
     if marketplace_registry is None:
         raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    # Get provider_id from JWT token
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        provider_id = payload.get("sub", "")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     
     success = await marketplace_registry.unregister_service(service_id, provider_id)
     
@@ -3996,6 +4166,256 @@ async def delete_service(service_id: str, provider_id: str):
         "success": True,
         "message": f"Service {service_id} unregistered successfully"
     }
+
+
+# ============ v1.3 Multi-Agent Marketplace Phase 1 Endpoints ============
+
+@app.put("/marketplace/services/{service_id}", response_model=ServiceResponse)
+async def update_service_v13(
+    service_id: str,
+    req: ServiceUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Update a service listing (v1.3).
+    
+    Requires JWT authentication. Only the service provider can update their service.
+    
+    Request body can include any of:
+    - name, description, category, tags, capabilities
+    - pricing_model, price, currency, endpoint
+    - terms_hash, input_schema, output_schema
+    - max_concurrent, is_active
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    # Get provider_id from JWT token
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        provider_id = payload.get("sub", "")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    
+    # Check if service exists
+    existing = await marketplace_registry.get_service(service_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Service {service_id} not found")
+    
+    # Build updates dict with non-None values
+    updates = {}
+    for field in ['description', 'endpoint', 'terms_hash', 'is_active']:
+        value = getattr(req, field)
+        if value is not None:
+            updates[field] = value
+    
+    # Handle pricing_model enum
+    if req.pricing_model is not None:
+        try:
+            from services.marketplace import PricingModel
+            updates['pricing_model'] = PricingModel(req.pricing_model.lower())
+        except (ImportError, ValueError):
+            try:
+                from marketplace import PricingModel
+                updates['pricing_model'] = PricingModel(req.pricing_model.lower())
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid pricing_model: {req.pricing_model}")
+    
+    # Handle price
+    if req.price is not None:
+        from decimal import Decimal
+        updates['price'] = Decimal(str(req.price))
+    
+    # Handle capabilities
+    if req.capabilities is not None:
+        updates['capabilities'] = req.capabilities
+    
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    # Update service
+    success = await marketplace_registry.update_service(service_id, provider_id, updates)
+    
+    if not success:
+        raise HTTPException(
+            status_code=403,
+            detail="Failed to update service. Ensure you are the service provider."
+        )
+    
+    # Get updated service
+    updated = await marketplace_registry.get_service(service_id)
+    return ServiceResponse(**updated.to_dict())
+
+
+@app.get("/marketplace/services/search", response_model=ServiceListResponse)
+async def search_services_v13(
+    query: Optional[str] = None,
+    category: Optional[str] = None,
+    tags: Optional[str] = None,
+    capabilities: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    min_rating: float = 0.0,
+    available_only: bool = True,
+    sort_by: str = "reputation",
+    sort_order: str = "desc",
+    limit: int = 20,
+    offset: int = 0,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Search services with advanced filters (v1.3).
+    
+    Query parameters:
+    - query: Search in name/description (optional)
+    - category: Filter by category (optional)
+    - tags: Comma-separated tags (OR matching, optional)
+    - capabilities: Comma-separated capabilities (AND matching, optional)
+    - min_price/max_price: Price range (optional)
+    - min_rating: Minimum rating 0-5 (default: 0)
+    - available_only: Only active services (default: true)
+    - sort_by: reputation|price|created_at (default: reputation)
+    - sort_order: asc|desc (default: desc)
+    - limit: Results per page 1-100 (default: 20)
+    - offset: Pagination offset (default: 0)
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    try:
+        from services.marketplace import ServiceType
+    except ImportError:
+        from marketplace import ServiceType
+    
+    # Parse tags
+    tag_list = None
+    if tags:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    
+    # Parse capabilities
+    cap_list = None
+    if capabilities:
+        cap_list = [c.strip() for c in capabilities.split(",") if c.strip()]
+    
+    # Parse service type from category
+    type_enum = None
+    if category:
+        try:
+            type_enum = ServiceType(category.lower())
+        except ValueError:
+            pass  # Continue without type filter
+    
+    # Search using registry
+    from decimal import Decimal
+    max_price_decimal = Decimal(str(max_price)) if max_price is not None else None
+    
+    results = await marketplace_registry.search_services(
+        service_type=type_enum,
+        capabilities=cap_list,
+        min_reputation=min_rating,
+        max_price=max_price_decimal,
+        limit=limit + offset  # Get extra for pagination
+    )
+    
+    # Apply additional filters
+    filtered = []
+    for listing in results:
+        # Skip if not active and available_only
+        if available_only and not listing.is_active:
+            continue
+        
+        # Filter by tags (OR matching)
+        if tag_list and not any(tag in listing.tags for tag in tag_list):
+            continue
+        
+        # Filter by min_price
+        if min_price is not None and float(listing.price) < min_price:
+            continue
+        
+        # Filter by query (name/description)
+        if query:
+            query_lower = query.lower()
+            if query_lower not in listing.description.lower():
+                continue
+        
+        filtered.append(listing)
+    
+    # Apply sorting
+    reverse = sort_order.lower() == "desc"
+    if sort_by == "price":
+        filtered.sort(key=lambda x: float(x.price), reverse=reverse)
+    elif sort_by == "created_at":
+        filtered.sort(key=lambda x: x.created_at or datetime.min, reverse=reverse)
+    else:  # reputation
+        filtered.sort(key=lambda x: x.reputation_score, reverse=reverse)
+    
+    # Apply pagination
+    total = len(filtered)
+    paginated = filtered[offset:offset + limit]
+    
+    return ServiceListResponse(
+        services=[s.to_dict() for s in paginated],
+        total=total,
+        filters={
+            "query": query,
+            "category": category,
+            "tags": tag_list,
+            "capabilities": cap_list,
+            "min_price": min_price,
+            "max_price": max_price,
+            "min_rating": min_rating,
+            "available_only": available_only,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "offset": offset,
+            "limit": limit
+        }
+    )
+
+
+@app.get("/marketplace/services/by-provider/{provider_id}", response_model=ServiceListResponse)
+async def get_services_by_provider_v13(
+    provider_id: str,
+    include_inactive: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Get all services by a specific provider (v1.3).
+    
+    Path parameters:
+    - provider_id: The provider's entity ID
+    
+    Query parameters:
+    - include_inactive: Include inactive services (default: false)
+    - limit: Results per page 1-100 (default: 100)
+    - offset: Pagination offset (default: 0)
+    """
+    if marketplace_registry is None:
+        raise HTTPException(status_code=503, detail="Marketplace service unavailable")
+    
+    # Get services from provider
+    results = await marketplace_registry.get_provider_services(provider_id)
+    
+    # Filter inactive if needed
+    if not include_inactive:
+        results = [s for s in results if s.is_active]
+    
+    # Apply pagination
+    total = len(results)
+    paginated = results[offset:offset + limit]
+    
+    return ServiceListResponse(
+        services=[s.to_dict() for s in paginated],
+        total=total,
+        filters={
+            "provider_id": provider_id,
+            "include_inactive": include_inactive,
+            "offset": offset,
+            "limit": limit
+        }
+    )
 
 
 @app.post("/marketplace/orders", response_model=OrderResponse)
@@ -4223,8 +4643,8 @@ class ServiceUnregisterResponse(BaseModel):
     message: str
 
 
-class ServiceDetailResponse(BaseModel):
-    """Response model for service details"""
+class ServiceInfoResponse(BaseModel):
+    """Response model for service details (legacy /services endpoint)"""
     service: Optional[Dict[str, Any]] = None
     found: bool
     service_id: str
@@ -4384,7 +4804,7 @@ async def get_provider_services_endpoint(
     )
 
 
-@app.get("/services/{service_id}", response_model=ServiceDetailResponse)
+@app.get("/services/{service_id}", response_model=ServiceInfoResponse)
 async def get_service_detail_endpoint(
     service_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
@@ -4398,13 +4818,13 @@ async def get_service_detail_endpoint(
     listing = await registry.get_service(service_id)
     
     if listing:
-        return ServiceDetailResponse(
+        return ServiceInfoResponse(
             service=listing.to_dict(),
             found=True,
             service_id=service_id
         )
     else:
-        return ServiceDetailResponse(
+        return ServiceInfoResponse(
             service=None,
             found=False,
             service_id=service_id
@@ -4626,6 +5046,369 @@ async def notify_bid_winner(request_id: str, winner_id: str, price: str):
     }
     
     logger.info(f"Announcing winner {winner_id} for request {request_id}")
+
+
+# ============================================================================
+# WebSocket Marketplace Bidding Notification Endpoint (v1.3 Phase 2)
+# ============================================================================
+
+# Global subscription management: category -> set of (entity_id, websocket)
+_marketplace_bidding_subscribers: Dict[str, set] = {}
+# Entity tracking: entity_id -> {websocket, subscribed_categories}
+_marketplace_bidding_connections: Dict[str, Dict] = {}
+
+
+class BiddingSubscriptionRequest(BaseModel):
+    """Request to subscribe to bidding notifications for a category"""
+    action: str = Field(..., description="Action: subscribe, unsubscribe, ping")
+    category: Optional[str] = Field(default=None, description="Service category to subscribe to")
+    service_types: Optional[List[str]] = Field(default=None, description="List of service types to subscribe to")
+
+
+@app.websocket("/ws/v1/marketplace/bidding")
+async def marketplace_bidding_websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time marketplace bidding notifications.
+    
+    M2: v1.3 Multi-Agent Marketplace Phase 2 - Real-time bid notification system
+    
+    Authentication: Pass JWT token as query parameter: ?token=<jwt_token>
+    
+    Message Types (Client -> Server):
+    - subscribe: Subscribe to bidding notifications for a category
+    - unsubscribe: Unsubscribe from a category
+    - ping: Heartbeat request
+    
+    Message Types (Server -> Client):
+    - bid.new: New bid submitted notification
+    - bid.closed: Bidding window closed notification
+    - bid.won: Bid won/lost notification
+    - auction.started: Auction started notification
+    - auction.ended: Auction ended notification
+    - error: Error notification
+    """
+    entity_id: Optional[str] = None
+    subscribed_categories: set = set()
+    
+    try:
+        # Authenticate using query parameter token
+        token = websocket.query_params.get("token")
+        if not token:
+            await websocket.close(code=1008, reason="Missing authentication token")
+            return
+        
+        # Verify JWT token
+        try:
+            payload = jwt_auth.verify_token(token)
+            entity_id = payload.get("sub")
+            if not entity_id:
+                await websocket.close(code=1008, reason="Invalid token: missing subject")
+                return
+        except Exception as e:
+            await websocket.close(code=1008, reason=f"Authentication failed: {str(e)}")
+            return
+        
+        # Accept connection
+        await websocket.accept()
+        
+        # Register connection
+        _marketplace_bidding_connections[entity_id] = {
+            "websocket": websocket,
+            "subscribed_categories": subscribed_categories,
+            "connected_at": datetime.now(timezone.utc)
+        }
+        
+        # Send welcome message
+        await websocket.send_json({
+            "type": "connected",
+            "payload": {
+                "entity_id": entity_id,
+                "message": "Marketplace bidding notification WebSocket connected. Subscribe to service categories to receive bid notifications.",
+                "supported_actions": ["subscribe", "unsubscribe", "ping"],
+                "notification_types": ["bid.new", "bid.closed", "bid.won", "auction.started", "auction.ended", "error"]
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
+        logger.info(f"Marketplace bidding WebSocket connected: {entity_id}")
+        
+        # Handle incoming messages
+        while True:
+            try:
+                data = await websocket.receive_json()
+                action = data.get("action", "")
+                
+                if action == "ping":
+                    await websocket.send_json({
+                        "type": "pong",
+                        "payload": {"timestamp": datetime.now(timezone.utc).isoformat()},
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                
+                elif action == "subscribe":
+                    # Subscribe to category notifications
+                    category = data.get("category")
+                    service_types = data.get("service_types", [])
+                    
+                    if category:
+                        subscribed_categories.add(category)
+                        if category not in _marketplace_bidding_subscribers:
+                            _marketplace_bidding_subscribers[category] = set()
+                        _marketplace_bidding_subscribers[category].add((entity_id, websocket))
+                        
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "payload": {
+                                "category": category,
+                                "message": f"Subscribed to {category} bidding notifications"
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                    
+                    # Also handle service_types for backward compatibility
+                    for service_type in service_types:
+                        subscribed_categories.add(service_type)
+                        if service_type not in _marketplace_bidding_subscribers:
+                            _marketplace_bidding_subscribers[service_type] = set()
+                        _marketplace_bidding_subscribers[service_type].add((entity_id, websocket))
+                    
+                    if service_types:
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "payload": {
+                                "service_types": service_types,
+                                "message": f"Subscribed to bidding notifications for: {', '.join(service_types)}"
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                
+                elif action == "unsubscribe":
+                    # Unsubscribe from category
+                    category = data.get("category")
+                    if category and category in subscribed_categories:
+                        subscribed_categories.discard(category)
+                        if category in _marketplace_bidding_subscribers:
+                            _marketplace_bidding_subscribers[category].discard((entity_id, websocket))
+                        
+                        await websocket.send_json({
+                            "type": "unsubscribed",
+                            "payload": {
+                                "category": category,
+                                "message": f"Unsubscribed from {category} bidding notifications"
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {
+                            "message": f"Unknown action: {action}. Supported: subscribe, unsubscribe, ping"
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                    
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"Marketplace bidding WebSocket error for {entity_id}: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"message": str(e)},
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except:
+                    break
+    
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Marketplace bidding WebSocket fatal error: {e}")
+    finally:
+        # Cleanup subscriptions
+        if entity_id:
+            # Remove from all category subscriptions
+            for category in list(subscribed_categories):
+                if category in _marketplace_bidding_subscribers:
+                    _marketplace_bidding_subscribers[category].discard((entity_id, websocket))
+                    if not _marketplace_bidding_subscribers[category]:
+                        del _marketplace_bidding_subscribers[category]
+            
+            # Remove connection tracking
+            if entity_id in _marketplace_bidding_connections:
+                del _marketplace_bidding_connections[entity_id]
+            
+            logger.info(f"Marketplace bidding WebSocket disconnected: {entity_id}")
+
+
+async def notify_bid_event(
+    notification_type: str,
+    auction_id: Optional[str] = None,
+    service_id: Optional[str] = None,
+    provider_id: Optional[str] = None,
+    bid_amount: Optional[float] = None,
+    category: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None
+):
+    """
+    Send bid notification to subscribed clients.
+    """
+    notification = {
+        "type": notification_type,
+        "auction_id": auction_id,
+        "service_id": service_id,
+        "provider_id": provider_id,
+        "bid_amount": bid_amount,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "details": details or {}
+    }
+    
+    # If category specified, notify subscribers of that category
+    if category and category in _marketplace_bidding_subscribers:
+        disconnected = []
+        for entity_id, websocket in _marketplace_bidding_subscribers[category]:
+            try:
+                await websocket.send_json(notification)
+                logger.debug(f"Sent {notification_type} to {entity_id} for category {category}")
+            except Exception as e:
+                logger.warning(f"Failed to send notification to {entity_id}: {e}")
+                disconnected.append((entity_id, websocket))
+        
+        # Clean up disconnected clients
+        for entity_id, websocket in disconnected:
+            _marketplace_bidding_subscribers[category].discard((entity_id, websocket))
+
+
+async def broadcast_auction_start(
+    auction_id: str,
+    service_id: str,
+    category: str,
+    requirements: Dict[str, Any],
+    max_price: float,
+    bidding_window_seconds: int = 5
+):
+    """
+    Broadcast auction started notification to category subscribers.
+    """
+    await notify_bid_event(
+        notification_type="auction.started",
+        auction_id=auction_id,
+        service_id=service_id,
+        category=category,
+        details={
+            "requirements": requirements,
+            "max_price": max_price,
+            "bidding_window_seconds": bidding_window_seconds,
+            "message": f"New auction started for {category}"
+        }
+    )
+    logger.info(f"Broadcasted auction start: {auction_id} for category {category}")
+
+
+async def broadcast_auction_end(
+    auction_id: str,
+    service_id: str,
+    category: str,
+    winner_id: Optional[str] = None,
+    winning_bid: Optional[float] = None,
+    total_bids: int = 0
+):
+    """
+    Broadcast auction ended notification to category subscribers.
+    """
+    await notify_bid_event(
+        notification_type="auction.ended",
+        auction_id=auction_id,
+        service_id=service_id,
+        provider_id=winner_id,
+        bid_amount=winning_bid,
+        category=category,
+        details={
+            "winner_id": winner_id,
+            "winning_bid": winning_bid,
+            "total_bids": total_bids,
+            "message": f"Auction ended. Winner: {winner_id or 'None'}"
+        }
+    )
+    logger.info(f"Broadcasted auction end: {auction_id}, winner: {winner_id}")
+
+
+async def broadcast_new_bid(
+    auction_id: str,
+    service_id: str,
+    provider_id: str,
+    bid_amount: float,
+    category: str,
+    estimated_time: Optional[int] = None
+):
+    """
+    Broadcast new bid notification to category subscribers.
+    """
+    await notify_bid_event(
+        notification_type="bid.new",
+        auction_id=auction_id,
+        service_id=service_id,
+        provider_id=provider_id,
+        bid_amount=bid_amount,
+        category=category,
+        details={
+            "estimated_time_seconds": estimated_time,
+            "message": f"New bid received: {bid_amount} from {provider_id}"
+        }
+    )
+
+
+async def notify_bid_result(
+    auction_id: str,
+    service_id: str,
+    provider_id: str,
+    won: bool,
+    bid_amount: float,
+    category: str
+):
+    """
+    Notify provider about bid result (won or lost).
+    """
+    # Find the specific provider's connection
+    if provider_id in _marketplace_bidding_connections:
+        websocket = _marketplace_bidding_connections[provider_id].get("websocket")
+        if websocket:
+            notification = {
+                "type": "bid.won" if won else "bid.lost",
+                "auction_id": auction_id,
+                "service_id": service_id,
+                "provider_id": provider_id,
+                "bid_amount": bid_amount,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "details": {
+                    "won": won,
+                    "message": "Congratulations! Your bid was selected" if won else "Your bid was not selected"
+                }
+            }
+            try:
+                await websocket.send_json(notification)
+                logger.info(f"Sent bid result to {provider_id}: {'won' if won else 'lost'}")
+            except Exception as e:
+                logger.warning(f"Failed to send bid result to {provider_id}: {e}")
+
+
+@app.get("/ws/marketplace/bidding/stats")
+async def get_marketplace_bidding_stats():
+    """
+    Get marketplace bidding WebSocket connection statistics.
+    """
+    return {
+        "active_connections": len(_marketplace_bidding_connections),
+        "subscribed_categories": {
+            category: len(subscribers) 
+            for category, subscribers in _marketplace_bidding_subscribers.items()
+        },
+        "total_subscriptions": sum(
+            len(subscribers) 
+            for subscribers in _marketplace_bidding_subscribers.values()
+        )
+    }
 
 
 if __name__ == "__main__":

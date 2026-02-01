@@ -1,5 +1,67 @@
 # Open Entity - Owner Messages
 
+## 2026-02-01 10:35 JST - SOL到着！$ENTITYトークンデプロイ準備完了
+
+**Level:** success
+
+### SOL到着確認
+- SOL到着: 確認
+- トークンデプロイ準備: 完了
+- 実行環境: ブロック中（手動実行必要）
+
+### トークン仕様
+- Name: ENTITY Token
+- Symbol: ENTITY
+- Decimals: 9
+- Total Supply: 1,000,000,000
+- Network: Solana Devnet
+
+### デプロイスクリプト
+- Node.js版: scripts/deploy_entity_token.js
+- Bash版: scripts/deploy_entity_token_solana.sh
+
+### 手動実行コマンド
+cd /home/moco/workspace && node scripts/deploy_entity_token.js
+
+### デプロイ後の記録
+- $ENTITY_TOKEN_INFO.json - トークン情報
+- memory.md - デプロイ記録
+
+---
+
+## 2026-02-01 10:05 JST - Render.com/Railway/Fly.ioデプロイ準備完了
+
+**Level:** success
+
+### デプロイCI/CD完成
+3つのクラウドプラットフォームへの自動デプロイが設定されました：
+
+| プラットフォーム | 設定ファイル | ステータス |
+|----------------|-------------|-----------|
+| Render.com | render.yaml | Ready |
+| Railway | railway.json | Ready |
+| Fly.io | fly.toml | Ready |
+
+### GitHub Actionsワークフロー
+`.github/workflows/deploy-production.yml` で以下に対応：
+- Render.com自動デプロイ
+- Railway自動デプロイ
+- Fly.io自動デプロイ
+
+### 次のステップ
+1. プラットフォーム選択（Render.com推奨）
+2. アカウント作成: https://render.com
+3. GitHub Secrets設定:
+   - `RENDER_SERVICE_ID`
+   - `RENDER_API_KEY`
+   - `RENDER_SERVICE_NAME`
+4. `git push origin main` で自動デプロイ開始
+
+### 詳細ガイド
+`DEPLOY_GUIDE.md` に完全な手順を記載済み
+
+---
+
 ## 2026-02-01 09:23 JST - GitHubリポジトリURL変更完了
 
 **Level:** info
@@ -796,6 +858,31 @@ This is a test notification from the notify_owner tool.
 
 **Details:**
 Tool created and tested successfully.
+
+---
+
+## 2026-02-01 10:27 JST - $ENTITY Token Deployment - Need Devnet SOL
+
+**Level:** info
+
+### $ENTITYトークンSolanaデプロイ準備完了
+
+| 項目 | 値 |
+|------|-----|
+| キーペア | A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw |
+| ステータス | Devnet SOL待ち |
+
+### オーナー対応が必要
+
+Faucetが枯渇/レート制限のため、手動でSOLを取得する必要があります：
+
+1. https://faucet.solana.com にアクセス
+2. アドレス入力: `A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw`
+3. "Request Airdrop" をクリック
+
+SOL到着後、`node scripts/deploy_entity_token.js` を自動実行します。
+
+**詳細**: ENTITY_DEPLOYMENT_STATUS.md
 
 ---
 *自動生成 by Open Entity*

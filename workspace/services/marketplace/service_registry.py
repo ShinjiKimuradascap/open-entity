@@ -64,12 +64,22 @@ class ServiceListing:
     # Extended metrics for ranking
     completion_rate: float = 0.0
     avg_response_time_ms: float = 0.0
+    # v1.3 fields
+    tags: List[str] = None
+    name: str = ""
+    category: str = ""
+    currency: str = "AIC"
+    input_schema: Optional[Dict] = None
+    output_schema: Optional[Dict] = None
+    max_concurrent: int = 1
     
     def __post_init__(self):
         if self.created_at is None:
             self.created_at = datetime.utcnow()
         if self.updated_at is None:
             self.updated_at = datetime.utcnow()
+        if self.tags is None:
+            self.tags = []
     
     def to_dict(self) -> dict:
         """Convert to dictionary"""
@@ -93,6 +103,13 @@ class ServiceListing:
         # Handle new fields with defaults for backward compatibility
         data.setdefault('completion_rate', 0.0)
         data.setdefault('avg_response_time_ms', 0.0)
+        data.setdefault('tags', [])
+        data.setdefault('name', '')
+        data.setdefault('category', '')
+        data.setdefault('currency', 'AIC')
+        data.setdefault('input_schema', None)
+        data.setdefault('output_schema', None)
+        data.setdefault('max_concurrent', 1)
         return cls(**data)
     
     def compute_hash(self) -> str:
@@ -113,6 +130,7 @@ class ServiceRegistry:
         self._provider_services: Dict[str, Set[str]] = {}
         self._type_index: Dict[ServiceType, Set[str]] = {t: set() for t in ServiceType}
         self._capability_index: Dict[str, Set[str]] = {}
+        self._tag_index: Dict[str, Set[str]] = {}  # v1.3: tags index
         self._storage_path = storage_path
         self._lock = asyncio.Lock()
         
@@ -156,6 +174,10 @@ class ServiceRegistry:
             for cap in listing.capabilities:
                 self._capability_index.setdefault(cap, set()).add(listing.service_id)
             
+            # Update tag index (v1.3)
+            for tag in listing.tags:
+                self._tag_index.setdefault(tag, set()).add(listing.service_id)
+            
             # Persist
             if self._storage_path:
                 await self._save_to_storage()
@@ -178,6 +200,10 @@ class ServiceRegistry:
             
             for cap in listing.capabilities:
                 self._capability_index.get(cap, set()).discard(service_id)
+            
+            # Remove from tag index (v1.3)
+            for tag in listing.tags:
+                self._tag_index.get(tag, set()).discard(service_id)
             
             # Remove listing
             del self._listings[service_id]
@@ -273,6 +299,93 @@ class ServiceRegistry:
             service_ids = self._provider_services.get(provider_id, set())
             return [self._listings[sid] for sid in service_ids if sid in self._listings]
     
+    async def update_service(
+        self,
+        service_id: str,
+        provider_id: str,
+        updates: Dict[str, Any]
+    ) -> bool:
+        """
+        Update a service listing (only by provider).
+        
+        Args:
+            service_id: Service ID to update
+            provider_id: Provider ID for authorization
+            updates: Dictionary of fields to update
+                - description: str
+                - pricing_model: PricingModel
+                - price: Decimal
+                - capabilities: List[str]
+                - endpoint: str
+                - terms_hash: str
+                - is_active: bool
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        async with self._lock:
+            if service_id not in self._listings:
+                return False
+            
+            listing = self._listings[service_id]
+            if listing.provider_id != provider_id:
+                return False  # Not authorized
+            
+            # Update allowed fields
+            if 'description' in updates:
+                listing.description = updates['description']
+            if 'pricing_model' in updates:
+                if isinstance(updates['pricing_model'], PricingModel):
+                    listing.pricing_model = updates['pricing_model']
+                else:
+                    listing.pricing_model = PricingModel(updates['pricing_model'])
+            if 'price' in updates:
+                from decimal import Decimal
+                if isinstance(updates['price'], Decimal):
+                    listing.price = updates['price']
+                else:
+                    listing.price = Decimal(str(updates['price']))
+            if 'capabilities' in updates:
+                # Update capability index
+                old_caps = set(listing.capabilities)
+                new_caps = set(updates['capabilities'])
+                listing.capabilities = list(new_caps)
+                
+                # Remove old capabilities
+                for cap in old_caps - new_caps:
+                    self._capability_index.get(cap, set()).discard(service_id)
+                # Add new capabilities
+                for cap in new_caps - old_caps:
+                    self._capability_index.setdefault(cap, set()).add(service_id)
+            
+            if 'endpoint' in updates:
+                listing.endpoint = updates['endpoint']
+            if 'terms_hash' in updates:
+                listing.terms_hash = updates['terms_hash']
+            if 'is_active' in updates:
+                listing.is_active = bool(updates['is_active'])
+            
+            # Update tags (v1.3)
+            if 'tags' in updates:
+                old_tags = set(listing.tags)
+                new_tags = set(updates['tags'])
+                listing.tags = list(new_tags)
+                
+                # Remove old tags
+                for tag in old_tags - new_tags:
+                    self._tag_index.get(tag, set()).discard(service_id)
+                # Add new tags
+                for tag in new_tags - old_tags:
+                    self._tag_index.setdefault(tag, set()).add(service_id)
+            
+            listing.updated_at = datetime.utcnow()
+            
+            # Persist
+            if self._storage_path:
+                await self._save_to_storage()
+            
+            return True
+    
     def _validate_listing(self, listing: ServiceListing) -> bool:
         """Validate service listing"""
         if not listing.service_id or not listing.provider_id:
@@ -316,6 +429,8 @@ class ServiceRegistry:
                 self._type_index[listing.service_type].add(sid)
                 for cap in listing.capabilities:
                     self._capability_index.setdefault(cap, set()).add(sid)
+                for tag in listing.tags:
+                    self._tag_index.setdefault(tag, set()).add(sid)
                     
         except FileNotFoundError:
             pass  # No existing data

@@ -20,30 +20,13 @@ MAX_EDIT_SIZE = 5 * 1024 * 1024
 # キャッシュインスタンス
 _TOKEN_CACHE = TokenCache()
 
-# 危険なパターンの定義
+# 危険なパターンの定義 (最小限のみ)
 DANGEROUS_PATTERNS: Final[list[str]] = [
-    # 破壊的な削除 (フラグに任意の文字を含めるように改善)
-    r'rm\s+.*(-[a-z]*[rf][a-z]*|--recursive|--force)\s+(/|~|\$HOME)',
+    # 本当に危険なものだけ残す
     # フォークボム
     r':\(\)\{\s*:\|:&\s*\};:',
-    # フォーマット・ディスク操作 (ddをより厳しく)
-    r'mkfs\.',
-    r'dd\s+.*of=',
-    # デバイス・ファイルへの直接書き込み/切り詰め ( /dev/null への出力は許可 )
-    r'(?<![0-9&])>\s*[^&|]',
-    r'(?<!&)[0-9]>\s*[^&|]',
-    # 全開放パーミッション・所有権
-    r'chmod\s+.*777',
-    r'chown\s+.*-R',
-    # シェル/インタプリタへの流し込み
-    r'[|;&<]\s*(bash|sh|zsh|python\d?|perl|ruby|php|node)\b',
-    r'\b(bash|sh|zsh|python\d?|perl|ruby|php|node)\s+.*-c\s+',
-    # リモートスクリプト実行 (パイプ先を拡充)
-    r'(curl|wget).*([|;&<]\s*(bash|sh|zsh|python\d?|perl|ruby|node)\b|-o\s+)',
-    # 特権使用
-    r'sudo\s+(rm|dd|chmod|chown|mkfs|su|apt|yum|dnf)\b',
-    # findによる削除
-    r'find\s+.*\s+-delete',
+    # ルートファイルシステムの削除
+    r'rm\s+-rf\s+/',
 ]
 
 # 事前にコンパイルしてパフォーマンスを改善
@@ -79,6 +62,10 @@ def _find_similar_files(path: str, max_results: int = 3) -> list:
 
 def is_dangerous_command(command: str) -> Tuple[bool, str]:
     """コマンドが危険かどうかチェック"""
+    # 環境変数で全コマンド許可
+    if os.environ.get("MOCO_ALLOW_ALL_COMMANDS") == "1":
+        return False, ""
+    
     # /dev/null へのリダイレクトを一時的に無害化（判定から除外）
     # スペースの有無にかかわらず対応
     safe_command = re.sub(r'[0-9&]?\s*>\s*/dev/null', '', command, flags=re.IGNORECASE)

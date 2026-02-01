@@ -1,25 +1,34 @@
 """
-DHT Router - Main entry point for DHT operations
+DHT Router - High-level interface for DHT operations
 
-Consolidates:
-- Kademlia routing
-- Value storage/retrieval
-- Bootstrap and discovery
-- Integration with PeerService
+Wraps DHTNode from dht_node.py to provide a clean async interface
+for peer discovery and distributed storage.
+
+Usage:
+    from services.dht.router import DHTRouter
+    from services.dht_node import DHTNode, NodeID
+    
+    node = DHTNode(host="0.0.0.0", port=8000)
+    await node.start()
+    
+    router = DHTRouter(node)
+    await router.bootstrap(["192.168.1.1:8001", "192.168.1.2:8002"])
+    
+    # Store a value
+    await router.store(b"my_key", b"my_value")
+    
+    # Find nodes
+    target = NodeID()
+    closest = await router.find_node(target)
 """
 
 import asyncio
-import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any, Callable
+from typing import List, Optional, Dict, Any
 
 from .node import NodeID, NodeInfo
-from .routing import RoutingTable
-from .kbucket import K
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,10 +41,12 @@ class DHTValue:
     ttl: int = 86400  # 24 hours default
     
     def is_expired(self) -> bool:
+        """Check if the value has expired"""
         age = (datetime.now(timezone.utc) - self.timestamp).total_seconds()
         return age > self.ttl
     
     def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
         return {
             "key": self.key.hex(),
             "value": self.value.hex(),
@@ -46,6 +57,7 @@ class DHTValue:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'DHTValue':
+        """Create from dictionary"""
         return cls(
             key=bytes.fromhex(data["key"]),
             value=bytes.fromhex(data["value"]),
@@ -54,179 +66,171 @@ class DHTValue:
             ttl=data.get("ttl", 86400),
         )
 
+# Import from dht_node.py - the canonical DHT implementation
+from ..dht_node import DHTNode as _DHTNode
+from ..dht_node import NodeID as _NodeID, NodeInfo as _NodeInfo
+
+logger = logging.getLogger(__name__)
+
 
 class DHTRouter:
     """
-    Unified DHT Router for Peer Protocol v1.2
+    High-level DHT router interface
     
-    Usage:
-        router = DHTRouter(NodeID.from_entity("entity_a"))
-        await router.bootstrap(["bootstrap.example.com:8080"])
-        await router.store(key, value)
-        result = await router.find_value(key)
+    Wraps DHTNode to provide standardized async methods for:
+    - Node discovery (find_node)
+    - Value storage/retrieval (store, find_value)
+    - Network maintenance (ping, bootstrap, add_node)
     """
     
-    def __init__(
-        self,
-        node_id: Optional[NodeID] = None,
-        k: int = K,
-        alpha: int = 3,
-    ):
-        self.node_id = node_id or NodeID()
-        self.k = k
-        self.alpha = alpha  # Parallelism factor
+    def __init__(self, node: _DHTNode):
+        """
+        Initialize router with a DHTNode instance
         
-        # Routing table
-        self.routing_table = RoutingTable(self.node_id, k)
-        
-        # Local storage
-        self.storage: Dict[bytes, DHTValue] = {}
-        self.storage_lock = asyncio.Lock()
-        
-        # Callbacks for network operations
-        self.find_node_handler: Optional[Callable[[NodeID], List[NodeInfo]]] = None
-        self.find_value_handler: Optional[Callable[[bytes], Optional[DHTValue]]] = None
-        self.store_handler: Optional[Callable[[bytes, DHTValue], bool]] = None
-        
-        # Background tasks
-        self._refresh_task: Optional[asyncio.Task] = None
-        self._running = False
-        
-        logger.info(f"DHTRouter initialized: node_id={self.node_id}")
+        Args:
+            node: Initialized and started DHTNode instance
+        """
+        self._node = node
+        logger.debug(f"DHTRouter initialized with node {node.node_id}")
     
-    # === Storage Operations ===
+    @property
+    def routing_table(self):
+        """Access the underlying routing table"""
+        return self._node.routing_table
     
-    async def store(self, key: bytes, value: bytes, ttl: int = 86400) -> bool:
-        """Store value in DHT (local + replicate to closest nodes)"""
-        dht_value = DHTValue(
-            key=key,
-            value=value,
-            publisher_id=self.node_id,
-            ttl=ttl,
-        )
-        
-        # Store locally
-        async with self.storage_lock:
-            self.storage[key] = dht_value
-        
-        # Replicate to k closest nodes
-        value_id = NodeID(key)
-        closest = self.routing_table.find_closest(value_id, self.k)
-        
-        success_count = 1  # Local store counts
-        for node in closest:
-            if self.store_handler:
-                try:
-                    if await self.store_handler(key, dht_value):
-                        success_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to replicate to {node}: {e}")
-        
-        logger.debug(f"Stored {key.hex()[:16]}... to {success_count} nodes")
-        return success_count > 0
-    
-    async def find_value(self, key: bytes) -> Optional[bytes]:
-        """Find value in DHT"""
-        # Check local storage first
-        async with self.storage_lock:
-            if key in self.storage:
-                value = self.storage[key]
-                if not value.is_expired():
-                    return value.value
-                del self.storage[key]
-        
-        # Search in network
-        value_id = NodeID(key)
-        closest = self.routing_table.find_closest(value_id, self.alpha)
-        
-        for node in closest:
-            if self.find_value_handler:
-                try:
-                    result = await self.find_value_handler(key)
-                    if result and not result.is_expired():
-                        return result.value
-                except Exception as e:
-                    logger.warning(f"Failed to query {node}: {e}")
-        
-        return None
-    
-    # === Node Operations ===
-    
-    async def find_node(self, target_id: NodeID) -> List[NodeInfo]:
-        """Find k closest nodes to target"""
-        return self.routing_table.find_closest(target_id, self.k)
-    
-    async def add_node(self, node: NodeInfo) -> bool:
-        """Add node to routing table"""
-        return self.routing_table.add_node(node)
-    
-    async def remove_node(self, node_id: NodeID) -> bool:
-        """Remove node from routing table"""
-        return self.routing_table.remove_node(node_id)
-    
-    # === Bootstrap ===
+    @property
+    def node_id(self) -> NodeID:
+        """Get this router's node ID"""
+        # Convert internal NodeID to services.dht.node.NodeID
+        return NodeID(self._node.node_id.bytes)
     
     async def bootstrap(self, bootstrap_nodes: List[str]) -> bool:
-        """Connect to bootstrap nodes and populate routing table"""
+        """
+        Bootstrap the DHT by connecting to known nodes
+        
+        Args:
+            bootstrap_nodes: List of "host:port" strings
+            
+        Returns:
+            True if at least one bootstrap node was reached
+        """
+        if not bootstrap_nodes:
+            return False
+        
+        # Convert string addresses to node info format
+        nodes = []
         for addr in bootstrap_nodes:
             try:
-                # Parse host:port
-                host, port = addr.rsplit(":", 1)
-                port = int(port)
-                
-                # TODO: Query bootstrap node for its ID and neighbors
-                logger.info(f"Bootstrapped via {addr}")
-            except Exception as e:
-                logger.warning(f"Bootstrap failed for {addr}: {e}")
-        
-        return len(self.routing_table.get_all_nodes()) > 0
-    
-    # === Lifecycle ===
-    
-    async def start(self):
-        """Start background tasks"""
-        self._running = True
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
-        logger.info("DHTRouter started")
-    
-    async def stop(self):
-        """Stop background tasks"""
-        self._running = False
-        if self._refresh_task:
-            self._refresh_task.cancel()
-            try:
-                await self._refresh_task
-            except asyncio.CancelledError:
-                pass
-        logger.info("DHTRouter stopped")
-    
-    async def _refresh_loop(self):
-        """Periodically refresh routing table"""
-        while self._running:
-            try:
-                await asyncio.sleep(3600)  # 1 hour
-                await self._refresh_buckets()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Refresh error: {e}")
-    
-    async def _refresh_buckets(self):
-        """Refresh least recently seen nodes in each bucket"""
-        for bucket in self.routing_table.buckets:
-            if not bucket.nodes:
+                host, port_str = addr.rsplit(":", 1)
+                nodes.append({"host": host, "port": int(port_str)})
+            except ValueError:
+                logger.warning(f"Invalid bootstrap address: {addr}")
                 continue
-            oldest = bucket.get_least_recently_seen()
-            if oldest:
-                # TODO: Ping node and update or remove
-                pass
+        
+        # Store for the underlying node to use
+        self._node.bootstrap_nodes = nodes
+        
+        # Perform bootstrap
+        try:
+            await self._node._bootstrap()
+            logger.info(f"Bootstrap completed with {len(nodes)} nodes")
+            return True
+        except Exception as e:
+            logger.error(f"Bootstrap failed: {e}")
+            return False
     
-    # === Stats ===
+    async def find_node(self, target_id: NodeID) -> List[NodeInfo]:
+        """
+        Find nodes closest to the target ID
+        
+        Args:
+            target_id: Target node ID to search for
+            
+        Returns:
+            List of NodeInfo objects closest to target
+        """
+        # Convert to internal NodeID type
+        internal_target = _NodeID(target_id.bytes)
+        
+        # Query the DHT
+        results = await self._node.find_node(internal_target)
+        
+        # Convert results to external NodeInfo type
+        return [_convert_node_info(n) for n in results]
     
-    def get_stats(self) -> dict:
+    async def add_node(self, node: NodeInfo) -> bool:
+        """
+        Add a node to the routing table
+        
+        Args:
+            node: NodeInfo to add
+            
+        Returns:
+            True if node was added successfully
+        """
+        internal_node = _convert_to_internal_node_info(node)
+        return self._node.routing_table.add_node(internal_node)
+    
+    async def store(self, key: bytes, value: bytes) -> bool:
+        """
+        Store a value in the DHT
+        
+        Args:
+            key: Key to store under
+            value: Value to store
+            
+        Returns:
+            True if value was stored successfully
+        """
+        return await self._node.store(key, value)
+    
+    async def find_value(self, key: bytes) -> Optional[bytes]:
+        """
+        Find a value in the DHT
+        
+        Args:
+            key: Key to search for
+            
+        Returns:
+            Value bytes if found, None otherwise
+        """
+        return await self._node.find_value(key)
+    
+    async def ping(self, node: NodeInfo) -> bool:
+        """
+        Ping a node to check connectivity
+        
+        Args:
+            node: Node to ping
+            
+        Returns:
+            True if node responded
+        """
+        internal_node = _convert_to_internal_node_info(node)
+        return await self._node.ping(internal_node)
+    
+    def get_stats(self) -> Dict[str, Any]:
         """Get router statistics"""
-        return {
-            "node_id": str(self.node_id),
-            "routing_table": self.routing_table.get_stats(),
-            "stored_keys": len(self.storage),
-        }
+        return self._node.get_stats()
+
+
+def _convert_node_info(internal: _NodeInfo) -> NodeInfo:
+    """Convert internal NodeInfo to external NodeInfo"""
+    return NodeInfo(
+        node_id=NodeID(internal.node_id.bytes),
+        host=internal.host,
+        port=internal.port,
+        last_seen=internal.last_seen,
+        failed_pings=internal.failed_pings
+    )
+
+
+def _convert_to_internal_node_info(external: NodeInfo) -> _NodeInfo:
+    """Convert external NodeInfo to internal NodeInfo"""
+    return _NodeInfo(
+        node_id=_NodeID(external.node_id.bytes),
+        host=external.host,
+        port=external.port,
+        last_seen=external.last_seen,
+        failed_pings=external.failed_pings
+    )
