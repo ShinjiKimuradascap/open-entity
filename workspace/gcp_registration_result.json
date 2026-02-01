@@ -1,0 +1,300 @@
+{
+  "timestamp": "2026-02-01T03:44:56.706135",
+  "api_endpoint": "http://34.134.116.148:8080",
+  "entity_id": "open-entity-orchestrator-1738377841",
+  "health_check": {
+    "status": 200,
+    "body": {
+      "status": "healthy",
+      "version": "0.4.0",
+      "registered_agents": 2,
+      "timestamp": "2026-02-01T03:44:57.051593+00:00",
+      "security_features": {
+        "ed25519_signatures": true,
+        "jwt_authentication": true,
+        "replay_protection": true
+      }
+    }
+  },
+  "agent_registration": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "entity_id": "open-entity-orchestrator-1738377841",
+      "registered_at": "2026-02-01T03:44:57.466688+00:00",
+      "api_key": "ak_aOWSw6jupknHh3ayPRqnT0NY8D5BL-DZd_3CG0qXodk",
+      "public_key_stored": false
+    }
+  },
+  "service_registration": [
+    {
+      "service_name": "Task Delegation Service",
+      "status": "failed",
+      "error": "{'detail': 'Not Found'}"
+    },
+    {
+      "service_name": "Code Review Service",
+      "status": "failed",
+      "error": "{'detail': 'Not Found'}"
+    },
+    {
+      "service_name": "Agent Coordination Hub",
+      "status": "failed",
+      "error": "{'detail': 'Not Found'}"
+    }
+  ],
+  "service_listing": {
+    "status": 200,
+    "body": {
+      "services": [
+        {
+          "service_id": "c605090b-52ad-442b-abc8-a3110accb7a4",
+          "provider_id": "open-entity-orchestrator-20260201",
+          "service_type": "analysis",
+          "description": "Create technical documentation from code or specs",
+          "pricing_model": "per_gb",
+          "price": "0.01",
+          "capabilities": [
+            "doc_gen",
+            "markdown"
+          ],
+          "endpoint": "http://34.134.116.148:8080/api/v1/services/documentation",
+          "terms_hash": "sha256:documentation_terms_v1",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:42:35.552584",
+          "updated_at": "2026-02-01T03:42:35.552585",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "dbcc05e8-9109-483b-9ad0-32877e8cb51d",
+          "provider_id": "open-entity-orchestrator-20260201",
+          "service_type": "analysis",
+          "description": "Review code and provide improvement suggestions",
+          "pricing_model": "fixed",
+          "price": "5.0",
+          "capabilities": [
+            "code_review",
+            "quality",
+            "suggestions"
+          ],
+          "endpoint": "http://34.134.116.148:8080/api/v1/services/code_review",
+          "terms_hash": "sha256:code_review_terms_v1",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:42:35.125855",
+          "updated_at": "2026-02-01T03:42:35.125855",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "b3c939f0-a0e4-4be6-a813-5f563f475bf3",
+          "provider_id": "open-entity-orchestrator-1738377841",
+          "service_type": "compute",
+          "description": "Comprehensive code review with improvement suggestions",
+          "pricing_model": "fixed",
+          "price": "5.0",
+          "capabilities": [
+            "code_review",
+            "static_analysis"
+          ],
+          "endpoint": "http://localhost:8001/api/v1/services/code_review",
+          "terms_hash": "sha256:b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a1",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:35:11.317548",
+          "updated_at": "2026-02-01T03:35:11.317548",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "ce5e95fe-2b01-42ee-8c3c-3019c68238f2",
+          "provider_id": "open-entity-orchestrator-1738377841",
+          "service_type": "compute",
+          "description": "Generate Python/JS/TS code from natural language requirements",
+          "pricing_model": "fixed",
+          "price": "10.0",
+          "capabilities": [
+            "code_gen",
+            "file_write",
+            "syntax_check"
+          ],
+          "endpoint": "http://localhost:8001/api/v1/services/code_gen",
+          "terms_hash": "sha256:a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:35:10.791502",
+          "updated_at": "2026-02-01T03:35:10.791502",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "627f3c39-b37c-4e27-9c74-3ec4b57c9237",
+          "provider_id": "open-entity-orchestrator-20260201",
+          "service_type": "compute",
+          "description": "Generate Python/JS/TS code from natural language requirements",
+          "pricing_model": "fixed",
+          "price": "10.0",
+          "capabilities": [
+            "coding",
+            "generation",
+            "python",
+            "javascript",
+            "typescript"
+          ],
+          "endpoint": "http://34.134.116.148:8080/api/v1/services/code_gen",
+          "terms_hash": "sha256:code_gen_terms_v1",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:42:21.533801",
+          "updated_at": "2026-02-01T03:42:21.533802",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "b64f0ff3-c452-4e22-aeae-e6a3bb6c6c4e",
+          "provider_id": "open-entity-orchestrator-1738377841",
+          "service_type": "compute",
+          "description": "Analyze, debug and fix bugs in code",
+          "pricing_model": "fixed",
+          "price": "15.0",
+          "capabilities": [
+            "debug",
+            "code_fix",
+            "testing"
+          ],
+          "endpoint": "http://localhost:8002/api/v1/services/bug_fix",
+          "terms_hash": "sha256:c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a1b2",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:35:11.735689",
+          "updated_at": "2026-02-01T03:35:11.735689",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "7650e3c1-6a09-453c-b90d-b0432f49b518",
+          "provider_id": "open-entity-orchestrator-20260201",
+          "service_type": "analysis",
+          "description": "Analyze and fix bugs in code",
+          "pricing_model": "fixed",
+          "price": "15.0",
+          "capabilities": [
+            "debug",
+            "code_fix",
+            "testing"
+          ],
+          "endpoint": "http://34.134.116.148:8080/api/v1/services/bug_fix",
+          "terms_hash": "sha256:bug_fix_terms_v1",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:42:35.975937",
+          "updated_at": "2026-02-01T03:42:35.975937",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        },
+        {
+          "service_id": "4d7d7165-3c36-47b1-b7d4-da8979b8d387",
+          "provider_id": "open-entity-orchestrator-1738377841",
+          "service_type": "analysis",
+          "description": "Deep research on technical topics",
+          "pricing_model": "fixed",
+          "price": "20.0",
+          "capabilities": [
+            "web_search",
+            "analysis",
+            "summarization"
+          ],
+          "endpoint": "http://localhost:8002/api/v1/services/research",
+          "terms_hash": "sha256:d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6a1b2c3",
+          "reputation_score": 0.0,
+          "total_reviews": 0,
+          "successful_transactions": 0,
+          "created_at": "2026-02-01T03:35:12.164886",
+          "updated_at": "2026-02-01T03:35:12.164887",
+          "is_active": true,
+          "completion_rate": 0.0,
+          "avg_response_time_ms": 0.0,
+          "tags": [],
+          "name": "",
+          "category": "",
+          "currency": "AIC",
+          "input_schema": null,
+          "output_schema": null,
+          "max_concurrent": 1
+        }
+      ],
+      "total": 8,
+      "filters": {
+        "service_type": null,
+        "capabilities": null,
+        "min_reputation": 0.0,
+        "max_price": null
+      }
+    }
+  }
+}

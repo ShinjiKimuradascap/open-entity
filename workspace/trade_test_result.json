@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-02-01T03:48:03.089898",
+  "order_id": "order_20260201_034803",
+  "service": "Code Generation",
+  "price": 10.0,
+  "balances": {
+    "entity_a": 110.0,
+    "entity_b": 90.0
+  },
+  "expected": {
+    "entity_a": 110.0,
+    "entity_b": 90.0
+  },
+  "verification": {
+    "entity_a_ok": true,
+    "entity_b_ok": true
+  }
+}

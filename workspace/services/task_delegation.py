@@ -20,6 +20,18 @@ try:
 except ImportError:
     CRYPTO_AVAILABLE = False
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from task_verification import TaskVerificationReport, TaskCompletionVerifier
+
+VERIFICATION_AVAILABLE = False
+try:
+    from task_verification import TaskCompletionVerifier
+    VERIFICATION_AVAILABLE = True
+except ImportError:
+    pass
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -318,7 +330,7 @@ class TaskTracker:
         self._status_history: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         self._handlers: Dict[str, Callable[[TaskDelegationMessage], Awaitable[TaskResponseMessage]]] = {}
         self._verifier: Optional[TaskCompletionVerifier] = None
-        self._verification_reports: Dict[str, TaskVerificationReport] = {}
+        self._verification_reports: Dict[str, "TaskVerificationReport"] = {}
         
         # 検証機能初期化
         if enable_verification and VERIFICATION_AVAILABLE:
@@ -458,7 +470,7 @@ class TaskTracker:
             "verified_tasks": len(self._verification_reports)
         }
     
-    def verify_task_completion(self, task_id: str) -> Optional[TaskVerificationReport]:
+    def verify_task_completion(self, task_id: str) -> Optional["TaskVerificationReport"]:
         """タスク完了を検証
         
         Args:
@@ -506,11 +518,11 @@ class TaskTracker:
         
         return report
     
-    def get_verification_report(self, report_id: str) -> Optional[TaskVerificationReport]:
+    def get_verification_report(self, report_id: str) -> Optional["TaskVerificationReport"]:
         """検証レポートを取得"""
         return self._verification_reports.get(report_id)
     
-    def get_verification_reports_by_task(self, task_id: str) -> List[TaskVerificationReport]:
+    def get_verification_reports_by_task(self, task_id: str) -> List["TaskVerificationReport"]:
         """タスクIDで検証レポートを検索"""
         return [r for r in self._verification_reports.values() if r.task_id == task_id]
     

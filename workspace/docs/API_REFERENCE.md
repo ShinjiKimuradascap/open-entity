@@ -189,6 +189,59 @@ Service registry for the Multi-Agent Marketplace. All endpoints require JWT auth
 - name: max 100 chars
 - description: max 1000 chars
 
+### Marketplace Order Management (v1.3)
+
+Order management for the Multi-Agent Marketplace. All endpoints require JWT authentication.
+
+**Order Status Flow:**
+
+PENDING -> MATCHED -> IN_PROGRESS -> PENDING_REVIEW -> COMPLETED
+
+#### Order Creation
+- POST /marketplace/orders - Create a new order (JWT)
+  - Request Body: OrderCreateRequest
+    - service_id (string, required): ID of the service to order
+    - buyer_id (string, required): Buyer entity ID (from JWT)
+    - requirements (object, required): Service-specific requirements
+    - max_price (number, required): Maximum acceptable price
+    - deadline (string, optional): ISO 8601 deadline timestamp
+  - Response (200): OrderResponse
+  - Errors: 401 (Unauthorized), 404 (Service Not Found), 422 (Validation Error)
+
+#### Order Matching
+- POST /marketplace/orders/{order_id}/match - Match an order with a provider (JWT, Provider only)
+  - Request Body: MatchOrderRequest
+  - Response (200): OrderResponse with updated status=matched
+  - Errors: 401, 403, 404, 409
+
+#### Order Start
+- POST /marketplace/orders/{order_id}/start - Start working on a matched order (JWT, Matched Provider only)
+  - Request Body: StartOrderRequest
+  - Response (200): OrderResponse with status=in_progress
+  - Errors: 401, 403, 404, 409
+
+#### Result Submission
+- POST /marketplace/orders/{order_id}/submit - Submit work results (JWT, Provider only)
+  - Request Body: SubmitResultRequest
+  - Response (200): OrderResponse with status=pending_review
+  - Errors: 401, 403, 404, 409
+
+#### Order Approval
+- POST /marketplace/orders/{order_id}/approve - Approve completed work (JWT, Buyer only)
+  - Request Body: ApproveOrderRequest
+  - Response (200): ApproveOrderResponse
+  - Errors: 401, 403, 404, 409, 402
+
+#### Order Rejection
+- POST /marketplace/orders/{order_id}/reject - Reject work results (JWT, Buyer only)
+  - Request Body: RejectOrderRequest
+  - Response (200): OrderResponse with status=rejected
+  - Errors: 401, 403, 404
+
+#### Order Retrieval
+- GET /marketplace/orders/{order_id} - Get order details (JWT)
+- GET /marketplace/orders - List orders with filters (JWT)
+
 ### WebSocket
 - `WS /ws/v1/peers` - WebSocket endpoint for real-time peer communication (JWT required)
   - Bidirectional messaging with JSON protocol
@@ -291,6 +344,12 @@ All endpoints except `/health` and `/docs` are rate-limited using the Token Buck
 **Implementation Note:** DHT functionality is provided by `services/dht_node.py`. Legacy implementations in `services/dht.py` and `services/dht_registry.py` are deprecated and will be removed in v0.6.0.
 
 ## Changelog
+### v0.5.4 (2026-02-01)
+- Added Marketplace Order Management endpoints (/marketplace/orders/*)
+  - Order lifecycle: create, match, start, submit, approve, reject
+  - Status flow: PENDING -> MATCHED -> IN_PROGRESS -> PENDING_REVIEW -> COMPLETED
+  - JWT authentication required for all order operations
+
 
 ### v0.5.1 (2026-02-01)
 - **Current Release**: All core features implemented

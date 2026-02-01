@@ -176,6 +176,18 @@ for prefix in ['services.', '']:
     except ImportError:
         continue
 
+# Try to import solana_token module (for blockchain token transfers)
+solana_token_module = None
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            solana_token_module = __import__(f"{prefix}solana_token", fromlist=['SolanaTokenManager', 'TransferResult', 'init_solana_manager', 'get_solana_manager', 'transfer_entity_tokens'])
+        else:
+            solana_token_module = __import__("solana_token", fromlist=['SolanaTokenManager', 'TransferResult', 'init_solana_manager', 'get_solana_manager', 'transfer_entity_tokens'])
+        break
+    except ImportError:
+        continue
+
 # ============================================================================
 # Extract symbols from modules (with fallback mocks)
 # ============================================================================
@@ -1417,7 +1429,14 @@ async def transfer_tokens(
     credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
 ):
     """Transfer tokens to another entity (requires JWT authentication)"""
-    from_entity_id = credentials.credentials
+    # Decode JWT token to get entity_id from 'sub' claim
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        from_entity_id = payload.get("sub")
+        if not from_entity_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing entity_id")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
     
     # Get sender wallet
     from_wallet = get_wallet(from_entity_id)
@@ -2424,7 +2443,9 @@ async def create_new_wallet(
         from token_system import create_wallet
     
     # Only allow creating wallet for self or admin (for now, allow self only)
-    if credentials.credentials != req.entity_id:
+    # Decode JWT token to get entity_id from "sub" claim
+    current_entity = jwt_auth.get_entity_id(credentials.credentials)
+    if current_entity != req.entity_id:
         raise HTTPException(
             status_code=403,
             detail="Can only create wallet for your own entity"
@@ -2486,7 +2507,14 @@ async def token_transfer(
     credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
 ):
     """Transfer tokens to another entity (requires JWT authentication)"""
-    from_entity_id = credentials.credentials
+    # Decode JWT token to get from_entity_id from 'sub' claim
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        from_entity_id = payload.get("sub")
+        if not from_entity_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing entity_id")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
     
     # Get sender wallet
     from_wallet = get_wallet(from_entity_id)
@@ -2826,8 +2854,9 @@ async def mint_tokens(
     credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
 ):
     """Mint new tokens (requires admin authentication)"""
-    current_entity = credentials.credentials
-    
+    # Decode JWT token to get entity_id from "sub" claim
+    current_entity = jwt_auth.get_entity_id(credentials.credentials)
+
     # Verify admin access
     if current_entity not in ADMIN_ENTITIES:
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -4292,6 +4321,71 @@ class OrderActionResponse(BaseModel):
     message: str
 
 
+class SubmitResultRequest(BaseModel):
+    """Request model for provider submitting work result"""
+    provider_id: str = Field(..., description="ID of the provider submitting result")
+    result: Dict[str, Any] = Field(..., description="Work result data")
+
+
+class SubmitResultResponse(BaseModel):
+    """Response model for submit result"""
+    success: bool
+    order_id: str
+    new_status: str
+    message: str
+
+
+class ApproveOrderRequest(BaseModel):
+    """Request model for buyer approving order"""
+    buyer_id: str = Field(..., description="ID of the buyer")
+    rating: int = Field(default=5, ge=1, le=5, description="Rating 1-5")
+
+
+class ApproveOrderResponse(BaseModel):
+    """Response model for approve order"""
+    success: bool
+    order_id: str
+    new_status: str
+    message: str
+
+
+class StartOrderRequest(BaseModel):
+    """Request model for provider starting order work"""
+    provider_id: str = Field(..., description="ID of the provider")
+
+
+class StartOrderResponse(BaseModel):
+    """Response model for start order"""
+    success: bool
+    order_id: str
+    new_status: str
+    message: str
+
+
+class RejectOrderRequest(BaseModel):
+    """Request model for buyer rejecting order"""
+    buyer_id: str = Field(..., description="ID of the buyer")
+    reason: str = Field(..., min_length=1, max_length=1000, description="Reason for rejection")
+
+
+class RejectOrderResponse(BaseModel):
+    """Response model for reject order"""
+    success: bool
+    order_id: str
+    new_status: str
+    message: str
+
+
+class GetResultResponse(BaseModel):
+    """Response model for getting order result"""
+    success: bool
+    order_id: str
+    result: Optional[Dict[str, Any]] = None
+    submitted_at: Optional[str] = None
+    status: Optional[str] = None
+    message: str
+
+
 class MarketplaceStatsResponse(BaseModel):
     """Response model for marketplace statistics"""
     registry_stats: Dict[str, Any]
@@ -4895,6 +4989,254 @@ async def cancel_order(order_id: str, buyer_id: str):
         order_id=order_id,
         new_status="cancelled",
         message="Order cancelled successfully"
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/submit", response_model=SubmitResultResponse)
+async def submit_order_result(order_id: str, request: SubmitResultRequest):
+    """
+    Provider submits work result for buyer review.
+    Changes order status from 'in_progress' to 'pending_review'.
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    success = await marketplace_orderbook.submit_result(
+        order_id=order_id,
+        provider_id=request.provider_id,
+        result_data=request.result
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to submit result for order {order_id}. Order must be 'in_progress' and provider must match."
+        )
+    
+    return SubmitResultResponse(
+        success=True,
+        order_id=order_id,
+        new_status="pending_review",
+        message="Result submitted successfully. Waiting for buyer approval."
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/approve", response_model=ApproveOrderResponse)
+async def approve_order_result(
+    order_id: str,
+    request: ApproveOrderRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Buyer approves submitted work result.
+    Changes order status from 'pending_review' to 'completed' and releases payment.
+    Also transfers tokens from buyer to provider automatically.
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    # Decode JWT token to get buyer_id from 'sub' claim
+    try:
+        payload = jwt_auth.verify_token(credentials.credentials)
+        buyer_id = payload.get("sub")
+        if not buyer_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing entity_id")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
+    
+    # Get order info before approval (for token transfer)
+    order = await marketplace_orderbook.get_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+    
+    # Verify buyer matches
+    if order.buyer_id != buyer_id:
+        raise HTTPException(status_code=403, detail="Only the buyer can approve this order")
+    
+    # Approve the order
+    # Note: Token transfer is handled inside order_book.approve_order()
+    success = await marketplace_orderbook.approve_order(
+        order_id=order_id,
+        buyer_id=buyer_id
+    )
+    
+    if not success:
+        # Get detailed error info from order book logs
+        order_check = await marketplace_orderbook.get_order(order_id)
+        if order_check is None:
+            error_detail = f"Order {order_id} not found in order book"
+        elif order_check.buyer_id != buyer_id:
+            error_detail = f"Buyer mismatch: expected {order_check.buyer_id}, got {buyer_id}"
+        elif order_check.status.value != "pending_review":
+            error_detail = f"Order status is '{order_check.status.value}', expected 'pending_review'"
+        else:
+            error_detail = f"Token transfer failed or other error. Check server logs for details."
+        
+        logger.error(f"approve_order failed for {order_id}: {error_detail}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to approve order {order_id}: {error_detail}"
+        )
+    
+    # Token transfer is already handled by order_book.approve_order()
+    # We just need to persist token state if token system is available
+    if token_system_module and order.total_amount > 0:
+        try:
+            get_persistence().save_all()
+        except Exception as e:
+            logger.warning(f"Failed to persist token state: {e}")
+    
+    # === SOLANA BLOCKCHAIN SYNC ===
+    # Mirror internal token transfer on Solana blockchain
+    solana_tx_signature = None
+    try:
+        # Import Solana bridge
+        try:
+            from .solana_bridge import execute_marketplace_payment
+        except ImportError:
+            from solana_bridge import execute_marketplace_payment
+        
+        if order.total_amount > 0:
+            logger.info(f"Initiating Solana blockchain sync for order {order_id}")
+            solana_result = execute_marketplace_payment(
+                buyer_id=order.buyer_id,
+                provider_id=order.provider_id,
+                amount=order.total_amount,
+                order_id=order_id
+            )
+            
+            if solana_result.get("success"):
+                solana_tx_signature = solana_result.get("signature")
+                logger.info(f"✅ Solana sync successful: {solana_tx_signature}")
+            else:
+                # Log but don't fail - internal transfer already succeeded
+                logger.warning(f"⚠️ Solana sync failed: {solana_result.get('error')}")
+                logger.warning("Internal transfer succeeded but blockchain sync failed")
+                
+    except Exception as e:
+        # Solana sync failure should not block the approval
+        logger.warning(f"⚠️ Solana bridge error: {e}")
+        logger.warning("Continuing without blockchain sync")
+    
+    # TODO: Update provider reputation with rating
+    
+    # Build response message
+    message = f"Order approved and completed. Payment of {order.total_amount} tokens released to provider {order.provider_id}."
+    if solana_tx_signature:
+        message += f" Solana tx: {solana_tx_signature[:16]}..."
+    
+    return ApproveOrderResponse(
+        success=True,
+        order_id=order_id,
+        new_status="completed",
+        message=message
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/start", response_model=StartOrderResponse)
+async def start_order_work(
+    order_id: str,
+    request: StartOrderRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(jwt_bearer)
+):
+    """
+    Provider starts work on a matched order.
+    Changes order status from 'matched' to 'in_progress'.
+    Only the matched provider can start the order.
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    # Get provider_id from JWT token
+    provider_id = credentials.credentials
+    
+    # Get order info
+    order = await marketplace_orderbook.get_order(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order {order_id} not found")
+    
+    # Verify provider matches
+    if order.provider_id != provider_id:
+        raise HTTPException(status_code=403, detail="Only the matched provider can start this order")
+    
+    # Start the order
+    success = await marketplace_orderbook.start_order(
+        order_id=order_id,
+        provider_id=provider_id
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to start order {order_id}. Order must be 'matched' and provider must match."
+        )
+    
+    return StartOrderResponse(
+        success=True,
+        order_id=order_id,
+        new_status="in_progress",
+        message=f"Order started successfully. Provider {provider_id} is now working on the order."
+    )
+
+
+@app.post("/marketplace/orders/{order_id}/reject", response_model=RejectOrderResponse)
+async def reject_order_result(order_id: str, request: RejectOrderRequest):
+    """
+    Buyer rejects submitted work result.
+    Changes order status from 'pending_review' to 'disputed'.
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    success = await marketplace_orderbook.reject_order(
+        order_id=order_id,
+        buyer_id=request.buyer_id,
+        reason=request.reason
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to reject order {order_id}. Order must be 'pending_review' and buyer must match."
+        )
+    
+    # TODO: Initiate dispute resolution process
+    
+    return RejectOrderResponse(
+        success=True,
+        order_id=order_id,
+        new_status="disputed",
+        message=f"Order rejected. Reason: {request.reason}. Dispute resolution initiated."
+    )
+
+
+@app.get("/marketplace/orders/{order_id}/result", response_model=GetResultResponse)
+async def get_order_result(order_id: str, user_id: str):
+    """
+    Get submitted result for an order.
+    Available to both buyer and provider after result submission.
+    """
+    if marketplace_orderbook is None:
+        raise HTTPException(status_code=503, detail="Marketplace order book unavailable")
+    
+    result = await marketplace_orderbook.get_result(
+        order_id=order_id,
+        user_id=user_id
+    )
+    
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Result not found for order {order_id}. Order may not exist, result not yet submitted, or user not authorized."
+        )
+    
+    return GetResultResponse(
+        success=True,
+        order_id=order_id,
+        result=result.get('result_data'),
+        submitted_at=result.get('submitted_at'),
+        status=result.get('status'),
+        message="Result retrieved successfully"
     )
 
 
@@ -5728,4 +6070,5 @@ async def get_marketplace_bidding_stats():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

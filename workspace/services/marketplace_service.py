@@ -7,6 +7,7 @@ Handles service requests, provider matching, and payment processing.
 
 import asyncio
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
@@ -15,6 +16,27 @@ from enum import Enum
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# Custom Exceptions for better error handling
+class MarketplaceError(Exception):
+    """Base exception for marketplace errors"""
+    pass
+
+
+class RequestNotFoundError(MarketplaceError):
+    """Raised when a request is not found"""
+    pass
+
+
+class InvalidStatusError(MarketplaceError):
+    """Raised when request status is invalid for the operation"""
+    pass
+
+
+class ServiceNotFoundError(MarketplaceError):
+    """Raised when a service is not found"""
+    pass
 
 
 class ServiceStatus(Enum):
@@ -173,8 +195,6 @@ class MarketplaceService:
         Returns:
             Created service request
         """
-        import uuid
-        
         # Validate service exists
         service = self.get_service(service_id)
         if not service:
@@ -227,15 +247,20 @@ class MarketplaceService:
             
         Returns:
             True if assignment successful
+            
+        Raises:
+            RequestNotFoundError: If request is not found
+            InvalidStatusError: If request is not in pending status
         """
         request = self.get_request(request_id)
         if not request:
-            logger.error(f"Request {request_id} not found")
-            return False
+            raise RequestNotFoundError(f"Request {request_id} not found")
         
         if request.status != ServiceStatus.PENDING:
-            logger.error(f"Request {request_id} is not pending")
-            return False
+            raise InvalidStatusError(
+                f"Request {request_id} has status {request.status.value}, "
+                f"expected {ServiceStatus.PENDING.value}"
+            )
         
         request.assigned_to = provider_id
         request.status = ServiceStatus.IN_PROGRESS
@@ -261,15 +286,20 @@ class MarketplaceService:
             
         Returns:
             True if completion successful
+            
+        Raises:
+            RequestNotFoundError: If request is not found
+            InvalidStatusError: If request is not in progress
         """
         request = self.get_request(request_id)
         if not request:
-            logger.error(f"Request {request_id} not found")
-            return False
+            raise RequestNotFoundError(f"Request {request_id} not found")
         
         if request.status != ServiceStatus.IN_PROGRESS:
-            logger.error(f"Request {request_id} is not in progress")
-            return False
+            raise InvalidStatusError(
+                f"Request {request_id} has status {request.status.value}, "
+                f"expected {ServiceStatus.IN_PROGRESS.value}"
+            )
         
         request.status = ServiceStatus.COMPLETED
         request.result = result

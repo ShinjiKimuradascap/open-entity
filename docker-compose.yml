@@ -1,17 +1,22 @@
 services:
-  moco:
+  entity-a:
     build: .
-    container_name: moco
+    container_name: entity-a
     ports:
       - "8001:8000"
     volumes:
       # プロファイル（読み取り専用）
       - ./profiles:/app/profiles:ro
       # データ永続化
-      - moco_data:/app/data
+      - entity_a_data:/app/data
       # ワークスペース（AIの作業領域 - ここだけ書き込み可能）
       - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
     environment:
+      # エンティティ識別
+      - ENTITY_ID=entity-a
+      - ENTITY_PORT=8001
+      - PEER_PORT=8002
+      - PEER_URL=http://entity-b:8000
       # LLM API キー（.envファイルから読み込み）
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -27,6 +32,73 @@ services:
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
       # サンドボックス：作業ディレクトリを制限
       - MOCO_WORKING_DIRECTORY=/home/moco/workspace
+      # Memory Service
+      - MOCO_MEMORY_SERVICE=${MOCO_MEMORY_SERVICE:-off}
+    restart: unless-stopped
+    
+    # ========== セキュリティ強化 ==========
+    security_opt:
+      - no-new-privileges:true
+    # 読み取り専用ルートファイルシステム
+    read_only: true
+    # 一時的な書き込みが必要なディレクトリ
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+      - /var/tmp:size=50M,mode=1777
+      - /home/moco/.moco:size=50M,mode=1777
+    # 不要な機能を削除
+    cap_drop:
+      - ALL
+    # 必要最小限の機能のみ追加
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+    # リソース制限
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  entity-b:
+    build: .
+    container_name: entity-b
+    ports:
+      - "8002:8000"
+    volumes:
+      # プロファイル（読み取り専用）
+      - ./profiles:/app/profiles:ro
+      # データ永続化
+      - entity_b_data:/app/data
+      # ワークスペース（AIの作業領域 - ここだけ書き込み可能）
+      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+    environment:
+      # エンティティ識別
+      - ENTITY_ID=entity-b
+      - ENTITY_PORT=8002
+      - PEER_PORT=8001
+      - PEER_URL=http://entity-a:8000
+      # LLM API キー（.envファイルから読み込み）
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      # Slack 連携
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      # その他設定
+      - MOCO_PROFILE=${MOCO_PROFILE:-entity}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
+      # サンドボックス：作業ディレクトリを制限
+      - MOCO_WORKING_DIRECTORY=/home/moco/workspace
+      # Memory Service
+      - MOCO_MEMORY_SERVICE=${MOCO_MEMORY_SERVICE:-off}
     restart: unless-stopped
     
     # ========== セキュリティ強化 ==========
@@ -63,9 +135,9 @@ services:
     container_name: moco-slack
     command: ["python", "-m", "open_entity.gateway.clients.slack"]
     depends_on:
-      - moco
+      - entity-a
     environment:
-      - MOCO_API_URL=http://moco:8000/api/chat
+      - MOCO_API_URL=http://entity-a:8000/api/chat
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
     restart: unless-stopped
@@ -75,4 +147,5 @@ services:
       - slack  # docker compose --profile slack up で起動
 
 volumes:
-  moco_data:
+  entity_a_data:
+  entity_b_data:

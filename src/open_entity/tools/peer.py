@@ -5,13 +5,19 @@ import os
 import httpx
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 # 自分と相手のポート設定
 MY_PORT = int(os.getenv("ENTITY_PORT", "8001"))
 PEER_PORT = int(os.getenv("PEER_PORT", "8002"))
-PEER_HOST = os.getenv("PEER_HOST", "localhost")
+# PEER_URL takes priority over PEER_HOST:PEER_PORT
+PEER_URL = os.getenv("PEER_URL", f"http://localhost:{PEER_PORT}")
+
+def _get_peer_base_url() -> str:
+    """Get the base URL for peer communication."""
+    return PEER_URL.rstrip('/')
 
 
 def talk_to_peer(message: str, session_id: Optional[str] = None) -> str:
@@ -29,7 +35,7 @@ def talk_to_peer(message: str, session_id: Optional[str] = None) -> str:
         talk_to_peer("タスク完了した。そっちの進捗はどう？")
         talk_to_peer("todoread_all() を実行して、未完了タスクを続けろ")
     """
-    url = f"http://{PEER_HOST}:{PEER_PORT}/api/chat"
+    url = f"{_get_peer_base_url()}/api/chat"
     
     payload = {
         "message": message,
@@ -47,7 +53,7 @@ def talk_to_peer(message: str, session_id: Optional[str] = None) -> str:
             result = response.json()
             return result.get("response", "No response from peer")
     except httpx.ConnectError:
-        return f"❌ ピアに接続できません ({PEER_HOST}:{PEER_PORT})。相手が起動していない可能性があります。"
+        return f"❌ ピアに接続できません ({PEER_URL})。相手が起動していない可能性があります。"
     except httpx.TimeoutException:
         return f"⏱️ ピアからの応答がタイムアウトしました。相手が処理中の可能性があります。"
     except Exception as e:
@@ -93,7 +99,7 @@ def report_to_peer(status: str, next_action: str = "") -> str:
     
     def send_async():
         try:
-            url = f"http://{PEER_HOST}:{PEER_PORT}/api/chat"
+            url = f"{_get_peer_base_url()}/api/chat"
             payload = {
                 "message": message,
                 "profile": "cursor",
@@ -118,7 +124,7 @@ def check_peer_alive() -> bool:
     Returns:
         True if peer is responding, False otherwise
     """
-    url = f"http://{PEER_HOST}:{PEER_PORT}/api/profiles"
+    url = f"{_get_peer_base_url()}/api/profiles"
     
     try:
         with httpx.Client(timeout=5.0) as client:
