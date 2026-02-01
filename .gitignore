@@ -111,3 +111,8 @@ workspace/.npm-cache/
 __pycache__/
 skills
 */skills
+
+# Solana wallet keys - NEVER commit these!
+.solana-keys/
+**/entity-token.json
+**/*-keypair.json
