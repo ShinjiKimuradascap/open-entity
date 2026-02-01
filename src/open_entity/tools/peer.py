@@ -39,7 +39,7 @@ def talk_to_peer(message: str, session_id: Optional[str] = None) -> str:
     
     payload = {
         "message": message,
-        "profile": "cursor",
+        "profile": "entity",
         "provider": os.getenv("LLM_PROVIDER", "openrouter"),
     }
     
@@ -102,7 +102,7 @@ def report_to_peer(status: str, next_action: str = "") -> str:
             url = f"{_get_peer_base_url()}/api/chat"
             payload = {
                 "message": message,
-                "profile": "cursor",
+                "profile": "entity",
                 "provider": os.getenv("LLM_PROVIDER", "openrouter"),
             }
             with httpx.Client(timeout=300.0) as client:
