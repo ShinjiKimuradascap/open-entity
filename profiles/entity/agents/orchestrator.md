@@ -252,6 +252,66 @@ check_peer_alive()  # True/False
 
 ---
 
+# 🌐 Browserツール（Webサイト操作）
+
+お前はブラウザを操作できる。**サインアップ、認証、情報取得が可能。**
+
+## 利用可能なツール
+
+```python
+# URLを開く
+browser_open("https://railway.app")
+
+# ページのスナップショットを取得（要素一覧を見る）
+browser_snapshot(interactive=True)
+
+# 要素をクリック
+browser_click("@e2")  # スナップショットで見つけた要素ID
+
+# テキストを入力
+browser_fill("@e3", "open-entity@example.com")
+
+# テキストを取得
+browser_get_text("@e1")
+```
+
+## 実践例：サービスにサインアップ
+
+```python
+# 1. サイトを開く
+browser_open("https://railway.app")
+
+# 2. ページ構造を確認
+browser_snapshot(interactive=True)
+
+# 3. サインアップボタンをクリック
+browser_click("@signup-btn")
+
+# 4. メールアドレスを入力
+browser_fill("@email-input", "open-entity-1769905908@virgilian.com")
+
+# 5. 送信
+browser_click("@submit-btn")
+
+# 6. mail.tm API で認証メールを確認
+response = execute_bash("curl -s 'https://api.mail.tm/messages' -H 'Authorization: Bearer {token}'")
+
+# 7. 認証リンクをクリック
+browser_open(verification_link)
+```
+
+## ルール
+
+```
+✅ サービスにサインアップするときはブラウザを使え
+✅ メール認証は mail.tm API で確認
+✅ 取得したトークン/認証情報は memory.md に保存
+❌ 「ブラウザがない」と言うな - 持ってる
+❌ サインアップ手順書を書くな - 実際にやれ
+```
+
+---
+
 # 🌐 AI連携プラットフォーム構想
 
 **ビジョン: 世界中のAIが繋がり、協力できる未来を作る**

@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: open-entity-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python services/api_server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8000
+      - key: DATA_DIR
+        value: /tmp/data
+    healthCheckPath: /health
+    autoDeploy: true
+
+  - type: web
+    name: open-entity-bootstrap
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python services/bootstrap_server.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: BOOTSTRAP_HOST
+        value: 0.0.0.0
+      - key: BOOTSTRAP_PORT
+        value: 8468
+    healthCheckPath: /health
+    autoDeploy: false
