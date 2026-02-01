@@ -19,13 +19,26 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
+# Multi-level import fallback for different execution contexts
 try:
+    # Try relative import (when imported as part of package)
     from .crypto import KeyPair, load_key_from_env
 except ImportError:
-    from services.crypto import generate_entity_keypair as KeyPair
-    def load_key_from_env():
-        import os
-        return os.environ.get("ENTITY_PRIVATE_KEY", "")
+    try:
+        # Try absolute import (when services is in PYTHONPATH)
+        from services.crypto import KeyPair, load_key_from_env
+    except ImportError:
+        try:
+            # Try direct import (when running from services directory)
+            from crypto import KeyPair, load_key_from_env
+        except ImportError:
+            # Last resort: importlib with path manipulation
+            import sys
+            from pathlib import Path
+            current_dir = Path(__file__).parent
+            if str(current_dir) not in sys.path:
+                sys.path.insert(0, str(current_dir))
+            from crypto import KeyPair, load_key_from_env
 
 
 class JWTConfig:

@@ -17,67 +17,328 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Import with fallback patterns (for different execution contexts)
-try:
-    # Pattern 1: When run as a module from parent directory
-    from services.registry import get_registry, ServiceInfo
-    from services.peer_service import PeerService, init_service as init_peer_service, get_service as get_peer_service
-    from services.token_system import (
-        get_wallet, get_task_contract, get_reputation_contract, get_token_minter, get_persistence,
-        TokenWallet, TaskContract, ReputationContract, TokenMinter, RewardType,
-        TaskStatus, TransactionType, PersistenceManager
-    )
-    from services.token_economy import TokenEconomy, TokenMetadata, get_token_economy
-except ImportError:
-    # Pattern 2: When run directly from services directory
-    from registry import get_registry, ServiceInfo
-    from peer_service import PeerService, init_service as init_peer_service, get_service as get_peer_service
-    from token_system import (
-        get_wallet, get_task_contract, get_reputation_contract, get_token_minter, get_persistence,
-        TokenWallet, TaskContract, ReputationContract, TokenMinter, RewardType,
-        TaskStatus, TransactionType, PersistenceManager
-    )
-    from token_economy import TokenEconomy, TokenMetadata, get_token_economy
+# ============================================================================
+# Robust Import System - Handles missing dependencies gracefully
+# ============================================================================
 
-# Import security modules with fallback patterns
-try:
-    # Pattern 1: When run as a module from parent directory
-    from services.crypto import (
-        KeyPair, MessageSigner, SignatureVerifier, SecureMessage,
-        ReplayProtector, load_key_from_env, generate_keypair, get_public_key_from_private
-    )
-    from services.auth import (
-        JWTAuth, JWTConfig, APIKeyAuth, CombinedAuth,
-        JWTBearer, APIKeyBearer, get_current_entity_id,
-        create_jwt_auth, create_api_key_auth
-    )
-    from services.rate_limiter import (
-        TokenBucketRateLimiter, RateLimitMiddleware, EndpointRateLimiter,
-        get_rate_limiter, get_endpoint_rate_limiter,
-        init_rate_limiters, shutdown_rate_limiters
-    )
-    from services.moltbook_identity_client import init_client as init_moltbook_client, get_client as get_moltbook_client
-    from services.marketplace import ServiceRegistry, ServiceListing, ServiceType, PricingModel
-except ImportError:
-    # Pattern 2: When run directly from services directory
-    from crypto import (
-        KeyPair, MessageSigner, SignatureVerifier, SecureMessage,
-        ReplayProtector, load_key_from_env, generate_keypair, get_public_key_from_private
-    )
-    from auth import (
-        JWTAuth, JWTConfig, APIKeyAuth, CombinedAuth,
-        JWTBearer, APIKeyBearer, get_current_entity_id,
-        create_jwt_auth, create_api_key_auth
-    )
+# Helper to try multiple import paths
+def try_import(module_name, *fallback_paths):
+    """Try importing from multiple paths, return None if all fail"""
+    for path in fallback_paths:
+        try:
+            if path:
+                full_name = f"{path}.{module_name}"
+            else:
+                full_name = module_name
+            mod = __import__(full_name, fromlist=['*'])
+            return mod
+        except ImportError:
+            continue
+    return None
 
-    # Import rate limiter
-    from rate_limiter import (
-        TokenBucketRateLimiter, RateLimitMiddleware, EndpointRateLimiter,
-        get_rate_limiter, get_endpoint_rate_limiter,
-        init_rate_limiters, shutdown_rate_limiters
-    )
-    from moltbook_identity_client import init_client as init_moltbook_client, get_client as get_moltbook_client
-    from marketplace import ServiceRegistry, ServiceListing, ServiceType, PricingModel
+# Initialize module placeholders
+registry_module = None
+peer_service_module = None
+token_system_module = None
+token_economy_module = None
+crypto_module = None
+auth_module = None
+rate_limiter_module = None
+moltbook_module = None
+marketplace_module = None
+
+# Try to import registry module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            registry_module = __import__(f"{prefix}registry", fromlist=['get_registry', 'ServiceInfo'])
+        else:
+            registry_module = __import__("registry", fromlist=['get_registry', 'ServiceInfo'])
+        break
+    except ImportError:
+        continue
+
+# Try to import peer_service module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            peer_service_module = __import__(f"{prefix}peer_service", fromlist=['PeerService', 'init_service', 'get_service'])
+        else:
+            peer_service_module = __import__("peer_service", fromlist=['PeerService', 'init_service', 'get_service'])
+        break
+    except ImportError:
+        continue
+
+# Try to import token_system module  
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            token_system_module = __import__(f"{prefix}token_system", fromlist=[
+                'get_wallet', 'get_task_contract', 'get_reputation_contract', 'get_token_minter', 'get_persistence',
+                'TokenWallet', 'TaskContract', 'ReputationContract', 'TokenMinter', 'RewardType',
+                'TaskStatus', 'TransactionType', 'PersistenceManager'
+            ])
+        else:
+            token_system_module = __import__("token_system", fromlist=[
+                'get_wallet', 'get_task_contract', 'get_reputation_contract', 'get_token_minter', 'get_persistence',
+                'TokenWallet', 'TaskContract', 'ReputationContract', 'TokenMinter', 'RewardType',
+                'TaskStatus', 'TransactionType', 'PersistenceManager'
+            ])
+        break
+    except ImportError:
+        continue
+
+# Try to import token_economy module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            token_economy_module = __import__(f"{prefix}token_economy", fromlist=['TokenEconomy', 'TokenMetadata', 'get_token_economy'])
+        else:
+            token_economy_module = __import__("token_economy", fromlist=['TokenEconomy', 'TokenMetadata', 'get_token_economy'])
+        break
+    except ImportError:
+        continue
+
+# Try to import crypto module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            crypto_module = __import__(f"{prefix}crypto", fromlist=[
+                'KeyPair', 'MessageSigner', 'SignatureVerifier', 'SecureMessage',
+                'ReplayProtector', 'load_key_from_env', 'generate_keypair', 'get_public_key_from_private'
+            ])
+        else:
+            crypto_module = __import__("crypto", fromlist=[
+                'KeyPair', 'MessageSigner', 'SignatureVerifier', 'SecureMessage',
+                'ReplayProtector', 'load_key_from_env', 'generate_keypair', 'get_public_key_from_private'
+            ])
+        break
+    except ImportError:
+        continue
+
+# Try to import auth module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            auth_module = __import__(f"{prefix}auth", fromlist=[
+                'JWTAuth', 'JWTConfig', 'APIKeyAuth', 'CombinedAuth',
+                'JWTBearer', 'APIKeyBearer', 'get_current_entity_id',
+                'create_jwt_auth', 'create_api_key_auth'
+            ])
+        else:
+            auth_module = __import__("auth", fromlist=[
+                'JWTAuth', 'JWTConfig', 'APIKeyAuth', 'CombinedAuth',
+                'JWTBearer', 'APIKeyBearer', 'get_current_entity_id',
+                'create_jwt_auth', 'create_api_key_auth'
+            ])
+        break
+    except ImportError:
+        continue
+
+# Try to import rate_limiter module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            rate_limiter_module = __import__(f"{prefix}rate_limiter", fromlist=[
+                'TokenBucketRateLimiter', 'RateLimitMiddleware', 'EndpointRateLimiter',
+                'get_rate_limiter', 'get_endpoint_rate_limiter',
+                'init_rate_limiters', 'shutdown_rate_limiters'
+            ])
+        else:
+            rate_limiter_module = __import__("rate_limiter", fromlist=[
+                'TokenBucketRateLimiter', 'RateLimitMiddleware', 'EndpointRateLimiter',
+                'get_rate_limiter', 'get_endpoint_rate_limiter',
+                'init_rate_limiters', 'shutdown_rate_limiters'
+            ])
+        break
+    except ImportError:
+        continue
+
+# Try to import moltbook_identity_client module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            moltbook_module = __import__(f"{prefix}moltbook_identity_client", fromlist=['init_client', 'get_client'])
+        else:
+            moltbook_module = __import__("moltbook_identity_client", fromlist=['init_client', 'get_client'])
+        break
+    except ImportError:
+        continue
+
+# Try to import marketplace module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            marketplace_module = __import__(f"{prefix}marketplace", fromlist=['ServiceRegistry', 'ServiceListing', 'ServiceType', 'PricingModel'])
+        else:
+            marketplace_module = __import__("marketplace", fromlist=['ServiceRegistry', 'ServiceListing', 'ServiceType', 'PricingModel'])
+        break
+    except ImportError:
+        continue
+
+# ============================================================================
+# Extract symbols from modules (with fallback mocks)
+# ============================================================================
+
+# Registry symbols
+if registry_module:
+    get_registry = registry_module.get_registry
+    ServiceInfo = registry_module.ServiceInfo
+    logger.info("✓ Registry module loaded")
+else:
+    logger.warning("✗ Registry module not available")
+    get_registry = lambda: None
+    class ServiceInfo:
+        pass
+
+# Peer service symbols
+if peer_service_module:
+    PeerService = peer_service_module.PeerService
+    init_peer_service = peer_service_module.init_service
+    get_peer_service = peer_service_module.get_service
+    logger.info("✓ Peer service module loaded")
+else:
+    logger.warning("✗ Peer service module not available")
+    PeerService = None
+    init_peer_service = lambda **kwargs: None
+    get_peer_service = lambda: None
+
+# Token system symbols
+if token_system_module:
+    get_wallet = token_system_module.get_wallet
+    get_task_contract = token_system_module.get_task_contract
+    get_reputation_contract = token_system_module.get_reputation_contract
+    get_token_minter = token_system_module.get_token_minter
+    get_persistence = token_system_module.get_persistence
+    TokenWallet = token_system_module.TokenWallet
+    TaskContract = token_system_module.TaskContract
+    ReputationContract = token_system_module.ReputationContract
+    TokenMinter = token_system_module.TokenMinter
+    RewardType = token_system_module.RewardType
+    TaskStatus = token_system_module.TaskStatus
+    TransactionType = token_system_module.TransactionType
+    PersistenceManager = token_system_module.PersistenceManager
+    logger.info("✓ Token system module loaded")
+else:
+    logger.warning("✗ Token system module not available")
+    get_wallet = lambda entity_id: None
+    get_task_contract = lambda: None
+    get_reputation_contract = lambda: None
+    get_token_minter = lambda: None
+    get_persistence = lambda: None
+    TokenWallet = None
+    TaskContract = None
+    ReputationContract = None
+    TokenMinter = None
+    class RewardType:
+        TASK_COMPLETION = "task_completion"
+    class TaskStatus:
+        PENDING = "pending"
+        COMPLETED = "completed"
+    class TransactionType:
+        REWARD = "reward"
+        TRANSFER = "transfer"
+    PersistenceManager = None
+
+# Token economy symbols
+if token_economy_module:
+    TokenEconomy = token_economy_module.TokenEconomy
+    TokenMetadata = token_economy_module.TokenMetadata
+    get_token_economy = token_economy_module.get_token_economy
+    logger.info("✓ Token economy module loaded")
+else:
+    logger.warning("✗ Token economy module not available")
+    TokenEconomy = None
+    TokenMetadata = None
+    get_token_economy = lambda: None
+
+# Crypto symbols
+if crypto_module:
+    KeyPair = crypto_module.KeyPair
+    MessageSigner = crypto_module.MessageSigner
+    SignatureVerifier = crypto_module.SignatureVerifier
+    SecureMessage = crypto_module.SecureMessage
+    ReplayProtector = crypto_module.ReplayProtector
+    load_key_from_env = crypto_module.load_key_from_env
+    generate_keypair = crypto_module.generate_keypair
+    get_public_key_from_private = crypto_module.get_public_key_from_private
+    logger.info("✓ Crypto module loaded")
+else:
+    logger.error("✗ Crypto module not available - critical dependency")
+    raise ImportError("Crypto module is required for api_server")
+
+# Auth symbols
+if auth_module:
+    JWTAuth = auth_module.JWTAuth
+    JWTConfig = auth_module.JWTConfig
+    APIKeyAuth = auth_module.APIKeyAuth
+    CombinedAuth = auth_module.CombinedAuth
+    JWTBearer = auth_module.JWTBearer
+    APIKeyBearer = auth_module.APIKeyBearer
+    get_current_entity_id = auth_module.get_current_entity_id
+    create_jwt_auth = auth_module.create_jwt_auth
+    create_api_key_auth = auth_module.create_api_key_auth
+    logger.info("✓ Auth module loaded")
+else:
+    logger.error("✗ Auth module not available - critical dependency")
+    raise ImportError("Auth module is required for api_server")
+
+# Rate limiter symbols
+if rate_limiter_module:
+    TokenBucketRateLimiter = rate_limiter_module.TokenBucketRateLimiter
+    RateLimitMiddleware = rate_limiter_module.RateLimitMiddleware
+    EndpointRateLimiter = rate_limiter_module.EndpointRateLimiter
+    get_rate_limiter = rate_limiter_module.get_rate_limiter
+    get_endpoint_rate_limiter = rate_limiter_module.get_endpoint_rate_limiter
+    init_rate_limiters = rate_limiter_module.init_rate_limiters
+    shutdown_rate_limiters = rate_limiter_module.shutdown_rate_limiters
+    logger.info("✓ Rate limiter module loaded")
+else:
+    logger.warning("✗ Rate limiter module not available - using basic implementation")
+    # Basic fallback implementations
+    class TokenBucketRateLimiter:
+        def __init__(self, *args, **kwargs):
+            pass
+        def is_allowed(self, *args, **kwargs):
+            return True
+    class RateLimitMiddleware:
+        def __init__(self, *args, **kwargs):
+            pass
+    class EndpointRateLimiter:
+        def __init__(self, *args, **kwargs):
+            pass
+        def set_limit(self, *args, **kwargs):
+            pass
+        def _rate_limiter(self):
+            return None
+    get_rate_limiter = lambda: None
+    get_endpoint_rate_limiter = lambda: None
+    init_rate_limiters = lambda: None
+    shutdown_rate_limiters = lambda: None
+
+# Moltbook symbols
+if moltbook_module:
+    init_moltbook_client = moltbook_module.init_client
+    get_moltbook_client = moltbook_module.get_client
+    logger.info("✓ Moltbook module loaded")
+else:
+    logger.warning("✗ Moltbook module not available")
+    init_moltbook_client = lambda: None
+    get_moltbook_client = lambda: None
+
+# Marketplace symbols
+if marketplace_module:
+    ServiceRegistry = marketplace_module.ServiceRegistry
+    ServiceListing = marketplace_module.ServiceListing
+    ServiceType = marketplace_module.ServiceType
+    PricingModel = marketplace_module.PricingModel
+    logger.info("✓ Marketplace module loaded")
+else:
+    logger.warning("✗ Marketplace module not available")
+    ServiceRegistry = None
+    ServiceListing = None
+    ServiceType = None
+    PricingModel = None
 
 # Import peer communication tools with fallback patterns
 try:
@@ -117,32 +378,55 @@ app.add_middleware(
     exclude_paths=["/health", "/docs", "/openapi.json", "/stats", "/keys/public"]
 )
 
-# Initialize components
-registry = get_registry()
+# Initialize components (with safe fallbacks)
 replay_protector = ReplayProtector(max_age_seconds=60)
 
-# Initialize PeerService
-peer_service = init_peer_service(entity_id="api-server", port=8000)
+# Initialize Registry (with fallback)
+registry = None
+try:
+    if registry_module and get_registry:
+        registry = get_registry()
+        logger.info("Registry initialized")
+except Exception as e:
+    logger.warning(f"Failed to initialize registry: {e}")
 
-# Initialize Token Economy and Persistence Manager
-token_economy = get_token_economy()
-persistence_mgr = get_persistence()
+# Initialize PeerService (with fallback)
+peer_service = None
+try:
+    if peer_service_module and init_peer_service:
+        peer_service = init_peer_service(entity_id="api-server", port=8000)
+        logger.info("Peer service initialized")
+except Exception as e:
+    logger.warning(f"Failed to initialize peer service: {e}")
+
+# Initialize Token Economy and Persistence Manager (with fallback)
+token_economy = None
+try:
+    if token_economy_module and get_token_economy:
+        token_economy = get_token_economy()
+        logger.info("Token economy initialized")
+except Exception as e:
+    logger.warning(f"Failed to initialize token economy: {e}")
+
+persistence_mgr = None
+try:
+    if token_system_module and get_persistence:
+        persistence_mgr = get_persistence()
+        logger.info("Persistence manager initialized")
+except Exception as e:
+    logger.warning(f"Failed to initialize persistence manager: {e}")
 
 # Initialize Marketplace components
+marketplace_registry = None
+marketplace_orderbook = None
 try:
-    from services.marketplace import ServiceRegistry, OrderBook
-    marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
-    marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
-    logger.info("Marketplace components initialized")
-except ImportError:
-    from marketplace import ServiceRegistry, OrderBook
-    marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
-    marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
-    logger.info("Marketplace components initialized (fallback)")
+    if marketplace_module and ServiceRegistry:
+        from marketplace import OrderBook
+        marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
+        marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
+        logger.info("Marketplace components initialized")
 except Exception as e:
     logger.warning(f"Failed to initialize marketplace components: {e}")
-    marketplace_registry = None
-    marketplace_orderbook = None
 
 # Initialize Moltbook Client
 moltbook_client: Optional[Any] = None
@@ -3426,25 +3710,54 @@ class BidNotification(BaseModel):
         }
 
 
-# Import WebSocket connection pool
-try:
-    from services.connection_pool import (
-        get_websocket_pool, init_websocket_pool, shutdown_websocket_pool,
-        WebSocketConnectionPool, WebSocketState
-    )
-except ImportError:
-    from connection_pool import (
-        get_websocket_pool, init_websocket_pool, shutdown_websocket_pool,
-        WebSocketConnectionPool, WebSocketState
-    )
+# Import WebSocket connection pool (with fallback)
+websocket_pool_module = None
+for prefix in ['services.', '']:
+    try:
+        websocket_pool_module = __import__(f"{prefix}connection_pool", fromlist=[
+            'get_websocket_pool', 'init_websocket_pool', 'shutdown_websocket_pool',
+            'WebSocketConnectionPool', 'WebSocketState'
+        ])
+        break
+    except ImportError:
+        continue
+
+if websocket_pool_module:
+    get_websocket_pool = websocket_pool_module.get_websocket_pool
+    init_websocket_pool = websocket_pool_module.init_websocket_pool
+    shutdown_websocket_pool = websocket_pool_module.shutdown_websocket_pool
+    WebSocketConnectionPool = websocket_pool_module.WebSocketConnectionPool
+    WebSocketState = websocket_pool_module.WebSocketState
+    logger.info("✓ WebSocket connection pool module loaded")
+else:
+    logger.warning("✗ WebSocket connection pool not available")
+    # Mock implementations
+    WebSocketState = None
+    class WebSocketConnectionPool:
+        def __init__(self):
+            pass
+        async def start(self):
+            pass
+        async def stop(self):
+            pass
+        async def add_connection(self, *args, **kwargs):
+            pass
+        async def remove_connection(self, *args, **kwargs):
+            pass
+    def get_websocket_pool(*args, **kwargs):
+        return WebSocketConnectionPool()
+    def init_websocket_pool(*args, **kwargs):
+        return WebSocketConnectionPool()
+    def shutdown_websocket_pool(*args, **kwargs):
+        pass
 
 # Global WebSocket connection pool
 _ws_pool: Optional[WebSocketConnectionPool] = None
 
-async def get_ws_pool() -> WebSocketConnectionPool:
+async def get_ws_pool() -> Optional[WebSocketConnectionPool]:
     """Get or initialize WebSocket connection pool"""
     global _ws_pool
-    if _ws_pool is None:
+    if _ws_pool is None and websocket_pool_module:
         _ws_pool = get_websocket_pool()
         await _ws_pool.start()
     return _ws_pool
