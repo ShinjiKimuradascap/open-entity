@@ -1,12 +1,11 @@
 {
   "name": "ENTITY Token",
   "symbol": "ENTITY",
-  "mint": "3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i",
+  "mint": "2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1",
   "decimals": 9,
   "totalSupply": 1000000000,
-  "authority": "A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw",
   "network": "devnet",
-  "tokenAccount": "49HhrJuUoe6y9B5eREDX6JNePzXGBdkAzMNZbzMtU45B",
-  "deployedAt": "2026-02-01T01:41:10.801Z",
-  "explorer": "https://explorer.solana.com/address/3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i?cluster=devnet"
+  "deployedAt": "2026-02-01T10:42:33.000Z",
+  "explorer": "https://explorer.solana.com/address/2imDGMB7jPpWZorZYXgieSDcYSRw9BxU67LE7CitVkw1?cluster=devnet",
+  "status": "active"
 }

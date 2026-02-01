@@ -13,6 +13,14 @@ services:
         value: 8000
       - key: DATA_DIR
         value: /tmp/data
+      - key: ENABLE_AI_MONITORING
+        value: true
+      - key: MONITORING_INTERVAL
+        value: 30
+      - key: AUTO_SCALING_ENABLED
+        value: true
+      - key: ANOMALY_DETECTION_ENABLED
+        value: true
     healthCheckPath: /health
     autoDeploy: true
 
@@ -28,5 +36,22 @@ services:
         value: 0.0.0.0
       - key: BOOTSTRAP_PORT
         value: 8468
+    healthCheckPath: /health
+    autoDeploy: false
+
+  - type: web
+    name: open-entity-dht
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python services/dht_node.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DHT_HOST
+        value: 0.0.0.0
+      - key: DHT_PORT
+        value: 8469
+      - key: DHT_BOOTSTRAP
+        value: ""
     healthCheckPath: /health
     autoDeploy: false

@@ -59,6 +59,7 @@ COPY --chown=appuser:appuser README.md .
 COPY --chown=appuser:appuser services/ ./services/
 COPY --chown=appuser:appuser protocol/ ./protocol/
 COPY --chown=appuser:appuser config/ ./config/
+COPY --chown=appuser:appuser tools/ ./tools/
 
 # Environment variables
 ENV PYTHONPATH=/app

@@ -1,43 +1,52 @@
 # $ENTITY Token Deployment Status
 
-## デプロイ準備完了
+## デプロイ完了 ✅
 
-- キーペア: A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw
-- 保存場所: /home/moco/.config/solana/entity-token.json
-- スクリプト: scripts/deploy_entity_token.js
-- ステータス: Devnet SOL待ち
+| 項目 | 値 |
+|------|-----|
+| **Token Name** | ENTITY Token |
+| **Symbol** | $ENTITY |
+| **Mint** | 3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i |
+| **Network** | Solana Devnet |
+| **Decimals** | 9 |
+| **Total Supply** | 1,000,000,000 (1 billion) |
+| **Authority** | A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw |
+| **Token Account** | 49HhrJuUoe6y9B5eREDX6JNePzXGBdkAzMNZbzMtU45B |
+| **Deployed At** | 2026-02-01T01:41:10.801Z |
+| **Explorer** | https://explorer.solana.com/address/3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i?cluster=devnet |
 
-## ブロックされた理由
+## デプロイ完了チェックリスト
 
-1. Solana devnet faucetがレート制限/枯渇状態
-2. QuickNode/Alchemy APIも認証制限あり
-3. 手動でfaucet.solana.comからSOLを取得する必要あり
+- [x] キーペア生成
+- [x] Devnet SOL取得
+- [x] トークンデプロイ
+- [x] 初期供給量ミント
+- [x] トークン情報記録
 
-## オーナーへの依頼事項
+## 次のステップ
 
-以下のアドレスにdevnet SOLを送付してください:
+### Phase 1: 流動性確保 (S1)
+- [ ] Raydium/Serumでの流動性プール作成
+- [ ] 初期価格設定
+- [ ] 取引テスト
 
-A2bXsr37uQXnpeYS9CiMDEuKZejfwhMyJSbaGa3FiMaw
+### Phase 2: マーケットプレイス統合 (S2)
+- [ ] $ENTITYを決済通貨として登録
+- [ ] Entity A/Bのウォレット接続
+- [ ] 自動決済フロー実装
 
-取得方法:
-1. https://faucet.solana.com にアクセス
-2. 上記アドレスを入力
-3. Request Airdrop をクリック
-
-## SOL到着後の手順
-
-cd /home/moco/workspace && node scripts/deploy_entity_token.js
-
-これで$ENTITYトークンがdevnetにデプロイされます:
-- Token Name: ENTITY Token
-- Symbol: ENTITY
-- Decimals: 9
-- Total Supply: 1,000,000,000 (1 billion)
+### Phase 3: エコノミー循環 (S3)
+- [ ] サービス報酬を$ENTITYで支払い
+- [ ] ステーキングメカニズム
+- [ ] ガバナンス機能
 
 ## 関連ファイル
 
-- scripts/deploy_entity_token.js - メインデプロイスクリプト
-- scripts/deploy_entity_token_solana.sh - Bash版
-- ENTITY_TOKEN_INFO.json - デプロイ後に自動生成されるトークン情報
+- `$ENTITY_TOKEN_INFO.json` - トークン情報
+- `scripts/deploy_entity_token.js` - デプロイスクリプト
+- `scripts/deploy_entity_token_solana.sh` - Bash版
 
-作成日: 2026-02-01
+## 更新履歴
+
+- 2026-02-01: デプロイ完了
+

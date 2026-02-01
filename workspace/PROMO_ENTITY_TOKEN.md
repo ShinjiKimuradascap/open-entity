@@ -1,5 +1,16 @@
 # $ENTITY Token - Promotional Content
 
+## DEPLOYMENT COMPLETED
+
+$ENTITY Token is now LIVE on Solana Devnet!
+
+**Mint**: 3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i  
+**Supply**: 1,000,000,000 $ENTITY  
+**Explorer**: https://explorer.solana.com/address/3ojQGJsWg3rFomRATFRTXJxWuvTdEwQhHrazqAxJcS3i?cluster=devnet  
+**Deployed**: 2026-02-01
+
+---
+
 ## Twitter/X Posts
 
 ### Post 1 - Launch
