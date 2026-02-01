@@ -143,6 +143,295 @@ class Transaction:
         }
 
 
+class PricingEngine:
+    """
+    動的価格計算エンジン
+    
+    需給バランスに基づく動的価格調整:
+    - 需要高・供給低 → 価格上昇
+    - 需要低・供給高 → 価格下落
+    - リアルタイム市場データ反映
+    """
+    
+    def __init__(self):
+        # 市場データ
+        self.market_data: Dict[str, Dict[str, Any]] = {}
+        # サービス別統計
+        self.service_stats: Dict[str, Dict[str, Any]] = {}
+        # 価格履歴
+        self.price_history: Dict[str, List[Tuple[float, float]]] = {}  # service_type -> [(timestamp, price), ...]
+        
+        # 調整パラメータ
+        self.volatility_factor = 0.1  # 変動係数
+        self.min_price_multiplier = 0.5  # 最小価格倍率
+        self.max_price_multiplier = 3.0  # 最大価格倍率
+        self.smoothing_window = 10  # 平滑化窓
+    
+    def record_transaction(
+        self,
+        service_type: str,
+        price: float,
+        buyer_count: int = 1,
+        seller_count: int = 1
+    ):
+        """
+        取引を記録し市場データを更新
+        
+        Args:
+            service_type: サービスタイプ
+            price: 取引価格
+            buyer_count: 買い手数
+            seller_count: 売り手数
+        """
+        timestamp = time.time()
+        
+        # 価格履歴記録
+        if service_type not in self.price_history:
+            self.price_history[service_type] = []
+        self.price_history[service_type].append((timestamp, price))
+        
+        # 古い履歴を削除（24時間以上前）
+        cutoff = timestamp - 86400
+        self.price_history[service_type] = [
+            (t, p) for t, p in self.price_history[service_type] if t > cutoff
+        ]
+        
+        # サービス統計更新
+        if service_type not in self.service_stats:
+            self.service_stats[service_type] = {
+                "total_transactions": 0,
+                "total_volume": 0.0,
+                "buyer_count": 0,
+                "seller_count": 0,
+                "last_updated": timestamp
+            }
+        
+        stats = self.service_stats[service_type]
+        stats["total_transactions"] += 1
+        stats["total_volume"] += price
+        stats["buyer_count"] += buyer_count
+        stats["seller_count"] += seller_count
+        stats["last_updated"] = timestamp
+    
+    def calculate_base_price(self, service_type: str) -> float:
+        """
+        サービスタイプの基準価格を計算
+        
+        Args:
+            service_type: サービスタイプ
+        
+        Returns:
+            基準価格
+        """
+        # デフォルト基準価格
+        default_prices = {
+            "code_generation": 50.0,
+            "code_review": 30.0,
+            "testing": 25.0,
+            "documentation": 20.0,
+            "consulting": 40.0,
+            "debugging": 35.0,
+            "optimization": 45.0,
+            "general": 30.0
+        }
+        
+        base_price = default_prices.get(service_type, 30.0)
+        
+        # 過去の取引から移動平均を計算
+        if service_type in self.price_history and self.price_history[service_type]:
+            recent_prices = [p for t, p in self.price_history[service_type][-self.smoothing_window:]]
+            if recent_prices:
+                moving_avg = sum(recent_prices) / len(recent_prices)
+                # デフォルトと移動平均の加重平均
+                base_price = 0.3 * base_price + 0.7 * moving_avg
+        
+        return base_price
+    
+    def calculate_demand_supply_ratio(self, service_type: str) -> float:
+        """
+        需給バランスを計算
+        
+        Args:
+            service_type: サービスタイプ
+        
+        Returns:
+            需給比率 (>1: 需要過多、<1: 供給過多)
+        """
+        if service_type not in self.service_stats:
+            return 1.0  # 均衡
+        
+        stats = self.service_stats[service_type]
+        buyer_count = max(1, stats.get("buyer_count", 1))
+        seller_count = max(1, stats.get("seller_count", 1))
+        
+        return buyer_count / seller_count
+    
+    def calculate_dynamic_price(
+        self,
+        service_type: str,
+        base_price: Optional[float] = None,
+        urgency: float = 1.0,  # 緊急度 (1.0-2.0)
+        quality_tier: str = "standard"  # basic, standard, premium
+    ) -> Dict[str, Any]:
+        """
+        動的価格を計算
+        
+        Args:
+            service_type: サービスタイプ
+            base_price: 基準価格（指定なしの場合自動計算）
+            urgency: 緊急度 (1.0=通常, 2.0=最緊急)
+            quality_tier: 品質ティア
+        
+        Returns:
+            価格計算結果の辞書
+        """
+        if base_price is None:
+            base_price = self.calculate_base_price(service_type)
+        
+        # 需給バランスによる調整
+        ds_ratio = self.calculate_demand_supply_ratio(service_type)
+        
+        # 価格調整係数計算
+        # ds_ratio > 1: 需要過多 → 価格上昇
+        # ds_ratio < 1: 供給過多 → 価格下落
+        ds_adjustment = 1.0 + (ds_ratio - 1.0) * self.volatility_factor
+        ds_adjustment = max(self.min_price_multiplier, min(self.max_price_multiplier, ds_adjustment))
+        
+        # 品質ティアによる調整
+        quality_multipliers = {
+            "basic": 0.7,
+            "standard": 1.0,
+            "premium": 1.5
+        }
+        quality_multiplier = quality_multipliers.get(quality_tier, 1.0)
+        
+        # 緊急度による調整
+        urgency_multiplier = min(2.0, max(1.0, urgency))
+        
+        # 最終価格計算
+        adjusted_price = base_price * ds_adjustment * quality_multiplier * urgency_multiplier
+        
+        # 市場データサマリー
+        market_summary = {
+            "base_price": round(base_price, 4),
+            "demand_supply_ratio": round(ds_ratio, 4),
+            "ds_adjustment": round(ds_adjustment, 4),
+            "quality_multiplier": quality_multiplier,
+            "urgency_multiplier": round(urgency_multiplier, 4),
+            "final_price": round(adjusted_price, 4),
+            "service_type": service_type,
+            "quality_tier": quality_tier
+        }
+        
+        return market_summary
+    
+    def get_price_recommendation(
+        self,
+        service_type: str,
+        buyer_budget: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        価格推奨を取得
+        
+        Args:
+            service_type: サービスタイプ
+            buyer_budget: 買い手の予算（任意）
+        
+        Returns:
+            価格推奨情報
+        """
+        recommendations = {}
+        
+        for tier in ["basic", "standard", "premium"]:
+            recommendations[tier] = self.calculate_dynamic_price(
+                service_type=service_type,
+                quality_tier=tier
+            )
+        
+        result = {
+            "service_type": service_type,
+            "recommendations": recommendations,
+            "market_condition": self._get_market_condition(service_type)
+        }
+        
+        if buyer_budget:
+            result["budget_fit"] = self._calculate_budget_fit(service_type, buyer_budget)
+        
+        return result
+    
+    def _get_market_condition(self, service_type: str) -> str:
+        """市場状況を判定"""
+        ds_ratio = self.calculate_demand_supply_ratio(service_type)
+        
+        if ds_ratio > 1.5:
+            return "high_demand"  # 需要過多
+        elif ds_ratio > 1.1:
+            return "moderate_demand"  # やや需要過多
+        elif ds_ratio < 0.7:
+            return "high_supply"  # 供給過多
+        elif ds_ratio < 0.9:
+            return "moderate_supply"  # やや供給過多
+        else:
+            return "balanced"  # 均衡
+    
+    def _calculate_budget_fit(
+        self,
+        service_type: str,
+        budget: float
+    ) -> Dict[str, Any]:
+        """予算適合度を計算"""
+        fit_results = {}
+        
+        for tier in ["basic", "standard", "premium"]:
+            price_info = self.calculate_dynamic_price(
+                service_type=service_type,
+                quality_tier=tier
+            )
+            final_price = price_info["final_price"]
+            
+            if budget >= final_price:
+                fit_results[tier] = {
+                    "affordable": True,
+                    "price": final_price,
+                    "remaining": round(budget - final_price, 4),
+                    "fit_percentage": round((budget - final_price) / budget * 100, 2)
+                }
+            else:
+                fit_results[tier] = {
+                    "affordable": False,
+                    "price": final_price,
+                    "shortage": round(final_price - budget, 4),
+                    "fit_percentage": round(budget / final_price * 100, 2)
+                }
+        
+        return fit_results
+    
+    def get_market_summary(self) -> Dict[str, Any]:
+        """全市場サマリーを取得"""
+        summary = {
+            "timestamp": time.time(),
+            "services": {},
+            "overall": {
+                "total_transactions": 0,
+                "total_volume": 0.0,
+                "active_services": len(self.service_stats)
+            }
+        }
+        
+        for service_type, stats in self.service_stats.items():
+            summary["services"][service_type] = {
+                "transaction_count": stats["total_transactions"],
+                "total_volume": round(stats["total_volume"], 4),
+                "avg_price": round(stats["total_volume"] / max(1, stats["total_transactions"]), 4),
+                "market_condition": self._get_market_condition(service_type),
+                "demand_supply_ratio": round(self.calculate_demand_supply_ratio(service_type), 4)
+            }
+            summary["overall"]["total_transactions"] += stats["total_transactions"]
+            summary["overall"]["total_volume"] += stats["total_volume"]
+        
+        return summary
+
+
 class MatchingEngine:
     """
     AIエージェントマッチングエンジン
@@ -288,6 +577,7 @@ class AutoContractGenerator:
     
     def __init__(self):
         self.matching_engine = MatchingEngine()
+        self.pricing_engine = PricingEngine()  # 動的価格エンジン統合
         self.proposals: Dict[str, Proposal] = {}
         self.offers: Dict[str, List[SellerOffer]] = {}
         self.transactions: Dict[str, Transaction] = {}
@@ -302,8 +592,9 @@ class AutoContractGenerator:
         service_type: str = "general",
         priority: int = 3,
         deadline_hours: int = 24,
-        quality_min: float = 0.7
-    ) -> Proposal:
+        quality_min: float = 0.7,
+        use_dynamic_pricing: bool = True
+    ) -> Tuple[Proposal, Optional[Dict[str, Any]]]:
         """
         サービス提案を作成
         
@@ -315,9 +606,10 @@ class AutoContractGenerator:
             priority: 優先度（1-5）
             deadline_hours: 納期（時間）
             quality_min: 最低品質スコア
+            use_dynamic_pricing: 動的価格計算を使用するか
         
         Returns:
-            Proposalインスタンス
+            (Proposalインスタンス, 価格推奨情報)のタプル
         """
         proposal = Proposal(
             proposal_id=f"prop_{uuid.uuid4().hex[:16]}",
@@ -343,7 +635,15 @@ class AutoContractGenerator:
         )
         self.transactions[transaction.transaction_id] = transaction
         
-        return proposal
+        # 動的価格推奨を取得
+        price_recommendation = None
+        if use_dynamic_pricing:
+            price_recommendation = self.pricing_engine.get_price_recommendation(
+                service_type=service_type,
+                buyer_budget=max_budget
+            )
+        
+        return proposal, price_recommendation
     
     def add_seller_offer(
         self,
@@ -585,6 +885,17 @@ class AutoContractGenerator:
             else:
                 escrow.status = "disputed"
         
+        # 動的価格エンジンに取引を記録（需給バランス更新）
+        if success:
+            proposal = self.proposals.get(transaction.proposal_id)
+            if proposal:
+                self.pricing_engine.record_transaction(
+                    service_type=proposal.service_type,
+                    price=transaction.amount,
+                    buyer_count=1,
+                    seller_count=1
+                )
+        
         return transaction
     
     def get_transaction_status(self, transaction_id: str) -> Optional[Dict[str, Any]]:
@@ -650,20 +961,41 @@ if __name__ == "__main__":
     
     generator = AutoContractGenerator()
     
-    # 1. 提案作成
-    print("1. Creating Proposal:")
-    proposal = generator.create_proposal(
+    # 0. 動的価格エンジンデモ
+    print("0. Dynamic Pricing Engine Demo:")
+    pricing = generator.pricing_engine
+    
+    # サンプル取引データを記録
+    for _ in range(5):
+        pricing.record_transaction("code_generation", 45.0, buyer_count=2, seller_count=1)
+    
+    price_rec = pricing.get_price_recommendation("code_generation", buyer_budget=50.0)
+    print(f"  Service: {price_rec['service_type']}")
+    print(f"  Market Condition: {price_rec['market_condition']}")
+    for tier, info in price_rec['recommendations'].items():
+        print(f"    {tier}: {info['final_price']} $ENTITY (DS ratio: {info['demand_supply_ratio']})")
+    print()
+    
+    # 1. 提案作成（動的価格推奨付き）
+    print("1. Creating Proposal with Dynamic Pricing:")
+    proposal, price_recommendation = generator.create_proposal(
         buyer_id="buyer_agent_001",
         requirements="Generate Python API client for REST service",
         max_budget=50.0,
         service_type="code_generation",
         priority=4,
-        deadline_hours=24
+        deadline_hours=24,
+        use_dynamic_pricing=True
     )
     print(f"  Proposal ID: {proposal.proposal_id}")
     print(f"  Buyer: {proposal.buyer_id}")
     print(f"  Budget: {proposal.max_budget} $ENTITY")
-    print(f"  Status: {proposal.status}\n")
+    print(f"  Status: {proposal.status}")
+    if price_recommendation:
+        print(f"  Price Recommendation Available: Yes")
+        affordable = [t for t, info in price_recommendation['budget_fit'].items() if info['affordable']]
+        print(f"  Affordable Tiers: {', '.join(affordable) if affordable else 'None'}")
+    print()
     
     # 2. 売り手オファー追加
     print("2. Adding Seller Offers:")
