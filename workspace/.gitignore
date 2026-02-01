@@ -73,3 +73,6 @@ temp/
 
 # Session files
 SESSION_LOG_*.md
+
+# GCP Credentials
+gcp_credentials.json
