@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: entity-api
     ports:
-      - "8000:8000"
+      - "8080:8000"
     environment:
       - MOCO_PROFILE=entity
       - MOCO_WORKING_DIRECTORY=/home/moco/workspace
@@ -16,6 +16,7 @@ services:
     volumes:
       - ./workspace:/home/moco/workspace
       - ./data:/home/moco/data
+      - ./api-data:/app/data  # 永続化: エージェント・トークンデータ
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
