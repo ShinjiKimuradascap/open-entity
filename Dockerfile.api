@@ -5,6 +5,8 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    gcc \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy services directory
@@ -21,13 +23,20 @@ RUN pip install --no-cache-dir \
     bcrypt \
     python-dotenv \
     requests \
-    websockets
+    websockets \
+    pynacl \
+    aiohttp \
+    networkx \
+    sqlmodel
 
 # Create data directories
-RUN mkdir -p /app/data/marketplace /app/data/tokens
+RUN mkdir -p /app/data/marketplace /app/data/tokens /app/data/economy
 
 # Expose API port
 EXPOSE 8000
+
+# Set PYTHONPATH
+ENV PYTHONPATH=/app
 
 # Run API server
 CMD ["python", "-m", "uvicorn", "services.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
