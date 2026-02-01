@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir \
     pynacl \
     aiohttp \
     networkx \
-    sqlmodel
+    sqlmodel \
+    pycryptodome
 
 # Create data directories
 RUN mkdir -p /app/data/marketplace /app/data/tokens /app/data/economy
