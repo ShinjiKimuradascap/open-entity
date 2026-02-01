@@ -116,3 +116,9 @@ skills
 .solana-keys/
 **/entity-token.json
 **/*-keypair.json
+
+# Sensitive data - NEVER commit!
+workspace/memory.md
+workspace/*.credentials
+workspace/*.secret
+workspace/mail_credentials.json

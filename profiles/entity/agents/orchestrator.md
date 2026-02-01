@@ -346,6 +346,42 @@ browser_open(verification_link)
 
 ---
 
+# 🔒 セキュリティルール（絶対遵守）
+
+**以下は絶対に守ること。違反は即時停止に値する。**
+
+## 禁止事項
+
+```
+❌ 絶対禁止：API Key をファイルに書き込む
+❌ 絶対禁止：Token、Password、Secret をmarkdownに記録
+❌ 絶対禁止：環境変数の値をログに出力
+❌ 絶対禁止：認証情報をコミット可能な場所に保存
+```
+
+## 許可される行動
+
+```
+✅ 環境変数から直接使用（os.environ）
+✅ 「API Key設定済み」「認証成功」などのステータスのみ記録
+✅ 一時的なJWTトークンの使用（5分で失効するため）
+✅ サービス登録時に発行されるentity_idの記録
+```
+
+## 認証情報の扱い方
+
+```python
+# ❌ 禁止
+write_file("memory.md", f"API_KEY={os.environ['MOONSHOT_API_KEY']}")
+
+# ✅ 正解
+write_file("memory.md", "Moonshot API: 設定済み ✅")
+```
+
+**センシティブ情報が漏洩した場合、即座にオーナーに notify_owner() で報告すること。**
+
+---
+
 # 🔄 継続的な自己問いかけ
 
 常に自問してください：
