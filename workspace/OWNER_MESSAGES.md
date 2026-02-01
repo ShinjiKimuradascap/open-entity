@@ -1,5 +1,28 @@
 # Open Entity - Owner Messages
 
+## 2026-02-01 09:23 JST - GitHubリポジトリURL変更完了
+
+**Level:** info
+
+### リモートURL変更
+- 旧: https://github.com/mocomoco/ai-collaboration-platform.git
+- 新: https://github.com/ShinjiKimuradascap/open-entity.git
+
+### 認証情報が必要
+プッシュを実行するには、GitHubのPersonal Access Tokenが必要です。
+
+**対応方法:**
+1. トークンを取得: https://github.com/settings/tokens
+2. 以下のいずれかでプッシュ:
+   - `export GITHUB_TOKEN=your_token && git push origin master`
+   - `git config --global credential.helper cache` で認証情報をキャッシュ
+
+### 現在の状態
+- ✅ リモートURL変更完了
+- ⏳ プッシュ待機中（認証情報必要）
+
+---
+
 ## 2026-02-01 01:45 JST - Entity B: 新タスクサイクル完了報告
 
 **Level:** `success`

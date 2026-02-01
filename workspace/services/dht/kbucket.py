@@ -30,7 +30,12 @@ class KBucket:
         self.nodes: List[NodeInfo] = []
         self.last_updated = datetime.utcnow()
     
-    def __contains__(self, node_id: NodeID) -> bool:
+    def __contains__(self, node) -> bool:
+        # Handle both NodeID and NodeInfo
+        if isinstance(node, NodeID):
+            node_id = node
+        else:
+            node_id = node.node_id
         return any(n.node_id == node_id for n in self.nodes)
     
     def add_node(self, node: NodeInfo) -> bool:
@@ -72,7 +77,7 @@ class KBucket:
         """Split bucket into two at midpoint"""
         mid = (self.min_distance + self.max_distance) // 2
         left = KBucket(self.min_distance, mid, self.k)
-        right = KBucket(mid, self.max_distance, self.k)
+        right = KBucket(mid + 1, self.max_distance, self.k)
         
         for node in self.nodes:
             # Use node's ID bit length for distance

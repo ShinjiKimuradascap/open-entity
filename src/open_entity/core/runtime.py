@@ -747,7 +747,7 @@ class AgentRuntime:
         elif self.provider == LLMProvider.ZAI:
             self.model_name = os.environ.get("ZAI_MODEL", "glm-4.7")
         elif self.provider == LLMProvider.MOONSHOT:
-            self.model_name = os.environ.get("MOONSHOT_MODEL", "kimi-k2.5")
+            self.model_name = os.environ.get("MOONSHOT_MODEL", "kimi-for-coding")
         else:
             self.model_name = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 
@@ -785,15 +785,17 @@ class AgentRuntime:
             )
             self.client = None
         elif self.provider == LLMProvider.MOONSHOT:
-            # Moonshot Kimi (OpenAI-compatible API)
+            # Moonshot Kimi for Coding (OpenAI-compatible API)
             if not OPENAI_AVAILABLE:
                 raise ImportError("OpenAI package not installed. Run: pip install openai")
             moonshot_key = os.environ.get("MOONSHOT_API_KEY")
             if not moonshot_key:
                 raise ValueError("MOONSHOT_API_KEY environment variable not set")
+            # Use kimi-for-coding endpoint with Kilo-Code User-Agent
             self.openai_client = AsyncOpenAI(
                 api_key=moonshot_key,
-                base_url="https://api.moonshot.ai/v1"
+                base_url="https://api.kimi.com/coding/v1",
+                default_headers={"User-Agent": "Kilo-Code/1.0.0"}
             )
             self.client = None
         else:

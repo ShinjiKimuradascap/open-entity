@@ -30,6 +30,28 @@ from .bidding import (
     BidRequest,
     BidStatus
 )
+from .auto_negotiation import (
+    AutoNegotiationEngine,
+    QuoteDecision,
+    NegotiationStatus,
+    NegotiationContext,
+    QuoteEvaluation,
+    CounterOffer
+)
+from .intent_processor import (
+    IntentProcessor,
+    TaskType,
+    SubTask,
+    DecomposedIntent,
+    ServiceMatch
+)
+from .auto_escrow import (
+    AutonomousEscrowFlow,
+    EscrowFlowStatus,
+    VerificationCriteria,
+    VerificationResult,
+    EscrowFlowRecord
+)
 
 __all__ = [
     "ServiceRegistry",
@@ -60,4 +82,20 @@ __all__ = [
     "Bid",
     "BidRequest",
     "BidStatus",
+    "AutoNegotiationEngine",
+    "QuoteDecision",
+    "NegotiationStatus",
+    "NegotiationContext",
+    "QuoteEvaluation",
+    "CounterOffer",
+    "IntentProcessor",
+    "TaskType",
+    "SubTask",
+    "DecomposedIntent",
+    "ServiceMatch",
+    "AutonomousEscrowFlow",
+    "EscrowFlowStatus",
+    "VerificationCriteria",
+    "VerificationResult",
+    "EscrowFlowRecord",
 ]

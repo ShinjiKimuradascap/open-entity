@@ -15,6 +15,8 @@ Usage:
 
 __version__ = "1.2.0"
 
+import hashlib
+
 # Core types
 from .node import NodeID, NodeInfo
 from .kbucket import KBucket
@@ -26,30 +28,34 @@ from .router import DHTRouter, DHTValue
 # Discovery
 from .discovery import DHTDiscovery
 
-# Backward compatibility - deprecated imports from services/dht.py
-# These will be removed in v1.3, migrate to DHTRouter
-try:
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-    from dht import KademliaDHT, DHTPeerDiscovery, compute_dht_key
-    _DEPRECATED_AVAILABLE = True
-except ImportError:
-    _DEPRECATED_AVAILABLE = False
-    KademliaDHT = None
-    DHTPeerDiscovery = None
-    compute_dht_key = None
+def compute_dht_key(key: str) -> bytes:
+    """
+    Compute DHT key hash using SHA-1.
+    
+    Args:
+        key: String key to hash
+        
+    Returns:
+        20-byte SHA-1 hash
+    """
+    return hashlib.sha1(key.encode('utf-8')).digest()
+
+
+# Backward compatibility aliases
+# These will be removed in v1.3, migrate to DHTRouter/DHTDiscovery
+KademliaDHT = DHTRouter
+DHTPeerDiscovery = DHTDiscovery
 
 __all__ = [
     "NodeID",
-    "NodeInfo", 
+    "NodeInfo",
     "KBucket",
     "RoutingTable",
     "DHTRouter",
     "DHTValue",
     "DHTDiscovery",
-    # Deprecated - for backward compatibility
-    "KademliaDHT",
-    "DHTPeerDiscovery", 
     "compute_dht_key",
+    # Backward compatibility aliases
+    "KademliaDHT",
+    "DHTPeerDiscovery",
 ]

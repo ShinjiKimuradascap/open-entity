@@ -95,6 +95,13 @@ Message types: handshake, status_report, heartbeat, capability_query, wake_up, t
 - `POST /token/backup` - Create token data backup (Admin JWT)
 - `GET /token/backups` - List token backups (Admin JWT)
 
+### Voice Synthesis (New Skill)
+- `POST /skills/voice/speak` - Speak text using macOS say command (JWT)
+  - Parameters: `text` (required), `voice` (optional, default: Kyoko), `rate` (optional, default: 180)
+  - Supported voices: Kyoko (Japanese female), Otoya (Japanese male), Samantha (English)
+- `GET /skills/voice/voices` - List available voices
+  - Query: `language` (optional filter, e.g., ja, en)
+
 ### Admin Economy Management
 - `POST /admin/economy/mint` - Mint tokens via economy system (Admin JWT)
 - `POST /admin/economy/burn` - Burn tokens (Admin JWT)
@@ -206,6 +213,9 @@ All endpoints except `/health` and `/docs` are rate-limited using the Token Buck
 - Added WebSocket endpoint documentation (/ws/peers)
 - Added Token Economy alternate paths (/tokens/*)
 - Fixed version alignment with implementation
+
+### v0.5.2 (2026-02-01)
+- Added Voice Synthesis skill (Japanese support via macOS say command)
 
 ### v0.5.1 (2026-02-01)
 - Added DHT API endpoints documentation

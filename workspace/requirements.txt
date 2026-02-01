@@ -39,3 +39,9 @@ rpcudp>=4.0.0
 # Utilities
 python-multipart>=0.0.6
 websockets>=12.0
+
+# SNS Automation (Email, SMS, Social Media)
+sendgrid>=6.10.0
+twilio>=8.10.0
+mastodon.py>=1.8.0
+requests-oauthlib>=1.3.0

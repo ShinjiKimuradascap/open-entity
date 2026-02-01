@@ -40,7 +40,7 @@ DEFAULT_MODELS = {
     PROVIDER_OPENROUTER: "moonshotai/kimi-k2.5",
     PROVIDER_GEMINI: "gemini-2.0-flash",
     PROVIDER_OPENAI: "gpt-4o",
-    PROVIDER_MOONSHOT: "kimi-k2.5",
+    PROVIDER_MOONSHOT: "kimi-for-coding",
 }
 
 # 分析用（軽量）モデル
@@ -49,7 +49,7 @@ ANALYZER_MODELS = {
     PROVIDER_OPENROUTER: "google/gemini-3-flash-preview",
     PROVIDER_GEMINI: "gemini-2.0-flash",
     PROVIDER_OPENAI: "gpt-4o-mini",
-    PROVIDER_MOONSHOT: "kimi-k2.5",
+    PROVIDER_MOONSHOT: "kimi-for-coding",
 }
 
 

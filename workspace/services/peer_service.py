@@ -1710,7 +1710,8 @@ class PeerService:
         connection_pool_keepalive_timeout: int = 30,
         dht_registry: Optional[Any] = None,
         use_dht_discovery: bool = False,
-        session_manager: Optional['NewSessionManager'] = None
+        session_manager: Optional['NewSessionManager'] = None,
+        api_server_url: Optional[str] = None
     ) -> None:
         """PeerServiceを初期化
         
@@ -1756,7 +1757,7 @@ class PeerService:
             enable_verification = False
         
         # API Server統合用設定
-        self.api_server_url: Optional[str] = os.environ.get("API_SERVER_URL")
+        self.api_server_url: Optional[str] = api_server_url or os.environ.get("API_SERVER_URL")
         self.api_key: Optional[str] = os.environ.get("API_KEY")
         self.jwt_token: Optional[str] = None
         self.jwt_expires_at: Optional[datetime] = None
@@ -1846,7 +1847,7 @@ class PeerService:
                 logger.info(f"SessionManager initialized (TTL: {session_ttl_seconds}s)")
 
     @property
-    def session_manager(self) -> Optional[NewSessionManager]:
+    def session_manager(self) -> Optional['NewSessionManager']:
         """SessionManagerインスタンスを取得"""
         return self._session_manager
         
@@ -5619,7 +5620,8 @@ def init_service(
     enable_encryption: bool = True,
     require_signatures: bool = True,
     dht_registry=None,
-    use_dht_discovery: bool = False
+    use_dht_discovery: bool = False,
+    api_server_url: Optional[str] = None
 ) -> PeerService:
     """サービスを初期化
 
@@ -5650,7 +5652,8 @@ def init_service(
         enable_queue=enable_queue, enable_heartbeat=enable_heartbeat,
         registry=registry, private_key_hex=private_key_hex,
         enable_encryption=enable_encryption, require_signatures=require_signatures,
-        dht_registry=dht_registry, use_dht_discovery=use_dht_discovery
+        dht_registry=dht_registry, use_dht_discovery=use_dht_discovery,
+        api_server_url=api_server_url
     )
     return _service
 

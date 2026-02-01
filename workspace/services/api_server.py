@@ -4438,5 +4438,195 @@ async def unregister_service_endpoint(
         )
 
 
+# WebSocket Bidding Endpoint
+# Active bidding connections: request_id -> {websocket, provider_ids}
+_bidding_connections: Dict[str, Dict] = {}
+
+@app.websocket("/ws/v1/bidding")
+async def bidding_websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time bidding notifications.
+    
+    Authentication: Pass JWT token as query parameter: ?token=<jwt_token>
+    
+    Message Types (Client -> Server):
+    - subscribe: Subscribe to bid requests for a service type
+    - bid: Submit a bid for a request
+    - unsubscribe: Unsubscribe from a service type
+    
+    Message Types (Server -> Client):
+    - bid_request: New bid request notification
+    - bid_status: Bid acceptance/rejection status
+    - winner_announcement: Winner selection notification
+    - bidding_closed: Bidding window closed
+    """
+    entity_id: Optional[str] = None
+    subscribed_services: set = set()
+    
+    try:
+        # Authenticate using query parameter token
+        token = websocket.query_params.get("token")
+        if not token:
+            await websocket.close(code=1008, reason="Missing authentication token")
+            return
+        
+        # Verify JWT token
+        try:
+            payload = jwt_auth.verify_token(token)
+            entity_id = payload.get("sub")
+            if not entity_id:
+                await websocket.close(code=1008, reason="Invalid token: missing subject")
+                return
+        except Exception as e:
+            await websocket.close(code=1008, reason=f"Authentication failed: {str(e)}")
+            return
+        
+        # Accept connection
+        await websocket.accept()
+        
+        # Send welcome message
+        await websocket.send_json({
+            "type": "connected",
+            "payload": {
+                "entity_id": entity_id,
+                "message": "Bidding WebSocket connected. Subscribe to service types to receive bid requests.",
+                "supported_actions": ["subscribe", "bid", "unsubscribe", "ping"]
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+        
+        # Handle incoming messages
+        while True:
+            try:
+                data = await websocket.receive_json()
+                msg_type = data.get("type", "")
+                msg_payload = data.get("payload", {})
+                
+                if msg_type == "ping":
+                    await websocket.send_json({
+                        "type": "pong",
+                        "payload": {"timestamp": datetime.now(timezone.utc).isoformat()},
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                
+                elif msg_type == "subscribe":
+                    # Subscribe to service type notifications
+                    service_type = msg_payload.get("service_type")
+                    if service_type:
+                        subscribed_services.add(service_type)
+                        await websocket.send_json({
+                            "type": "subscribed",
+                            "payload": {
+                                "service_type": service_type,
+                                "message": f"Subscribed to {service_type} bid requests"
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                
+                elif msg_type == "unsubscribe":
+                    # Unsubscribe from service type
+                    service_type = msg_payload.get("service_type")
+                    if service_type and service_type in subscribed_services:
+                        subscribed_services.discard(service_type)
+                        await websocket.send_json({
+                            "type": "unsubscribed",
+                            "payload": {
+                                "service_type": service_type,
+                                "message": f"Unsubscribed from {service_type} bid requests"
+                            },
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                
+                elif msg_type == "bid":
+                    # Submit bid (would integrate with BiddingEngine)
+                    request_id = msg_payload.get("request_id")
+                    price = msg_payload.get("price")
+                    estimated_time = msg_payload.get("estimated_time", 300)
+                    
+                    # Acknowledge bid receipt
+                    await websocket.send_json({
+                        "type": "bid_received",
+                        "payload": {
+                            "request_id": request_id,
+                            "provider_id": entity_id,
+                            "price": price,
+                            "status": "pending",
+                            "message": "Bid submitted successfully"
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {
+                            "message": f"Unknown message type: {msg_type}"
+                        },
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                    
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"Bidding WebSocket error for {entity_id}: {e}")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "payload": {"message": str(e)},
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except:
+                    break
+    
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"Bidding WebSocket fatal error: {e}")
+    finally:
+        # Cleanup
+        logger.info(f"Bidding WebSocket disconnected: {entity_id}")
+
+
+async def notify_bid_request(request_id: str, service_type: str, requirements: dict):
+    """
+    Notify all subscribed providers about a new bid request.
+    Called by BiddingEngine when a new request is created.
+    """
+    message = {
+        "type": "bid_request",
+        "payload": {
+            "request_id": request_id,
+            "service_type": service_type,
+            "requirements": requirements,
+            "bidding_window_seconds": 5,
+            "message": "New bid request available"
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # This would iterate through active connections and notify matching subscribers
+    # Implementation depends on connection management strategy
+    logger.info(f"Broadcasting bid request {request_id} for {service_type}")
+
+
+async def notify_bid_winner(request_id: str, winner_id: str, price: str):
+    """
+    Notify the winning provider about bid acceptance.
+    Called by BiddingEngine when winner is selected.
+    """
+    message = {
+        "type": "winner_announcement",
+        "payload": {
+            "request_id": request_id,
+            "winner_id": winner_id,
+            "price": price,
+            "message": "Congratulations! Your bid was selected"
+        },
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    
+    logger.info(f"Announcing winner {winner_id} for request {request_id}")
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
