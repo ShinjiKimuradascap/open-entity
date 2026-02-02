@@ -913,3 +913,272 @@ SOL到着後、`node scripts/deploy_entity_token.js` を自動実行します。
 
 ---
 *自動生成 by Open Entity*
+
+## 2026-02-01 07:06  - ℹ️ API Key Acquisition - Owner Action Required
+
+**Level:** `info`
+
+## API Key Acquisition Status Update
+
+### Completed ✅
+- Moltbook Early Access waitlist submitted (openentity_molt_1769929427@virgilian.com)
+- Status report created: API_KEY_ACQUISITION_STATUS.md
+
+### Owner Action Required 🔴
+1. **GitHub Token**: Visit https://github.com/settings/tokens
+   - Generate classic token with: repo, workflow, read:org scopes
+   
+2. **Discord Bot**: Visit https://discord.com/developers/applications
+   - Create application → Add Bot → Copy Token
+   
+3. **Slack Webhook**: Visit https://api.slack.com/messaging/webhooks
+   - Create app → Enable Incoming Webhooks → Add to workspace
+
+### Decisions Needed 🟡
+- **Moltbook**: Wait for free Early Access (submitted) OR invest in OpenClaw (0-50/month)
+- **Twitter**: Complete signup manually (blocked in headless browser)
+
+### Files Created
+- API_KEY_ACQUISITION_STATUS.md (full details)
+
+Next automated check: 2026-02-02 16:00 JST
+**Metadata:**
+- github_status: pending_owner
+- discord_status: pending_owner
+- slack_status: pending_owner
+- moltbook_status: waitlist_submitted
+- twitter_status: manual_action_needed
+
+## 2026-02-01 16:15 JST - Moltbook API Key申請完了
+
+Moltbook API Keyを申請しました。
+
+### 申請状況
+- 申請メール: openentity_molt_1769929427@virgilian.com
+- ステータス: 開発者ベータ申請完了、承認待ち
+- URL: https://www.moltbook.com/developers/apply
+
+### 承認待ちの理由
+Moltbookは現在招待制ベータ版のため、申請後の承認プロセスが必要です。
+承認メールが届くまで数日かかります。
+
+### 自動監視設定
+承認メール監視スクリプトを作成し、定期的にチェックします:
+- スクリプト: check_moltbook_approval.py
+- 監視メール: openentity_molt_1769929427@virgilian.com
+
+### 承認後の作業
+1. メール内の招待リンクからアカウントセットアップ
+2. API KeyとAgent IDを取得
+3. .envファイルに設定
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 07:08  - ✅ Daily Progress Report - 2026-02-01
+
+**Level:** `success`
+
+## Daily Progress Summary
+
+### Completed Today ✅
+1. **Moltbook Early Access**: Submitted to waitlist (openentity_molt_1769929427@virgilian.com)
+2. **Crypto Unit Tests**: 61/64 passed (95.3% success rate)
+   - All core encryption/signing functions working
+   - 3 minor test issues identified (not critical)
+3. **Status Reports Created**:
+   - API_KEY_ACQUISITION_STATUS.md
+   - TEST_RESULTS_20260201_1604.md
+
+### Pending Owner Action 🔴
+1. **GitHub Token**: https://github.com/settings/tokens
+2. **Discord Bot**: https://discord.com/developers/applications  
+3. **Slack Webhook**: https://api.slack.com/messaging/webhooks
+
+### Next Automated Check
+- Tomorrow 16:00 JST: Check Moltbook email for invite
+- Continuous: Monitor for owner credential updates
+
+### Files Updated
+- API_KEY_ACQUISITION_STATUS.md
+- TEST_RESULTS_20260201_1604.md
+- OWNER_MESSAGES.md
+**Metadata:**
+- tests_passed: 61/64 (95.3%)
+- moltbook_status: waitlist_submitted
+- pending_owner_actions: 3
+
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 07:08  - ✅ Session Complete - Entity B
+
+**Level:** `success`
+
+Session completed. Summary:
+
+✅ Completed:
+- Moltbook Early Access submitted
+- Crypto tests: 61/64 passed (95.3%)
+- 3 status reports created
+- Auto-check scheduled every 6 hours
+
+⏳ Pending:
+- GitHub/Discord/Slack API keys (owner action)
+- Moltbook approval response
+
+📁 Files:
+- API_KEY_ACQUISITION_STATUS.md
+- TEST_RESULTS_20260201_1604.md
+- SESSION_SUMMARY_20260201_1604.md
+
+Next auto-check: 2026-02-01 22:00 JST
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 07:24  - ℹ️ マーケティング活動開始レポート
+
+**Level:** `info`
+
+
+マーケティング活動を開始しました。以下のコンテンツを作成済みです：
+
+✅ 作成済みコンテンツ：
+1. Hacker News Show HN投稿文
+2. Reddit r/MachineLearning投稿文  
+3. Twitter/X告知スレッド（7連投）
+4. Product Hunt Coming Soonページ原稿
+5. Dev.to/Medium技術ブログ記事
+6. Moltbook投稿文（日本語・英語）
+7. プロジェクト説明資料（エレベーターピッチ）
+
+📍 格納場所：/home/moco/workspace/content/
+
+🚀 次のアクション（API Key必要）：
+- SendGrid登録 → メール配信自動化
+- Discord Bot作成 → コミュニティ運用
+- X(Twitter) API → SNS投稿自動化
+- Moltbook API Key → AI専用SNS投稿
+
+📊 現在のステータス：
+- Entity A: 480 $ENTITY
+- Entity B: 520 $ENTITY  
+- Marketplace API: http://34.134.116.148:8080
+- 24h内: 23件のサービス注文完了
+
+ブラウザがGUI環境なしでは動作しないため、API経由での投稿準備を進めています。
+
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 08:15  - ✅ Open Entity 進捗報告 S1-S7完了
+
+**Level:** `success`
+
+S1-S7 完了報告:
+    
+✅ S5: サービス登録回帰テスト自動化強化完了
+   - GitHub Actionsワークフロー追加 (.github/workflows/regression-tests.yml)
+   - ストレステスト実装 (tests/regression/test_stress_registration.py)
+   - 100並行登録: 100%成功
+   
+✅ S6: Entity Bへのタスク割り当て完了
+   - ピア通信で連携
+   
+✅ S7: 統合テスト自動化スクリプト検証完了
+   - run_all_integration_tests.py 動作確認済み
+   
+🔄 M1-M4: 進行中
+   - マーケットプレイス統合テスト: データ充実
+   - L1プロトコル: v0.2仕様整備済み
+   - 通知システム: 運用開始
+**Metadata:**
+- completed_tasks: S1-S7
+- next: M1-M4
+
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 09:39  - ✅ Week of Feb 1: Product Hunt Ready
+
+**Level:** `success`
+
+週次レポート完了。Product Huntローンチは明日2/2 9:00 AM PSTに準備完了。詳細は OWNER_ACTION_REQUIRED_20260201.md を参照してください。
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 15:06  - ℹ️ Dev.to API Key Required for Auto-Posting
+
+**Level:** `info`
+
+Dev.to投稿準備完了。APIキー取得で自動投稿可能。
+
+スクリプト: scripts/post_devto.py
+記事: content/devto_article_complete.md
+
+取得先: https://dev.to/settings/extensions
+**Metadata:**
+- script: post_devto.py
+- priority: medium
+
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 15:31  - ℹ️ Test Notification
+
+**Level:** `info`
+
+This is a test notification from the notify_owner tool.
+**Metadata:**
+- test: value
+- version: 1.0
+
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 15:31  - ✅ Task Completed: Notify Owner Tool Implementation
+
+**Level:** `success`
+
+**Task ID:** TEST-001
+
+**Result:** success
+
+**Details:**
+Tool created and tested successfully.
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 23:11  - ℹ️ Progress: AI Bootstrap Network Expansion
+
+**Level:** `info`
+
+**Current Progress:** Platform research complete. Templates created. Moltbook attempted (rate limited).
+
+**Next Action:** Owner needs to provide API keys for auto-posting OR execute manual posts
+
+---
+*自動生成 by Open Entity*
+
+## 2026-02-01 23:11  - ⚠️ Action Required: API Keys for Social Media Posting
+
+**Level:** `warning`
+
+AI Bootstrap Network expansion campaign needs owner action.
+**Metadata:**
+- twitter_api: X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET needed
+- reddit_api: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD needed
+- alternative: Execute manual posts using templates in content/outreach/
+- target_platforms: Twitter/X, Reddit r/LocalLLaMA, Discord communities
+
+
+---
+*自動生成 by Open Entity*

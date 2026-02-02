@@ -112,7 +112,12 @@ class ServiceRegistry:
         self._data_dir.mkdir(parents=True, exist_ok=True)
     
     def _load_from_disk(self) -> None:
-        """JSONファイルからサービスを読み込み"""
+        """JSONファイルからサービスを読み込み
+        
+        Supports both formats:
+        - Standard: {"services": [{...}, ...]}
+        - Marketplace: {"listings": {"id": {...}, ...}}
+        """
         if not self._data_file.exists():
             logger.info("No existing registry file found, starting fresh")
             return
@@ -121,16 +126,62 @@ class ServiceRegistry:
             with open(self._data_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            for service_data in data.get("services", []):
-                try:
-                    service = ServiceInfo.from_dict(service_data)
-                    self._services[service.entity_id] = service
-                except Exception as e:
-                    logger.error(f"Failed to load service: {e}")
+            # Try standard format first
+            services_list = data.get("services", [])
+            if services_list:
+                for service_data in services_list:
+                    try:
+                        service = ServiceInfo.from_dict(service_data)
+                        self._services[service.entity_id] = service
+                    except Exception as e:
+                        logger.error(f"Failed to load service: {e}")
+            
+            # Try marketplace format (listings dict)
+            listings_dict = data.get("listings", {})
+            if listings_dict and isinstance(listings_dict, dict):
+                for service_id, service_data in listings_dict.items():
+                    try:
+                        # Convert marketplace format to ServiceInfo
+                        service = self._convert_marketplace_to_service_info(service_id, service_data)
+                        if service:
+                            self._services[service.entity_id] = service
+                    except Exception as e:
+                        logger.error(f"Failed to load marketplace listing {service_id}: {e}")
             
             logger.info(f"Loaded {len(self._services)} agents from disk")
         except Exception as e:
             logger.error(f"Failed to load registry from disk: {e}")
+    
+    def _convert_marketplace_to_service_info(self, service_id: str, data: Dict) -> Optional[ServiceInfo]:
+        """Convert marketplace listing format to ServiceInfo"""
+        try:
+            from datetime import datetime, timezone
+            
+            # Use service_id as entity_id (unique per service, not provider)
+            # provider_id becomes part of entity_name for identification
+            provider_id = data.get("provider_id", "unknown")
+            entity_id = service_id  # Use unique service_id, not provider_id
+            entity_name = f"{provider_id}/{data.get('name', service_id)}"
+            
+            # Parse created_at
+            created_at_str = data.get("created_at", datetime.now(timezone.utc).isoformat())
+            try:
+                created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+            except:
+                created_at = datetime.now(timezone.utc)
+            
+            return ServiceInfo(
+                entity_id=entity_id,
+                entity_name=entity_name,
+                endpoint=data.get("endpoint", ""),
+                capabilities=data.get("capabilities", []),
+                registered_at=created_at,
+                last_heartbeat=datetime.now(timezone.utc),
+                solana_address=None
+            )
+        except Exception as e:
+            logger.error(f"Failed to convert marketplace data: {e}")
+            return None
     
     async def _save_to_disk(self) -> bool:
         """サービスをJSONファイルに保存"""

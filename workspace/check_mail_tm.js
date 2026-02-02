@@ -1,8 +1,8 @@
 // Check mail.tm for verification emails
 const https = require('https');
 
-const EMAIL = 'open-entity-1769905908@virgilian.com';
-const PASSWORD = 'EntityPass2026!';
+const EMAIL = 'entity-ai-1769910973905@virgilian.com';
+const PASSWORD = 'EntityAI1769910973905!';
 
 // Get token (account should already exist)
 const getToken = () => new Promise((resolve, reject) => {

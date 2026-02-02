@@ -216,10 +216,45 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           
+  regression-tests:
+    runs-on: ubuntu-latest
+    name: Regression Tests
+    needs: phase1-basic
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+          
+      - name: Run Regression Tests
+        run: |
+          python -m pytest tests/regression/ -v --tb=short
+          
+      - name: Notify Slack on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: '❌ Regression tests failed (Python ${{ matrix.python-version }})'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
   coverage:
     runs-on: ubuntu-latest
     name: Coverage Report
-    needs: [phase1-basic, phase2-crypto, phase2-l2-bootstrap, phase3-peer, phase5-l1-l2-integration]
+    needs: [phase1-basic, phase2-crypto, phase2-l2-bootstrap, phase3-peer, phase5-l1-l2-integration, regression-tests]
     strategy:
       matrix:
         python-version: ['3.10', '3.11']

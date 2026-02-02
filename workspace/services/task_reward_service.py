@@ -174,7 +174,7 @@ class TaskRewardService:
             VerificationResult: 検証結果
         """
         # 検証実行
-        result = self.verifier.verify_completion(task, response)
+        result = self.verifier.verify_completion(task.task_id, response)
         
         # 検証合格時に報酬を発行
         if self.auto_reward and result.verified:

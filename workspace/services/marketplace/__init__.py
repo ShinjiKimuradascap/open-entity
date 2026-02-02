@@ -12,7 +12,8 @@ from .matching_engine import (
     MatchCriteria,
     MatchScore,
     MatchResult,
-    MatchStrategy
+    MatchStrategy,
+    create_matching_engine
 )
 from .transaction_protocol import (
     TransactionProtocol,
@@ -70,6 +71,7 @@ __all__ = [
     "MatchScore",
     "MatchResult",
     "MatchStrategy",
+    "create_matching_engine",
     "TransactionProtocol",
     "TaskProposal",
     "TaskQuote",

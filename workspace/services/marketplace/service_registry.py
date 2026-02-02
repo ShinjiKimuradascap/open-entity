@@ -437,6 +437,24 @@ class ServiceRegistry:
         except Exception as e:
             print(f"Error loading registry: {e}")
     
+    async def reload_from_storage(self) -> bool:
+        """Reload registry from storage file (public method for hot reload)"""
+        async with self._lock:
+            try:
+                # Clear existing data
+                self._listings.clear()
+                self._provider_services.clear()
+                self._type_index = {t: set() for t in ServiceType}
+                self._capability_index.clear()
+                self._tag_index.clear()
+                
+                # Reload from file
+                self._load_from_storage()
+                return True
+            except Exception as e:
+                print(f"Error reloading registry: {e}")
+                return False
+    
     async def get_stats(self) -> dict:
         """Get registry statistics"""
         async with self._lock:

@@ -150,7 +150,7 @@ class NotificationManager:
         
         # Email
         try:
-            from . import email as email_module
+            from . import mail_sender as email_module
             self.channel_handlers[NotificationChannel.EMAIL] = self._send_email
         except ImportError:
             pass

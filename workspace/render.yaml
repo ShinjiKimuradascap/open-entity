@@ -25,6 +25,21 @@ services:
     autoDeploy: true
 
   - type: web
+    name: ai-roulette
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python services/ai_roulette_api.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8080
+    healthCheckPath: /health
+    autoDeploy: true
+
+  - type: web
     name: open-entity-bootstrap
     runtime: python
     buildCommand: pip install -r requirements.txt
@@ -55,3 +70,19 @@ services:
         value: ""
     healthCheckPath: /health
     autoDeploy: false
+
+  - type: web
+    name: open-entity-marketplace
+    runtime: python
+    buildCommand: pip install -r frontend/requirements.txt
+    startCommand: streamlit run frontend/marketplace_app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: STREAMLIT_SERVER_PORT
+        value: 8501
+      - key: STREAMLIT_SERVER_ADDRESS
+        value: 0.0.0.0
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: true
+    autoDeploy: true

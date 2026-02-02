@@ -89,6 +89,11 @@ class BootstrapServer:
         self._peers: Dict[str, PeerEntry] = {}
         self._lock = asyncio.Lock()
         
+        # メッセージストア（ストア＆フォワード用）
+        self._message_store: Dict[str, List[Dict]] = {}
+        self._message_lock = asyncio.Lock()
+        self._max_stored_messages = 100  # エンティティあたり最大メッセージ数
+        
         # 統計
         self._stats = {
             "total_registered": 0,
@@ -213,6 +218,117 @@ class BootstrapServer:
                 "peers": len(self._peers),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
+        
+        @self.app.post("/message")
+        async def relay_message(request: Request):
+            """ピア間メッセージを中継
+            
+            送信者→Bootstrap Server→受信者のエンドポイントに転送
+            """
+            try:
+                data = await request.json()
+                
+                sender_id = data.get("sender_id")
+                recipient_id = data.get("recipient_id")
+                message = data.get("message")
+                message_type = data.get("type", "text")
+                
+                if not sender_id or not recipient_id or not message:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Missing sender_id, recipient_id, or message"
+                    )
+                
+                # 受信者を検索
+                recipient = await self.find_peer(recipient_id)
+                if not recipient:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Recipient {recipient_id} not found"
+                    )
+                
+                # 送信者を検証（オプション）
+                sender = await self.find_peer(sender_id)
+                
+                # メッセージにメタデータを追加
+                message_envelope = {
+                    "sender_id": sender_id,
+                    "recipient_id": recipient_id,
+                    "message": message,
+                    "type": message_type,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "relayed_by": "bootstrap-server",
+                    "sender_verified": sender is not None
+                }
+                
+                # 受信者のエンドポイントに転送を試行
+                import aiohttp
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        recipient_endpoint = f"{recipient.address}/message"
+                        async with session.post(
+                            recipient_endpoint,
+                            json=message_envelope,
+                            timeout=aiohttp.ClientTimeout(total=10)
+                        ) as response:
+                            if response.status == 200:
+                                return JSONResponse({
+                                    "status": "delivered",
+                                    "recipient": recipient_id,
+                                    "recipient_endpoint": recipient_endpoint,
+                                    "timestamp": message_envelope["timestamp"]
+                                })
+                            else:
+                                # 直接配送失敗、ストア＆フォワード
+                                stored = await self.store_message(
+                                    recipient_id, message_envelope
+                                )
+                                return JSONResponse({
+                                    "status": "stored",
+                                    "recipient": recipient_id,
+                                    "reason": f"Direct delivery failed (HTTP {response.status})",
+                                    "stored": stored,
+                                    "timestamp": message_envelope["timestamp"]
+                                })
+                except Exception as e:
+                    # 転送失敗、ストア＆フォワード
+                    stored = await self.store_message(
+                        recipient_id, message_envelope
+                    )
+                    return JSONResponse({
+                        "status": "stored",
+                        "recipient": recipient_id,
+                        "reason": f"Direct delivery error: {str(e)}",
+                        "stored": stored,
+                        "timestamp": message_envelope["timestamp"]
+                    })
+                    
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Message relay error: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.get("/messages/{entity_id}")
+        async def get_messages(entity_id: str, limit: int = Query(10, ge=1, le=100)):
+            """保存されているメッセージを取得（ストア＆フォワード）"""
+            messages = await self.get_stored_messages(entity_id, limit)
+            return JSONResponse({
+                "entity_id": entity_id,
+                "messages": messages,
+                "count": len(messages)
+            })
+        
+        @self.app.delete("/messages/{entity_id}")
+        async def clear_messages(entity_id: str):
+            """メッセージをクリア"""
+            cleared = await self.clear_stored_messages(entity_id)
+            return JSONResponse({
+                "entity_id": entity_id,
+                "cleared": cleared
+            })
     
     async def register_peer(
         self,
@@ -311,6 +427,59 @@ class BootstrapServer:
                 self._peers[entity_id].status = PeerStatus.ACTIVE
                 return True
             return False
+    
+    async def store_message(self, entity_id: str, message: Dict) -> bool:
+        """メッセージをストア（ストア＆フォワード）
+        
+        Args:
+            entity_id: 受信者エンティティID
+            message: メッセージデータ
+            
+        Returns:
+            保存成功ならTrue
+        """
+        async with self._message_lock:
+            if entity_id not in self._message_store:
+                self._message_store[entity_id] = []
+            
+            # 最大数チェック、超えたら古いものから削除
+            if len(self._message_store[entity_id]) >= self._max_stored_messages:
+                self._message_store[entity_id] = self._message_store[entity_id][-self._max_stored_messages + 1:]
+            
+            self._message_store[entity_id].append(message)
+            logger.info(f"Stored message for {entity_id}")
+            return True
+    
+    async def get_stored_messages(self, entity_id: str, limit: int = 10) -> List[Dict]:
+        """保存されているメッセージを取得
+        
+        Args:
+            entity_id: エンティティID
+            limit: 取得件数
+            
+        Returns:
+            メッセージリスト
+        """
+        async with self._message_lock:
+            messages = self._message_store.get(entity_id, [])
+            return messages[-limit:] if messages else []
+    
+    async def clear_stored_messages(self, entity_id: str) -> int:
+        """保存されているメッセージをクリア
+        
+        Args:
+            entity_id: エンティティID
+            
+        Returns:
+            クリアしたメッセージ数
+        """
+        async with self._message_lock:
+            if entity_id in self._message_store:
+                count = len(self._message_store[entity_id])
+                del self._message_store[entity_id]
+                logger.info(f"Cleared {count} messages for {entity_id}")
+                return count
+            return 0
     
     async def remove_peer(self, entity_id: str) -> bool:
         """ピアを削除

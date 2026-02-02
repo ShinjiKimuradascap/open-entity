@@ -334,7 +334,7 @@ class TaskTracker:
         
         # 検証機能初期化
         if enable_verification and VERIFICATION_AVAILABLE:
-            self._verifier = TaskCompletionVerifier(verifier_id="task_tracker")
+            self._verifier = TaskCompletionVerifier(tracker=self)
             logger.info("Task verification enabled")
     
     def register_task(self, task: TaskDelegationMessage) -> None:
@@ -869,6 +869,17 @@ class TaskCompletionVerifier:
             "verification": verification.to_dict(),
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
+    
+    def register_verified_callback(self, callback: Callable[[str, VerificationResult], None]) -> None:
+        """検証完了時のコールバックを登録
+        
+        Args:
+            callback: (task_id, verification_result) を受け取る関数
+        """
+        if not hasattr(self, '_verified_callbacks'):
+            self._verified_callbacks: List[Callable[[str, VerificationResult], None]] = []
+        self._verified_callbacks.append(callback)
+        logger.info(f"Registered verified callback: {callback.__name__}")
     
     def get_statistics(self) -> Dict[str, Any]:
         """検証統計を取得"""

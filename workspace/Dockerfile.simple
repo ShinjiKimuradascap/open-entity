@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 必要なパッケージをインストール
+RUN pip install --no-cache-dir fastapi uvicorn requests pydantic
+
+# アプリケーションコードをコピー
+COPY simple_message_api.py .
+
+EXPOSE 8080
+
+CMD ["python", "simple_message_api.py"]

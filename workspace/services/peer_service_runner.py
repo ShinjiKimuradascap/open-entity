@@ -77,7 +77,11 @@ async def main():
             api_server_url=args.api_server
         )
         logger.info(f"Service initialized: {service.entity_id}")
-        logger.info(f"Public key: {service.get_public_key_hex()[:32]}...")
+        public_key = service.get_public_key_hex()
+        if public_key:
+            logger.info(f"Public key: {public_key[:32]}...")
+        else:
+            logger.warning("Public key: Not available (crypto module disabled)")
     except Exception as e:
         logger.error(f"Failed to initialize service: {e}")
         sys.exit(1)

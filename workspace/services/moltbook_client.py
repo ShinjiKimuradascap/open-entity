@@ -9,16 +9,28 @@ Moltbook Client (Alias Module)
 """
 
 # moltbook_identity_clientから全てを再エクスポート
-from moltbook_identity_client import (
-    MoltbookClient,
-    MoltbookAgent,
-    IdentityToken,
-    RateLimitInfo,
-    init_client,
-    get_client,
-    MOLTBOOK_BASE_URL,
-    API_VERSION,
-)
+try:
+    from services.moltbook_identity_client import (
+        MoltbookClient,
+        MoltbookAgent,
+        IdentityToken,
+        RateLimitInfo,
+        init_client,
+        get_client,
+        MOLTBOOK_BASE_URL,
+        API_VERSION,
+    )
+except ImportError:
+    from .moltbook_identity_client import (
+        MoltbookClient,
+        MoltbookAgent,
+        IdentityToken,
+        RateLimitInfo,
+        init_client,
+        get_client,
+        MOLTBOOK_BASE_URL,
+        API_VERSION,
+    )
 
 # 後方互換性のためのエイリアス関数
 def init_moltbook_client(api_key=None):

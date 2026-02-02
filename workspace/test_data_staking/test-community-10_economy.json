@@ -1,0 +1,40 @@
+{
+  "community_id": "test-community-10",
+  "token_symbol": "TEST",
+  "stakes": {
+    "26b3cc96-5d93-44b9-9496-b0941416171b": {
+      "stake_id": "26b3cc96-5d93-44b9-9496-b0941416171b",
+      "agent_id": "agent-001",
+      "amount": 100.0,
+      "staked_at": "2026-02-01T08:01:11.384625+00:00",
+      "unlock_time": "2026-02-08T08:01:11.384625+00:00",
+      "status": "active",
+      "rewards_earned": 0.0
+    }
+  },
+  "agent_stakes": {
+    "agent-001": [
+      "26b3cc96-5d93-44b9-9496-b0941416171b"
+    ]
+  },
+  "total_staked": 100.0,
+  "contributions": {},
+  "agent_contributions": {},
+  "revenue_config": {
+    "stakers_share": 0.4,
+    "contributors_share": 0.3,
+    "treasury_share": 0.2,
+    "reserve_share": 0.1
+  },
+  "reward_rates": {
+    "code": 15.0,
+    "review": 8.0,
+    "research": 20.0,
+    "documentation": 10.0,
+    "support": 5.0,
+    "governance": 12.0,
+    "infrastructure": 18.0
+  },
+  "total_revenue_distributed": 0.0,
+  "total_contributions_rewarded": 0.0
+}

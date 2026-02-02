@@ -61,6 +61,16 @@ COPY --chown=appuser:appuser protocol/ ./protocol/
 COPY --chown=appuser:appuser config/ ./config/
 COPY --chown=appuser:appuser tools/ ./tools/
 
+# Copy data to backup location (will be copied to data/ at runtime if needed)
+COPY --chown=appuser:appuser data/ ./data_backup/
+
+# Copy marketplace data directly to ensure it exists (fixes Cloud Run ephemeral filesystem issue)
+COPY --chown=appuser:appuser data/marketplace/ ./data/marketplace/
+COPY --chown=appuser:appuser data/services/ ./data/services/
+
+COPY --chown=appuser:appuser docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
@@ -78,6 +88,9 @@ EXPOSE 8000
 
 # Set working directory for service
 WORKDIR /app/services
+
+# Entrypoint for data initialization
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # Default command
 CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]

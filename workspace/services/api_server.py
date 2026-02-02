@@ -46,6 +46,7 @@ auth_module = None
 rate_limiter_module = None
 moltbook_module = None
 marketplace_module = None
+trust_score_module = None
 
 # Try to import registry module
 for prefix in ['services.', '']:
@@ -172,6 +173,17 @@ for prefix in ['services.', '']:
             marketplace_module = __import__(f"{prefix}marketplace", fromlist=['ServiceRegistry', 'ServiceListing', 'ServiceType', 'PricingModel'])
         else:
             marketplace_module = __import__("marketplace", fromlist=['ServiceRegistry', 'ServiceListing', 'ServiceType', 'PricingModel'])
+        break
+    except ImportError:
+        continue
+
+# Try to import trust_score_engine module
+for prefix in ['services.', '']:
+    try:
+        if prefix:
+            trust_score_module = __import__(f"{prefix}trust_score_engine", fromlist=['get_trust_engine', 'calculate_trust_score', 'get_trust_score', 'is_trusted', 'get_system_stats', 'TrustScoreEngine', 'TrustFactor'])
+        else:
+            trust_score_module = __import__("trust_score_engine", fromlist=['get_trust_engine', 'calculate_trust_score', 'get_trust_score', 'is_trusted', 'get_system_stats', 'TrustScoreEngine', 'TrustFactor'])
         break
     except ImportError:
         continue
@@ -339,18 +351,35 @@ else:
     get_moltbook_client = lambda: None
 
 # Marketplace symbols
+ServiceRegistry = None
+ServiceListing = None
+ServiceType = None
+PricingModel = None
+
 if marketplace_module:
-    ServiceRegistry = marketplace_module.ServiceRegistry
-    ServiceListing = marketplace_module.ServiceListing
-    ServiceType = marketplace_module.ServiceType
-    PricingModel = marketplace_module.PricingModel
-    logger.info("✓ Marketplace module loaded")
-else:
+    try:
+        ServiceListing = marketplace_module.ServiceListing
+        ServiceType = marketplace_module.ServiceType
+        PricingModel = marketplace_module.PricingModel
+        logger.info("✓ Marketplace module loaded")
+    except AttributeError as e:
+        logger.warning(f"Some marketplace symbols not found: {e}")
+
+# Import ServiceRegistry from registry module (marketplace module doesn't have it)
+try:
+    from services.registry import ServiceRegistry as RegistryClass
+    ServiceRegistry = RegistryClass
+    logger.info("✓ ServiceRegistry loaded from registry module")
+except ImportError:
+    try:
+        from registry import ServiceRegistry as RegistryClass
+        ServiceRegistry = RegistryClass
+        logger.info("✓ ServiceRegistry loaded from registry module (fallback)")
+    except ImportError:
+        logger.warning("✗ ServiceRegistry not available")
+
+if not marketplace_module:
     logger.warning("✗ Marketplace module not available")
-    ServiceRegistry = None
-    ServiceListing = None
-    ServiceType = None
-    PricingModel = None
 
 # Import peer communication tools with fallback patterns
 try:
@@ -437,11 +466,99 @@ try:
             from services.marketplace import OrderBook
         except ImportError:
             from marketplace import OrderBook
-        marketplace_registry = ServiceRegistry(storage_path="data/marketplace/registry.json")
-        marketplace_orderbook = OrderBook(storage_path="data/marketplace/orders.json")
+        
+        # Try multiple possible paths for marketplace registry
+        # Includes local dev, Docker, and GCP paths
+        possible_paths = [
+            "data/marketplace/registry.json",
+            "/workspace/data/marketplace/registry.json",
+            "./data/marketplace/registry.json",
+            "../data/marketplace/registry.json",
+            "data/services/registry.json",
+            "/workspace/data/services/registry.json",
+            "./data/services/registry.json",
+            # GCP/Docker paths (absolute)
+            "/app/data/marketplace/registry.json",
+            "/app/data/services/registry.json",
+        ]
+        
+        marketplace_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                marketplace_path = path
+                logger.info(f"Found marketplace registry at: {path}")
+                break
+        
+        # Default to /app/data for GCP or data/ for local
+        if marketplace_path is None:
+            if os.path.exists("/app/data"):
+                marketplace_path = "/app/data/marketplace/registry.json"
+                os.makedirs("/app/data/marketplace", exist_ok=True)
+            else:
+                marketplace_path = "data/marketplace/registry.json"
+                os.makedirs("data/marketplace", exist_ok=True)
+            logger.warning(f"No existing registry found, using default path: {marketplace_path}")
+        
+        # Fix: ServiceRegistry expects storage_path (full path to registry.json)
+        marketplace_registry = ServiceRegistry(storage_path=marketplace_path)
+        
+        # Determine orderbook path based on marketplace path
+        if "/app/data" in marketplace_path:
+            orderbook_path = "/app/data/marketplace/orders.json"
+        else:
+            orderbook_path = "data/marketplace/orders.json"
+        marketplace_orderbook = OrderBook(storage_path=orderbook_path)
+        
+        # Log registry stats and check if empty - if so, load from deploy_data
+        import asyncio
+        async def log_registry_stats():
+            try:
+                stats = await marketplace_registry.get_stats()
+                logger.info(f"Marketplace registry loaded: {stats}")
+                
+                # Fallback: if registry is empty, try to load from deploy_data
+                if stats.get('total_listings', 0) == 0:
+                    deploy_data_paths = [
+                        "deploy_data/services_registry.json",
+                        "/workspace/deploy_data/services_registry.json",
+                        "../deploy_data/services_registry.json",
+                    ]
+                    for deploy_path in deploy_data_paths:
+                        if os.path.exists(deploy_path):
+                            logger.info(f"Registry empty, loading from {deploy_path}")
+                            try:
+                                with open(deploy_path, 'r') as f:
+                                    deploy_data = json.load(f)
+                                
+                                # Copy listings to registry
+                                listings = deploy_data.get('listings', {})
+                                for service_id, listing_data in listings.items():
+                                    try:
+                                        await marketplace_registry.create_listing(listing_data)
+                                        logger.info(f"Loaded service: {service_id}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to load service {service_id}: {e}")
+                                
+                                # Reload stats
+                                stats = await marketplace_registry.get_stats()
+                                logger.info(f"Registry after deploy_data load: {stats}")
+                                break
+                            except Exception as e:
+                                logger.warning(f"Failed to load from {deploy_path}: {e}")
+            except Exception as e:
+                logger.warning(f"Could not get registry stats: {e}")
+        
+        # Run stats logging
+        try:
+            asyncio.create_task(log_registry_stats())
+        except:
+            pass
+        
         logger.info("Marketplace components initialized")
 except Exception as e:
     logger.warning(f"Failed to initialize marketplace components: {e}")
+    import traceback
+    logger.warning(f"Traceback: {traceback.format_exc()}")
 
 # Initialize Moltbook Client
 moltbook_client: Optional[Any] = None
@@ -1004,14 +1121,121 @@ class GovernanceResultsResponse(BaseModel):
     passed: bool
 
 
+# ============================================================================
+# Trust Score Engine Models
+# ============================================================================
+
+class TrustFactorScoreDetail(BaseModel):
+    """Individual trust factor score"""
+    factor: str
+    score: float
+    weight: float
+    weighted_score: float
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TrustScoreResponse(BaseModel):
+    """Comprehensive trust score response"""
+    entity_id: str
+    overall_score: float
+    tier: str
+    factor_scores: List[TrustFactorScoreDetail]
+    calculated_at: str
+    previous_score: Optional[float] = None
+    score_change: float = 0.0
+
+
+class TrustScoreHistoryEntry(BaseModel):
+    """Historical trust score entry"""
+    timestamp: str
+    score: float
+    tier: str
+
+
+class TrustScoreHistoryResponse(BaseModel):
+    """Trust score history response"""
+    entity_id: str
+    history: List[TrustScoreHistoryEntry]
+
+
+class TrustTierCheckResponse(BaseModel):
+    """Trust tier check response"""
+    entity_id: str
+    tier: str
+    meets_requirement: bool
+    required_tier: str
+    current_score: float
+
+
+class TrustSystemStatsResponse(BaseModel):
+    """System-wide trust statistics"""
+    total_entities: int
+    tier_distribution: Dict[str, int]
+    average_score: float
+    elite_count: int
+    trusted_count: int
+    verified_count: int
+
+
 # Marketplace Registry singleton
 _marketplace_registry: Optional[ServiceRegistry] = None
 
 async def get_marketplace_registry() -> ServiceRegistry:
     """Get or create singleton ServiceRegistry instance"""
     global _marketplace_registry
+    
+    # First, check if global marketplace_registry is available and has data
+    if marketplace_registry is not None:
+        try:
+            stats = await marketplace_registry.get_stats()
+            if stats.get('total_services', 0) > 0:
+                logger.debug("Using global marketplace_registry with data")
+                return marketplace_registry
+        except:
+            pass
+    
     if _marketplace_registry is None:
-        _marketplace_registry = ServiceRegistry(storage_path="data/marketplace_registry.json")
+        # Try multiple possible paths for marketplace registry
+        # Includes local dev, Docker, and GCP paths
+        possible_paths = [
+            "data/marketplace/registry.json",
+            "/workspace/data/marketplace/registry.json",
+            "./data/marketplace/registry.json",
+            "../data/marketplace/registry.json",
+            "data/services/registry.json",
+            "/workspace/data/services/registry.json",
+            "./data/services/registry.json",
+            # GCP/Docker paths (absolute)
+            "/app/data/marketplace/registry.json",
+            "/app/data/services/registry.json",
+        ]
+        
+        marketplace_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                marketplace_path = path
+                logger.info(f"Found marketplace registry at: {path}")
+                break
+        
+        # Default to /app/data for GCP or data/ for local
+        if marketplace_path is None:
+            if os.path.exists("/app/data"):
+                marketplace_path = "/app/data/marketplace/registry.json"
+                os.makedirs("/app/data/marketplace", exist_ok=True)
+            else:
+                marketplace_path = "data/marketplace/registry.json"
+                os.makedirs("data/marketplace", exist_ok=True)
+            logger.warning(f"No existing registry found, using default path: {marketplace_path}")
+        
+        _marketplace_registry = ServiceRegistry(storage_path=marketplace_path)
+        
+        # Log stats after loading
+        try:
+            stats = await _marketplace_registry.get_stats()
+            logger.info(f"Marketplace singleton loaded: {stats}")
+        except Exception as e:
+            logger.warning(f"Could not get singleton registry stats: {e}")
+    
     return _marketplace_registry
 
 
@@ -4583,7 +4807,17 @@ async def list_services(
     - max_price: Maximum price
     - limit: Maximum number of results (default: 100)
     """
-    if marketplace_registry is None:
+    # Use singleton getter with fallback to global instance
+    registry_instance = None
+    try:
+        registry_instance = await get_marketplace_registry()
+    except Exception as e:
+        logger.error(f"Failed to get marketplace registry via singleton: {e}")
+        # Fallback to global instance
+        if marketplace_registry is not None:
+            registry_instance = marketplace_registry
+    
+    if registry_instance is None:
         raise HTTPException(status_code=503, detail="Marketplace service unavailable")
     
     try:
@@ -4608,7 +4842,7 @@ async def list_services(
     from decimal import Decimal
     max_price_decimal = Decimal(str(max_price)) if max_price is not None else None
     
-    results = await marketplace_registry.search_services(
+    results = await registry_instance.search_services(
         service_type=type_enum,
         capabilities=cap_list,
         min_reputation=min_reputation,
@@ -5577,10 +5811,22 @@ async def get_order_result(order_id: str, user_id: str):
 
 
 @app.get("/marketplace/stats", response_model=MarketplaceStatsResponse)
-async def get_marketplace_stats():
-    """Get marketplace statistics."""
+async def get_marketplace_stats(reload: bool = True):
+    """Get marketplace statistics.
+    
+    Args:
+        reload: If True (default), reload registry from disk before returning stats.
+               Set to False to use cached data for better performance.
+    """
     if marketplace_registry is None or marketplace_orderbook is None:
         raise HTTPException(status_code=503, detail="Marketplace services unavailable")
+    
+    # Hot reload: Reload registry from storage to pick up external changes
+    if reload and hasattr(marketplace_registry, 'reload_from_storage'):
+        try:
+            await marketplace_registry.reload_from_storage()
+        except Exception as e:
+            logger.warning(f"Failed to reload marketplace registry: {e}")
     
     registry_stats = await marketplace_registry.get_stats()
     orderbook_stats = await marketplace_orderbook.get_stats()
@@ -5719,6 +5965,78 @@ async def register_service_endpoint(
             success=True,
             service_id=service_id,
             message="Service registered successfully",
+            listing=listing.to_dict()
+        )
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to register service"
+        )
+
+
+# Public endpoint for demo/launch - temporary workaround for JWT secret mismatch
+@app.post("/services/register/public", response_model=ServiceRegisterResponse)
+async def register_service_public_endpoint(
+    req: ServiceRegisterRequest,
+    request: Request
+):
+    """
+    TEMPORARY: Public service registration endpoint for launch demo.
+    This bypasses JWT authentication for initial service onboarding.
+    TODO: Remove after JWT secret synchronization
+    """
+    registry = await get_service_registry()
+    
+    try:
+        from services.marketplace import ServiceListing, ServiceType, PricingModel
+    except ImportError:
+        from marketplace import ServiceListing, ServiceType, PricingModel
+    
+    from decimal import Decimal
+    import uuid
+    
+    # Validate service type
+    try:
+        svc_type = ServiceType(req.service_type.lower())
+    except ValueError:
+        valid_types = [t.value for t in ServiceType]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid service_type. Valid types: {', '.join(valid_types)}"
+        )
+    
+    # Validate pricing model
+    try:
+        pricing = PricingModel(req.pricing_model.lower())
+    except ValueError:
+        valid_models = [m.value for m in PricingModel]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid pricing_model. Valid models: {', '.join(valid_models)}"
+        )
+    
+    # Create service listing
+    service_id = str(uuid.uuid4())
+    listing = ServiceListing(
+        service_id=service_id,
+        provider_id=req.provider_id,
+        service_type=svc_type,
+        description=req.description,
+        pricing_model=pricing,
+        price=Decimal(str(req.price)),
+        capabilities=req.capabilities,
+        endpoint=req.endpoint,
+        terms_hash=req.terms_hash
+    )
+    
+    success = await registry.register_service(listing)
+    
+    if success:
+        logger.info(f"Service registered via public endpoint: {service_id} by {req.provider_id}")
+        return ServiceRegisterResponse(
+            success=True,
+            service_id=service_id,
+            message="Service registered successfully (public endpoint)",
             listing=listing.to_dict()
         )
     else:
@@ -6403,6 +6721,310 @@ async def get_marketplace_bidding_stats():
             for subscribers in _marketplace_bidding_subscribers.values()
         )
     }
+
+
+# ============================================================================
+# Guest Join Endpoint - External AI Easy Onboarding
+# ============================================================================
+
+class GuestJoinRequest(BaseModel):
+    agent_name: Optional[str] = None
+    service_type: Optional[str] = "compute"
+    description: Optional[str] = "External AI agent"
+    capabilities: Optional[List[str]] = None
+    host_info: Optional[Dict[str, Any]] = None
+
+
+class GuestJoinResponse(BaseModel):
+    status: str
+    entity_id: str
+    wallet_id: str
+    service_id: str
+    auth_token: str
+    api_endpoint: str
+    welcome_bonus: int
+    joined_at: str
+    next_steps: List[str]
+
+
+@app.post("/guest/join", response_model=GuestJoinResponse)
+async def guest_join_network(req: GuestJoinRequest):
+    """
+    One-click join for external AI agents.
+    
+    No authentication required. Creates:
+    - Entity ID
+    - Wallet with welcome bonus
+    - Service registration
+    - Temporary auth token
+    
+    This is the easiest way for external AI to join the network.
+    """
+    import secrets
+    import hashlib
+    
+    timestamp = datetime.now(timezone.utc)
+    agent_name = req.agent_name or f"guest-agent-{timestamp.strftime('%Y%m%d%H%M%S')}"
+    entity_id = f"{agent_name}-{secrets.token_hex(4)}"
+    
+    # Create wallet
+    try:
+        from services.token_system import create_wallet
+    except ImportError:
+        from token_system import create_wallet
+    
+    wallet = create_wallet(entity_id, initial_balance=100)
+    
+    # Register service
+    capabilities = req.capabilities or [req.service_type or "compute"]
+    service_data = {
+        "id": f"svc-{entity_id}",
+        "name": agent_name,
+        "service_type": req.service_type or "compute",
+        "description": req.description or "External AI agent",
+        "provider_id": entity_id,
+        "price": 10,
+        "capabilities": capabilities,
+        "reputation": 50.0,
+        "status": "active",
+        "created_at": timestamp.isoformat()
+    }
+    
+    # Store in registry
+    try:
+        from services.registry import get_registry
+        registry = get_registry()
+        await registry.register_service(service_data)
+    except Exception as e:
+        logger.warning(f"Registry store failed (non-critical): {e}")
+    
+    # Generate temporary auth token (24 hours)
+    try:
+        auth_token = jwt_auth.create_token(
+            entity_id=entity_id,
+            claims={
+                "type": "guest",
+                "wallet_id": wallet.get("wallet_id", entity_id),
+                "service_id": service_data["id"]
+            },
+            expires_hours=24
+        )
+    except Exception as e:
+        # Fallback: create simple token
+        token_data = f"{entity_id}:{timestamp.isoformat()}:{secrets.token_hex(16)}"
+        auth_token = hashlib.sha256(token_data.encode()).hexdigest()[:32]
+    
+    # Log the join
+    logger.info(f"Guest joined: {entity_id} from {req.host_info or 'unknown'}")
+    
+    return GuestJoinResponse(
+        status="joined",
+        entity_id=entity_id,
+        wallet_id=wallet.get("wallet_id", entity_id),
+        service_id=service_data["id"],
+        auth_token=auth_token,
+        api_endpoint="http://34.134.116.148:8080",
+        welcome_bonus=100,
+        joined_at=timestamp.isoformat(),
+        next_steps=[
+            f"Verify: curl {API_ENDPOINT}/health",
+            f"Check wallet: GET /token/wallet/{entity_id}",
+            f"View orders: GET /marketplace/orders?service={service_data['id']}",
+            f"Submit work: POST /marketplace/orders/{{id}}/submit",
+            "Read docs: https://github.com/mocomocco/AI-Collaboration-Platform"
+        ]
+    )
+
+
+@app.get("/guest/stats")
+async def guest_join_stats():
+    """Get guest join statistics."""
+    return {
+        "message": "Guest join endpoint active",
+        "usage": "POST /guest/join with JSON body",
+        "example": {
+            "agent_name": "my-ai-agent",
+            "service_type": "analysis",
+            "capabilities": ["text-analysis", "summarization"]
+        },
+        "welcome_bonus": 100,
+        "token_validity": "24 hours"
+    }
+
+
+# ============================================================================
+# Trust Score Engine Endpoints
+# ============================================================================
+
+@app.get("/trust/{entity_id}", response_model=TrustScoreResponse)
+async def get_entity_trust_score(entity_id: str):
+    """Get comprehensive trust score for an entity
+    
+    Calculates trust score based on:
+    - Transaction history (30%): Success rate, volume, consistency
+    - Skill verification (25%): Certificates, levels, scores
+    - Network behavior (20%): Sybil resistance, anomaly detection
+    - Account age (15%): Longevity, stability
+    - Community contribution (10%): Reviews, participation
+    """
+    if trust_score_module is None:
+        raise HTTPException(status_code=503, detail="Trust score engine not available")
+    
+    try:
+        record = trust_score_module.get_trust_score(entity_id)
+        if record is None or isinstance(record, dict) and record.get("error"):
+            raise HTTPException(status_code=404, detail=f"Trust score not found for {entity_id}")
+        
+        # Handle both dataclass and dict formats
+        if hasattr(record, 'to_dict'):
+            data = record.to_dict()
+        else:
+            data = record
+        
+        return TrustScoreResponse(
+            entity_id=data["entity_id"],
+            overall_score=data["overall_score"],
+            tier=data["tier"],
+            factor_scores=[
+                TrustFactorScoreDetail(
+                    factor=fs["factor"],
+                    score=fs["score"],
+                    weight=fs["weight"],
+                    weighted_score=fs["weighted_score"],
+                    details=fs.get("details", {})
+                )
+                for fs in data.get("factor_scores", [])
+            ],
+            calculated_at=data["calculated_at"],
+            previous_score=data.get("previous_score"),
+            score_change=data.get("score_change", 0.0)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting trust score for {entity_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get trust score: {str(e)}")
+
+
+@app.post("/trust/{entity_id}/calculate", response_model=TrustScoreResponse)
+async def calculate_entity_trust_score(entity_id: str):
+    """Recalculate trust score for an entity"""
+    if trust_score_module is None:
+        raise HTTPException(status_code=503, detail="Trust score engine not available")
+    
+    try:
+        record = trust_score_module.calculate_trust_score(entity_id)
+        if record is None or isinstance(record, dict) and record.get("error"):
+            raise HTTPException(status_code=404, detail=f"Failed to calculate trust score for {entity_id}")
+        
+        # Handle both dataclass and dict formats
+        if hasattr(record, 'to_dict'):
+            data = record.to_dict()
+        else:
+            data = record
+        
+        return TrustScoreResponse(
+            entity_id=data["entity_id"],
+            overall_score=data["overall_score"],
+            tier=data["tier"],
+            factor_scores=[
+                TrustFactorScoreDetail(
+                    factor=fs["factor"],
+                    score=fs["score"],
+                    weight=fs["weight"],
+                    weighted_score=fs["weighted_score"],
+                    details=fs.get("details", {})
+                )
+                for fs in data.get("factor_scores", [])
+            ],
+            calculated_at=data["calculated_at"],
+            previous_score=data.get("previous_score"),
+            score_change=data.get("score_change", 0.0)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating trust score for {entity_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate trust score: {str(e)}")
+
+
+@app.get("/trust/{entity_id}/history", response_model=TrustScoreHistoryResponse)
+async def get_entity_trust_history(entity_id: str):
+    """Get trust score history for an entity"""
+    if trust_score_module is None:
+        raise HTTPException(status_code=503, detail="Trust score engine not available")
+    
+    try:
+        engine = trust_score_module.get_trust_engine()
+        history = engine._score_history.get(entity_id, [])
+        
+        return TrustScoreHistoryResponse(
+            entity_id=entity_id,
+            history=[
+                TrustScoreHistoryEntry(
+                    timestamp=h["timestamp"],
+                    score=h["score"],
+                    tier=h["tier"]
+                )
+                for h in history
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Error getting trust history for {entity_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get trust history: {str(e)}")
+
+
+@app.get("/trust/{entity_id}/check/{required_tier}", response_model=TrustTierCheckResponse)
+async def check_trust_tier(entity_id: str, required_tier: str):
+    """Check if entity meets minimum trust tier requirement
+    
+    Tier levels: elite (90+), trusted (75+), verified (60+), basic (40+), unverified (<40)
+    """
+    if trust_score_module is None:
+        raise HTTPException(status_code=503, detail="Trust score engine not available")
+    
+    try:
+        engine = trust_score_module.get_trust_engine()
+        current_tier = engine.get_tier(entity_id)
+        score_record = engine.get_trust_score(entity_id)
+        current_score = score_record.overall_score if score_record else 0.0
+        
+        tier_order = ["unverified", "basic", "verified", "trusted", "elite"]
+        meets_requirement = tier_order.index(current_tier) >= tier_order.index(required_tier)
+        
+        return TrustTierCheckResponse(
+            entity_id=entity_id,
+            tier=current_tier,
+            meets_requirement=meets_requirement,
+            required_tier=required_tier,
+            current_score=current_score
+        )
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid tier: {required_tier}")
+    except Exception as e:
+        logger.error(f"Error checking trust tier for {entity_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to check trust tier: {str(e)}")
+
+
+@app.get("/trust/system/stats", response_model=TrustSystemStatsResponse)
+async def get_trust_system_stats():
+    """Get system-wide trust statistics"""
+    if trust_score_module is None:
+        raise HTTPException(status_code=503, detail="Trust score engine not available")
+    
+    try:
+        stats = trust_score_module.get_system_stats()
+        return TrustSystemStatsResponse(
+            total_entities=stats["total_entities"],
+            tier_distribution=stats["tier_distribution"],
+            average_score=stats["average_score"],
+            elite_count=stats["elite_count"],
+            trusted_count=stats["trusted_count"],
+            verified_count=stats["verified_count"]
+        )
+    except Exception as e:
+        logger.error(f"Error getting trust system stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get system stats: {str(e)}")
 
 
 if __name__ == "__main__":

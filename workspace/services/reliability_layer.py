@@ -140,7 +140,7 @@ class DeliveryTracker:
         self.ack_timeout_seconds = ack_timeout_seconds
         self.cleanup_interval_seconds = cleanup_interval_seconds
         self._acknowledgments: Set[str] = set()
-       ._lock = asyncio.Lock()
+        self._lock = asyncio.Lock()
         self._cleanup_task: Optional[asyncio.Task] = None
         self._delivery_callbacks: Dict[str, List[Callable]] = defaultdict(list)
     

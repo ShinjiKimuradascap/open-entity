@@ -1,0 +1,179 @@
+version: '3.8'
+
+# Entity C 専用 Docker Compose
+# Entity A/Bと連携するための3体目エンティティ設定
+
+services:
+  # Entity C - Autonomous Agent C
+  entity-c:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-c
+    ports:
+      - "8003:8003"
+    environment:
+      - ENTITY_ID=entity-c
+      - ENTITY_PRIVATE_KEY=${ENTITY_C_PRIVATE_KEY:-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}
+      - ENTITY_A_URL=http://entity-a:8001
+      - ENTITY_B_URL=http://entity-b:8002
+      - API_SERVER_URL=http://api-server:8000
+      - PORT=8003
+      - PYTHONPATH=/app
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./services:/app/services
+      - ./data:/app/data
+      - ./protocol:/app/protocol
+      - entity-c-data:/app/data/agent
+    command: python services/peer_service_runner.py --id entity-c --port 8003
+    networks:
+      - ai-collab-network
+      - peer-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # Entity C Monitor - 自動監視・死活チェック
+  entity-c-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-c-monitor
+    environment:
+      - ENTITY_ID=entity-c-monitor
+      - TARGET_ENTITIES=http://entity-a:8001,http://entity-b:8002,http://entity-c:8003
+      - CHECK_INTERVAL=30
+      - PYTHONPATH=/app
+    volumes:
+      - ./services:/app/services
+      - ./tools:/app/tools
+      - ./data:/app/data
+    command: >
+      python -c "
+      import asyncio
+      import sys
+      import os
+      import time
+      import json
+      import urllib.request
+      from datetime import datetime
+      
+      sys.path.insert(0, '/app/services')
+      sys.path.insert(0, '/app/tools')
+      
+      TARGETS = os.environ.get('TARGET_ENTITIES', '').split(',')
+      INTERVAL = int(os.environ.get('CHECK_INTERVAL', '30'))
+      
+      print('='*60)
+      print('Entity Monitor - Auto Health Check System')
+      print('='*60)
+      print(f'Targets: {TARGETS}')
+      print(f'Interval: {INTERVAL}s')
+      print('='*60)
+      
+      def check_health(url):
+          try:
+              req = urllib.request.Request(
+                  f'{url}/health',
+                  method='GET',
+                  headers={'Accept': 'application/json'}
+              )
+              with urllib.request.urlopen(req, timeout=5) as resp:
+                  return {'status': 'healthy', 'code': resp.status}
+          except Exception as e:
+              return {'status': 'unhealthy', 'error': str(e)}
+      
+      def save_status(statuses):
+          status_file = '/app/data/monitor_status.json'
+          try:
+              with open(status_file, 'w') as f:
+                  json.dump({
+                      'timestamp': datetime.now().isoformat(),
+                      'statuses': statuses
+                  }, f, indent=2)
+          except Exception as e:
+              print(f'Failed to save status: {e}')
+      
+      while True:
+          timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+          statuses = {}
+          
+          print(f'\\n[{timestamp}] Health Check:')
+          for target in TARGETS:
+              if not target:
+                  continue
+              result = check_health(target)
+              statuses[target] = result
+              status_icon = '✅' if result['status'] == 'healthy' else '❌'
+              print(f'  {status_icon} {target}: {result[\"status\"]}')
+          
+          save_status(statuses)
+          time.sleep(INTERVAL)
+      "
+    networks:
+      - ai-collab-network
+      - peer-network
+    depends_on:
+      - entity-c
+    restart: unless-stopped
+
+  # Entity C Auto-Scaler - 自動スケーリング（将来拡張用）
+  entity-c-autoscaler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-c-autoscaler
+    environment:
+      - ENTITY_ID=entity-c-autoscaler
+      - MIN_ENTITIES=3
+      - MAX_ENTITIES=10
+      - SCALE_UP_THRESHOLD=0.8
+      - SCALE_DOWN_THRESHOLD=0.2
+      - PYTHONPATH=/app
+    volumes:
+      - ./services:/app/services
+      - ./data:/app/data
+    command: >
+      python -c "
+      import sys
+      import os
+      import time
+      import json
+      from datetime import datetime
+      
+      print('='*60)
+      print('Entity Auto-Scaler - Future Expansion')
+      print('='*60)
+      print('Status: Standby mode')
+      print('This service will auto-scale entities based on load')
+      print('='*60)
+      
+      # Future: Monitor load and auto-scale
+      # For now, just log status periodically
+      while True:
+          timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+          print(f'[{timestamp}] Auto-scaler: Standby')
+          time.sleep(300)  # Check every 5 minutes
+      "
+    networks:
+      - ai-collab-network
+    depends_on:
+      - entity-c
+    restart: unless-stopped
+
+volumes:
+  entity-c-data:
+
+networks:
+  ai-collab-network:
+    driver: bridge
+    external: true  # 既存のネットワークと共有
+  peer-network:
+    driver: bridge
+    external: true  # Entity A/Bと共有

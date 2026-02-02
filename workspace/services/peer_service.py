@@ -1846,11 +1846,6 @@ class PeerService:
                 )
                 logger.info(f"SessionManager initialized (TTL: {session_ttl_seconds}s)")
 
-    @property
-    def session_manager(self) -> Optional['NewSessionManager']:
-        """SessionManagerインスタンスを取得"""
-        return self._session_manager
-        
         # RateLimiterの初期化 (v1.1)
         self._rate_limiter: Optional[RateLimiter] = None
         self._enable_rate_limiting: bool = True
@@ -1858,29 +1853,13 @@ class PeerService:
             self._rate_limiter = RateLimiter()
             logger.info("RateLimiter initialized (60 req/min, 1000 req/hour)")
         
-        # DHTRegistryの初期化
-        self._dht_registry: Optional[Any] = dht_registry
-        if self._dht_registry:
-            logger.info("DHTRegistry integration enabled")
-        
-        # E2ECryptoManagerの初期化 (v1.1 E2E暗号化強化)
-        if E2E_CRYPTO_AVAILABLE and self.keypair and not self.e2e_manager:
-            try:
-                from services.e2e_crypto import E2ECryptoManager, E2EHandshakeHandler
-                self.e2e_manager = E2ECryptoManager(
-                    entity_id=self.entity_id,
-                    keypair=self.keypair,
-                    default_timeout=session_ttl_seconds
-                )
-                self._e2e_handler = E2EHandshakeHandler(self.e2e_manager)
-                logger.info(f"E2ECryptoManager initialized (timeout: {session_ttl_seconds}s)")
-            except Exception as e:
-                logger.error(f"Failed to initialize E2ECryptoManager: {e}")
-        elif not E2E_CRYPTO_AVAILABLE:
-            logger.debug("E2E crypto module not available")
-        
         # デフォルトのメッセージハンドラを登録
         self._register_default_handlers()
+
+    @property
+    def session_manager(self) -> Optional['NewSessionManager']:
+        """SessionManagerインスタンスを取得"""
+        return self._session_manager
     
     def _init_crypto(self, max_message_age: int, private_key_hex: Optional[str] = None) -> None:
         """暗号機能を初期化

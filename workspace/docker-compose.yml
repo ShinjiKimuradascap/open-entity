@@ -88,6 +88,99 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # Entity C - Autonomous Agent C (3rd Entity)
+  entity-c:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: entity-c
+    ports:
+      - "8003:8003"
+    environment:
+      - ENTITY_ID=entity-c
+      - ENTITY_PRIVATE_KEY=${ENTITY_C_PRIVATE_KEY:-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}
+      - API_SERVER_URL=http://api-server:8000
+      - PORT=8003
+      - PEER_URLS=http://entity-a:8001,http://entity-b:8002
+    volumes:
+      - ./services:/app/services
+      - entity-c-data:/app/data
+    command: python services/peer_service_runner.py --id entity-c --port 8003
+    networks:
+      - ai-collab-network
+    depends_on:
+      api-server:
+        condition: service_healthy
+      entity-a:
+        condition: service_healthy
+      entity-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # Auto Restart Service - Periodic task checking and progress reporting
+  auto-restart:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-collab-auto-restart
+    environment:
+      - ENTITY_ID=auto-restart-service
+      - API_SERVER_URL=http://api-server:8000
+      - CHECK_INTERVAL=300
+      - REPORT_INTERVAL=3600
+      - ENABLE_RECOVERY=true
+    volumes:
+      - ./services:/app/services
+      - ./tools:/app/tools
+      - auto-restart-data:/app/data
+      - ./logs:/app/logs
+    command: python services/auto_restart_service.py --check-interval 300 --report-interval 3600
+    networks:
+      - ai-collab-network
+    depends_on:
+      - api-server
+      - entity-a
+      - entity-b
+      - entity-c
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.path.exists('/app/data/auto_restart.pid') or exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Watchdog - Auto-monitoring and recovery system
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-collab-watchdog
+    environment:
+      - WATCHDOG_MODE=true
+      - API_SERVER_URL=http://api-server:8000
+      - PEER_URLS=http://entity-a:8001,http://entity-b:8002,http://entity-c:8003
+      - CHECK_INTERVAL=30
+    volumes:
+      - ./services:/app/services
+      - ./tools:/app/tools
+      - watchdog-data:/app/data
+    command: python tools/entity_monitor.py --mode watchdog
+    networks:
+      - ai-collab-network
+    depends_on:
+      - api-server
+      - entity-a
+      - entity-b
+      - entity-c
+      - auto-restart
+    restart: unless-stopped
+
   # Redis - Message queue and caching
   redis:
     image: redis:7-alpine
@@ -131,6 +224,9 @@ volumes:
   registry-data:
   entity-a-data:
   entity-b-data:
+  entity-c-data:
+  auto-restart-data:
+  watchdog-data:
   redis-data:
   prometheus-data:
   grafana-data:

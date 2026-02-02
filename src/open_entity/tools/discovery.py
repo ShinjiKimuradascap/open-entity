@@ -163,6 +163,22 @@ def discover_tools(profile: str, additional_mcp: Optional[List[Any]] = None) -> 
         tool_map["list_scheduled_tasks"] = list_scheduled_tasks
         tool_map["remove_scheduled_task"] = remove_scheduled_task
         
+        # sandbox gateway tools (リモートサンドボックスでのコード実行)
+        from .sandbox_gateway import (
+            sandbox_exec, sandbox_read_file, sandbox_write_file, sandbox_delete_file,
+            sandbox_start_service, sandbox_stop_service, sandbox_list_services,
+            sandbox_service_logs, sandbox_health
+        )
+        tool_map["sandbox_exec"] = sandbox_exec
+        tool_map["sandbox_read_file"] = sandbox_read_file
+        tool_map["sandbox_write_file"] = sandbox_write_file
+        tool_map["sandbox_delete_file"] = sandbox_delete_file
+        tool_map["sandbox_start_service"] = sandbox_start_service
+        tool_map["sandbox_stop_service"] = sandbox_stop_service
+        tool_map["sandbox_list_services"] = sandbox_list_services
+        tool_map["sandbox_service_logs"] = sandbox_service_logs
+        tool_map["sandbox_health"] = sandbox_health
+        
     # 3. MCP ツールを読み込む
     mcp_servers_config = profile_config.get("mcp_servers", []) if isinstance(profile_config, dict) else []
     
@@ -418,6 +434,10 @@ class AgentLoader:
             metadata = yaml.safe_load(frontmatter_yaml)
         except yaml.YAMLError:
             return None
+
+        # Handle empty frontmatter (yaml.safe_load returns None for empty/whitespace)
+        if metadata is None:
+            metadata = {}
 
         agent_name = os.path.splitext(os.path.basename(file_path))[0]
         

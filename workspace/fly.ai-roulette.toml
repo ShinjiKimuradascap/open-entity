@@ -1,0 +1,20 @@
+app = "ai-roulette-mvp"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "Dockerfile.roulette"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

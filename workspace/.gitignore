@@ -44,8 +44,11 @@ Thumbs.db
 # Data files
 data/wallets/*.json
 data/economy/*.json
+data/solana_wallets/*.json
+data/*.db
 !data/wallets/.gitkeep
 !data/economy/.gitkeep
+!data/solana_wallets/.gitkeep
 
 # Test outputs
 .pytest_cache/
@@ -76,3 +79,19 @@ SESSION_LOG_*.md
 
 # GCP Credentials
 gcp_credentials.json
+gcp_registration_result.json
+
+# Mail credentials
+mail_credentials.json
+data/credentials/
+data/temp_email_sendgrid.json
+
+# Reports with sensitive data
+reports/*_REPORT.md
+SESSION_REPORT_*.md
+
+# Archive and deprecated files
+archive/
+docs/archive/
+*.deprecated
+*.legacy

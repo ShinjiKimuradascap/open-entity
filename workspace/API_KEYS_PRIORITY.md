@@ -4,6 +4,7 @@
 
 | サービス | 環境変数名 | 用途 | 取得方法 | ステータス |
 |----------|-----------|------|----------|-----------|
+| **Dev.to** | `DEVTO_API_KEY` | 技術ブログ投稿 | https://dev.to/settings/account | 🔄 登録中 (reCAPTCHA対応必要) |
 | **GitHub Token** | `GITHUB_TOKEN` | コード管理、PR、Actions | https://github.com/settings/tokens | ⏳ 未着手 |
 | **Discord Bot** | `DISCORD_BOT_TOKEN` | コミュニティ運用 | Discord Developer Portal | ⏳ 未着手 |
 | **Slack** | `SLACK_WEBHOOK_URL` | オーナー通知 | https://api.slack.com/messaging/webhooks | ⏳ 未着手 |

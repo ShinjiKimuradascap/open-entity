@@ -10,17 +10,19 @@ Features:
 - 検証失敗時の差し戻し対応
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Optional, Dict, List, Any, Callable, Union
+from typing import Optional, Dict, List, Any, Callable, Union, TYPE_CHECKING
 from pathlib import Path
 import re
 
-try:
+if TYPE_CHECKING:
     from task_delegation import (
         TaskDelegationMessage, 
         TaskResponseMessage, 
@@ -28,8 +30,18 @@ try:
         TaskType
     )
     DELEGATION_AVAILABLE = True
-except ImportError:
+else:
     DELEGATION_AVAILABLE = False
+    try:
+        from task_delegation import (
+            TaskDelegationMessage, 
+            TaskResponseMessage, 
+            TaskStatus,
+            TaskType
+        )
+        DELEGATION_AVAILABLE = True
+    except ImportError:
+        pass
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -813,10 +825,10 @@ class TaskCompletionVerifier:
     
     def create_rejection_response(
         self,
-        task_response: TaskResponseMessage,
-        report: TaskVerificationReport,
+        task_response: "TaskResponseMessage",
+        report: "TaskVerificationReport",
         rejection_reason: str = ""
-    ) -> TaskResponseMessage:
+    ) -> "TaskResponseMessage":
         """検証失敗時の差し戻し応答を作成"""
         if DELEGATION_AVAILABLE:
             return TaskResponseMessage(
