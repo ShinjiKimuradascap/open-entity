@@ -98,6 +98,7 @@ src/moco/tools/alpaca.py
 
 # Node modules
 node_modules/
+/amp/
 
 # Development test scripts
 test_chat_workdir.py

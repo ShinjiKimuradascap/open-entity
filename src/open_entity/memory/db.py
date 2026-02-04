@@ -2,10 +2,26 @@ from __future__ import annotations
 
 import sqlite3
 
+# SQLite tuning for concurrent writers
+_BUSY_TIMEOUT_MS = 5000
+
+
+def _configure_conn(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Apply SQLite PRAGMAs to reduce 'database is locked' errors."""
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
+        # Best-effort; keep connection usable even if PRAGMA fails.
+        pass
+    return conn
+
 
 def init_db(db_path: str) -> None:
     """DBテーブルを初期化"""
-    conn = sqlite3.connect(db_path)
+    conn = _configure_conn(sqlite3.connect(db_path, timeout=10))
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -93,6 +109,5 @@ def init_db(db_path: str) -> None:
 
 def get_conn(db_path: str) -> sqlite3.Connection:
     """DB接続を取得"""
-    return sqlite3.connect(db_path)
-
+    return _configure_conn(sqlite3.connect(db_path, timeout=10))
 

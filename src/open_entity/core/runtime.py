@@ -4,6 +4,7 @@ import os
 import json
 import inspect
 import hashlib
+import re
 from ..cancellation import check_cancelled, OperationCancelled
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Callable, get_type_hints
@@ -483,6 +484,74 @@ def _extract_important_info(text: str) -> str:
         return "## 📋 Extracted Key Info\n" + "\n".join(sections) + "\n\n"
     return ""
 
+def _strip_orchestrator_prefixes(text: str) -> str:
+    """Remove repeated '@orchestrator:' prefixes at line starts."""
+    if not text:
+        return text
+    return re.sub(r'(?m)^\s*(?:@orchestrator:\s*)+', '', text)
+
+
+def _compact_text(text: str, max_len: int = 400) -> str:
+    """Compact text into a single line with a max length."""
+    if not text:
+        return ""
+    compact = " ".join(str(text).split())
+    if len(compact) <= max_len:
+        return compact
+    return compact[: max_len - 3] + "..."
+
+
+def _compact_args(args: Dict[str, Any], max_len: int = 200) -> str:
+    """Compact tool arguments for memo storage."""
+    if not args:
+        return ""
+    try:
+        args_str = json.dumps(args, ensure_ascii=False, default=str)
+    except Exception:
+        args_str = str(args)
+    return _compact_text(args_str, max_len=max_len)
+
+
+def _extract_truncated_path(result_text: str) -> Optional[str]:
+    """Extract full output path from truncated tool output, if present."""
+    if not result_text:
+        return None
+    import re
+    match = re.search(r"Full output saved to:\s*(.+)", result_text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _extract_key_info_block(result_text: str) -> str:
+    """Extract the key info block if present, otherwise derive it."""
+    if not result_text:
+        return ""
+    marker = "## 📋 Extracted Key Info"
+    if marker in result_text:
+        start = result_text.find(marker)
+        end = result_text.find("## Preview", start)
+        block = result_text[start:end] if end != -1 else result_text[start:]
+        return block.strip()
+    # Fallback: derive from the (possibly short) result text
+    block = _extract_important_info(result_text)
+    return block.strip()
+
+
+def _build_tool_memo(tool_name: str, args: Dict[str, Any], result_text: str) -> Dict[str, Any]:
+    """Build a compact tool memo for persistence between turns."""
+    memo = {
+        "tool": tool_name,
+        "args": _compact_args(args),
+        "key_info": _extract_key_info_block(result_text),
+        "preview": _compact_text(result_text, max_len=300),
+        "truncated_path": _extract_truncated_path(result_text),
+    }
+    # Keep memo fields compact
+    if memo["key_info"] and len(memo["key_info"]) > 800:
+        memo["key_info"] = memo["key_info"][:797] + "..."
+    return memo
+
 
 def _truncate_tool_output(result: Any, tool_name: str) -> str:
     """
@@ -770,7 +839,11 @@ class AgentRuntime:
             openai_key = os.environ.get("OPENAI_API_KEY")
             if not openai_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
-            self.openai_client = AsyncOpenAI(api_key=openai_key)
+            openai_base_url = os.environ.get("OPENAI_BASE_URL")
+            if openai_base_url:
+                self.openai_client = AsyncOpenAI(api_key=openai_key, base_url=openai_base_url)
+            else:
+                self.openai_client = AsyncOpenAI(api_key=openai_key)
             self.client = None
         elif self.provider == LLMProvider.ZAI:
             # Z.ai GLM-4.7 (OpenAI-compatible API)
@@ -1122,6 +1195,19 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         else:
             result = f"Error: Tool {func_name} not found"
 
+        # Persist compact tool memo for next-turn context
+        if self.session_logger and session_id:
+            try:
+                memo_payload = _build_tool_memo(func_name, args_dict, result)
+                self.session_logger.add_event(
+                    session_id=session_id,
+                    event_type="tool_memo",
+                    source="tool",
+                    content=memo_payload
+                )
+            except Exception:
+                pass
+
         # Context limit check
         result = self._update_context_usage(result)
         
@@ -1357,6 +1443,8 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 if not content and "parts" in h:
                     parts = h.get("parts", [])
                     content = " ".join(str(p) for p in parts)
+                if self.name == "orchestrator":
+                    content = _strip_orchestrator_prefixes(content)
                 if content:  # Skip empty messages
                     messages.append({"role": role, "content": content})
 
@@ -1525,14 +1613,17 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                                         break
                         # Stream output text content
                         if delta.content:
+                            chunk_content = delta.content
+                            if self.name == "orchestrator":
+                                chunk_content = _strip_orchestrator_prefixes(chunk_content)
                             if not self.progress_callback:
-                                _safe_stream_print(delta.content)
-                            collected_content += delta.content
+                                _safe_stream_print(chunk_content)
+                            collected_content += chunk_content
                             self._partial_response = collected_content  # For recovery on error
-                            if self.progress_callback:
+                            if self.progress_callback and chunk_content:
                                 self.progress_callback(
                                     event_type="chunk",
-                                    content=delta.content,
+                                    content=chunk_content,
                                     agent_name=self.name
                                 )
 
@@ -1896,15 +1987,19 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                                     _safe_stream_print(thought_text)
                                 continue
                             if part.text:
+                                chunk_text = part.text
+                                if self.name == "orchestrator":
+                                    chunk_text = _strip_orchestrator_prefixes(chunk_text)
                                 if not self.progress_callback:
-                                    _safe_stream_print(part.text)
-                                collected_text += part.text
+                                    _safe_stream_print(chunk_text)
+                                collected_text += chunk_text
                                 self._partial_response = collected_text
+                                # Keep original part for Gemini conversation, but stream cleaned text
                                 collected_parts.append(part)
-                                if self.progress_callback:
+                                if self.progress_callback and chunk_text:
                                     self.progress_callback(
                                         event_type="chunk",
-                                        content=part.text,
+                                        content=chunk_text,
                                         agent_name=self.name
                                     )
                             if part.function_call:

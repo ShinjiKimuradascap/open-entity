@@ -475,6 +475,35 @@ class SessionLogger:
                 else:
                     result.append({"role": "system", "content": summary_text})
 
+            # Add recent tool memos (compact)
+            tool_memos = self._get_tool_memos(session_id, limit=5)
+            if tool_memos:
+                memo_lines = ["[Recent Tool Memos]"]
+                for memo in tool_memos:
+                    tool = memo.get("tool", "tool")
+                    args = memo.get("args", "")
+                    key_info = memo.get("key_info", "")
+                    preview = memo.get("preview", "")
+                    truncated_path = memo.get("truncated_path")
+
+                    detail = key_info or preview
+                    detail = self._compact_line(detail, max_len=280)
+
+                    line = f"- {tool}"
+                    if args:
+                        line += f" {args}"
+                    if detail:
+                        line += f" -> {detail}"
+                    if truncated_path:
+                        line += f" (full: {truncated_path})"
+                    memo_lines.append(line)
+
+                memo_text = "\n".join(memo_lines)
+                if format == "gemini":
+                    result.append({"role": "user", "parts": [memo_text]})
+                else:
+                    result.append({"role": "system", "content": memo_text})
+
             # Add recent messages
             for msg in messages:
                 role = "user" if msg["role"] == "user" else ("model" if format == "gemini" else "assistant")
@@ -516,6 +545,53 @@ class SessionLogger:
             return [dict(row) for row in reversed(rows)]
         except Exception as e:
             logger.error(f"Failed to get messages: {e}")
+            return []
+
+    def _compact_line(self, text: str, max_len: int = 300) -> str:
+        """Compact text to a single line with max length."""
+        if not text:
+            return ""
+        compact = " ".join(str(text).split())
+        if len(compact) <= max_len:
+            return compact
+        return compact[: max_len - 3] + "..."
+
+    def _get_tool_memos(self, session_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Get recent tool memos for a session."""
+        try:
+            with self._lock:
+                conn = self._get_connection()
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    """
+                    SELECT content
+                    FROM session_events
+                    WHERE session_id = ?
+                      AND event_type = 'tool_memo'
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (session_id, limit)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+
+            memos = []
+            for row in rows:
+                content = row[0]
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except Exception:
+                        content = {"preview": content}
+                if isinstance(content, dict):
+                    memos.append(content)
+
+            # Return in chronological order
+            return list(reversed(memos))
+        except Exception as e:
+            logger.error(f"Failed to get tool memos: {e}")
             return []
 
     def _get_rolling_summary(self, session_id: str) -> Optional[str]:

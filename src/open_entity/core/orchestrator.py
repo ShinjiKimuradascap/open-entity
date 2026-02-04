@@ -29,6 +29,17 @@ from .optimizer import (
 # Module-level logger (shared across this module)
 logger = logging.getLogger(__name__)
 
+def _strip_orchestrator_prefixes(text: str) -> str:
+    """Remove repeated '@orchestrator:' prefixes from output lines."""
+    if not text:
+        return text
+    cleaned_lines = []
+    for line in text.splitlines():
+        # Remove repeated prefixes like "@orchestrator: @orchestrator: ..."
+        cleaned = re.sub(r'^(?:\s*🤖\s*)?(?:@orchestrator:\s*)+', '', line, flags=re.IGNORECASE)
+        cleaned_lines.append(cleaned)
+    return "\n".join(cleaned_lines).lstrip()
+
 try:
     from rich.console import Console
     _console = Console()
@@ -800,7 +811,9 @@ class Orchestrator:
 """
                 response = response + eval_block
 
-            return f"@orchestrator: {response}"
+            # Sanitize repeated @orchestrator prefixes in content
+            response = _strip_orchestrator_prefixes(response)
+            return response
         except Exception as e:
             return f"Error running @orchestrator: {e}"
 
