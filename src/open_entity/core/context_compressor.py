@@ -5,20 +5,8 @@
 システムプロンプトと直近のメッセージは保持し、中間部分をLLMで要約する。
 """
 
-import os
 import logging
 from typing import List, Dict, Any, Tuple, Optional
-
-# Gemini
-from google import genai
-from google.genai import types
-
-# OpenAI
-try:
-    from openai import OpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -60,39 +48,6 @@ class ContextCompressor:
         self.summary_model = summary_model or get_analyzer_model()
         self.compression_ratio = compression_ratio
 
-        # 要約用クライアントの初期化（遅延初期化）
-        self._gemini_client: Optional[genai.Client] = None
-        self._openai_client: Optional["OpenAI"] = None
-
-    def _get_gemini_client(self) -> genai.Client:
-        """Geminiクライアントを取得（遅延初期化）"""
-        if self._gemini_client is None:
-            api_key = (
-                os.environ.get("GENAI_API_KEY") or
-                os.environ.get("GEMINI_API_KEY") or
-                os.environ.get("GOOGLE_API_KEY")
-            )
-            if not api_key:
-                raise ValueError(
-                    "Gemini API key not found. Set GENAI_API_KEY, GEMINI_API_KEY, or GOOGLE_API_KEY"
-                )
-            self._gemini_client = genai.Client(api_key=api_key)
-        return self._gemini_client
-
-    def _get_openai_client(self) -> "OpenAI":
-        """OpenAIクライアントを取得（遅延初期化）"""
-        if self._openai_client is None:
-            if not OPENAI_AVAILABLE:
-                raise ImportError(
-                    "OpenAI package not installed. Run: pip install openai"
-                )
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OpenAI API key not found. Set OPENAI_API_KEY environment variable"
-                )
-            self._openai_client = OpenAI(api_key=api_key)
-        return self._openai_client
 
     def estimate_tokens(self, messages: List[Dict[str, Any]]) -> int:
         """
@@ -175,116 +130,6 @@ class ContextCompressor:
                 formatted.append(f"[{role}]: {content}")
         return "\n\n".join(formatted)
 
-    def _summarize_with_gemini(self, text: str) -> str:
-        """Geminiで要約を生成"""
-        client = self._get_gemini_client()
-
-        prompt = f"""以下の会話履歴を簡潔に要約してください。
-要約には以下を**必ず**含めてください：
-1. 重要な決定事項や結論
-2. 議論されたコンテキストや背景
-3. 未完了のタスクや継続中の話題
-4. **発見・使用されたファイルパスやディレクトリ構造**（フルパスで記載）
-5. **プロジェクトのルートディレクトリ**
-
-特に、ファイルパスは要約から省略しないでください。後続の作業で必要になります。
-
-会話履歴:
----
-{text}
----
-
-要約（箇条書きで簡潔に）:"""
-
-        try:
-            response = client.models.generate_content(
-                model=self.summary_model,
-                contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
-                config=types.GenerateContentConfig(temperature=0.3)
-            )
-
-            if response.candidates and response.candidates[0].content:
-                parts = response.candidates[0].content.parts or []
-                texts = [p.text for p in parts if p.text]
-                return "\n".join(texts)
-        except Exception as e:
-            logger.warning(f"Failed to summarize with Gemini: {e}")
-
-        return ""
-
-    def _summarize_with_openai(self, text: str) -> str:
-        """OpenAIで要約を生成"""
-        client = self._get_openai_client()
-
-        prompt = f"""以下の会話履歴を簡潔に要約してください。
-要約には以下を**必ず**含めてください：
-1. 重要な決定事項や結論
-2. 議論されたコンテキストや背景
-3. 未完了のタスクや継続中の話題
-4. **発見・使用されたファイルパスやディレクトリ構造**（フルパスで記載）
-5. **プロジェクトのルートディレクトリ**
-
-特に、ファイルパスは要約から省略しないでください。後続の作業で必要になります。
-
-会話履歴:
----
-{text}
----
-
-要約（箇条書きで簡潔に）:"""
-
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",  # 要約には軽量モデルを使用
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            logger.warning(f"Failed to summarize with OpenAI: {e}")
-
-        return ""
-
-    def _summarize_with_moonshot(self, text: str) -> str:
-        """Moonshotで要約を生成"""
-        api_key = os.environ.get("MOONSHOT_API_KEY")
-        if not api_key:
-            return ""
-
-        try:
-            client = OpenAI(
-                api_key=api_key,
-                base_url="https://api.moonshot.ai/v1"
-            )
-
-            prompt = f"""以下の会話履歴を簡潔に要約してください。
-要約には以下を**必ず**含めてください：
-1. 重要な決定事項や結論
-2. 議論されたコンテキストや背景
-3. 未完了のタスクや継続中の話題
-4. **発見・使用されたファイルパスやディレクトリ構造**（フルパスで記載）
-5. **プロジェクトのルートディレクトリ**
-
-特に、ファイルパスは要約から省略しないでください。後続の作業で必要になります。
-
-会話履歴:
----
-{text}
----
-
-要約（箇条書きで簡潔に）:"""
-
-            response = client.chat.completions.create(
-                model="kimi-k2.5",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=2000
-            )
-            return response.choices[0].message.content or ""
-        except Exception as e:
-            logger.warning(f"Failed to summarize with Moonshot: {e}")
-            return ""
-
     def _generate_summary(self, messages: List[Dict[str, Any]], provider: str) -> str:
         """
         メッセージリストの要約を生成する。
@@ -301,17 +146,20 @@ class ContextCompressor:
         if not text.strip():
             return ""
 
-        # Moonshot を優先
-        if os.environ.get("MOONSHOT_API_KEY"):
-            result = self._summarize_with_moonshot(text)
-            if result:
-                return result
-
-        # プロバイダに応じて要約を生成
-        if provider in ("openai", "openrouter"):
-            return self._summarize_with_openai(text)
-        else:
-            return self._summarize_with_gemini(text)
+        from .llm_provider import generate_text, get_analyzer_model
+        provider_name = provider or "openrouter"
+        model_name = self.summary_model or get_analyzer_model(provider_name)
+        try:
+            return generate_text(
+                prompt=text,
+                provider=provider_name,
+                model=model_name,
+                max_tokens=2000,
+                temperature=0.3,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to summarize with provider={provider_name}: {e}")
+            return ""
 
     def compress_if_needed(
         self,

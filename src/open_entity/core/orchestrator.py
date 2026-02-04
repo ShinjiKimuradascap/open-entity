@@ -119,6 +119,12 @@ class Orchestrator:
         self.use_optimizer = use_optimizer  # Optimizer使用フラグ
         self.working_directory = working_directory or os.getcwd()  # 作業ディレクトリ
         self.name = "orchestrator"
+
+        # If provider is explicitly specified (e.g., -P), propagate it globally
+        provider_name = getattr(self.provider, "value", self.provider)
+        if provider_name:
+            os.environ["LLM_PROVIDER"] = str(provider_name)
+
         self.loader = AgentLoader(profile=self.profile)
         self.skill_loader = SkillLoader(profile=self.profile)
         self._all_skills: Dict[str, SkillConfig] = {}  # ローカルスキルキャッシュ
@@ -152,9 +158,11 @@ class Orchestrator:
             self.memory_service = None
         else:
             memory_db_path = os.getenv("MEMORY_DB_PATH", str(Path.cwd() / "data" / "memory.db"))
+            provider_name = getattr(self.provider, "value", self.provider)
             self.memory_service = MemoryService(
                 channel_id=self.profile,  # プロファイルごとに記憶を分離
-                db_path=memory_db_path
+                db_path=memory_db_path,
+                provider=provider_name
             )
 
         # Ad-hoc MCP サーバー設定の変換
@@ -187,7 +195,12 @@ class Orchestrator:
         self.runtimes: Dict[str, AgentRuntime] = {}
 
         # 会話履歴管理
-        self.session_logger = session_logger or SessionLogger()
+        self.session_logger = session_logger or SessionLogger(provider=provider_name)
+        if session_logger and provider_name:
+            try:
+                self.session_logger.provider = provider_name
+            except Exception:
+                pass
         self._current_session_id: Optional[str] = None
 
         # サブエージェントのセッションIDをキャッシュ
@@ -1283,9 +1296,11 @@ class Orchestrator:
 }}"""
 
         try:
+            from .llm_provider import get_preferred_provider, get_analyzer_model
+            provider_name = get_preferred_provider()
             result = self._llm_generate_for_optimizer(
                 prompt=eval_prompt,
-                model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+                model=get_analyzer_model(provider_name),
                 max_tokens=200,
                 temperature=0.3
             )
@@ -1372,113 +1387,20 @@ class Orchestrator:
         max_tokens: int,
         temperature: float
     ) -> str:
-        """Optimizer用のLLM生成関数（フォールバック付き・同期版）
-        
-        優先順位: ZAI → Gemini → OpenRouter → OpenAI
-        レートリミット時は次のプロバイダーにフォールバック
-        
-        Note: この関数は同期的です。TaskAnalyzer/QualityEvaluator内で
-        run_in_executor を使用して非同期に呼び出されます。
-        """
-        errors = []
-        
-        # 1. ZAI を試す（OpenAI互換API）
-        zai_key = os.environ.get("ZAI_API_KEY")
-        if zai_key:
-            try:
-                from openai import OpenAI
-                
-                client = OpenAI(
-                    api_key=zai_key,
-                    base_url="https://api.z.ai/api/coding/paas/v4"
-                )
-                response = client.chat.completions.create(
-                    model=os.environ.get("ZAI_MODEL", "glm-4.7"),
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                errors.append(f"ZAI: {e}")
-                if "429" not in str(e) and "rate" not in str(e).lower():
-                    raise  # レートリミット以外のエラーは即座に raise
-        
-        # 2. Gemini にフォールバック
-        gemini_key = (
-            os.environ.get("GENAI_API_KEY") or
-            os.environ.get("GEMINI_API_KEY") or
-            os.environ.get("GOOGLE_API_KEY")
-        )
-        if gemini_key:
-            try:
-                from google import genai
-                from google.genai import types
-                
-                client = genai.Client(api_key=gemini_key)
-                response = client.models.generate_content(
-                    model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        max_output_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                )
-                return response.text
-            except Exception as e:
-                errors.append(f"Gemini: {e}")
-                if "429" not in str(e) and "RESOURCE_EXHAUSTED" not in str(e):
-                    raise  # レートリミット以外のエラーは即座に raise
-        
-        # 3. OpenRouter にフォールバック
-        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-        if openrouter_key:
-            try:
-                from openai import OpenAI
-                
-                client = OpenAI(
-                    api_key=openrouter_key,
-                    base_url="https://openrouter.ai/api/v1"
-                )
-                response = client.chat.completions.create(
-                    model=os.environ.get("OPENROUTER_MODEL", "moonshotai/kimi-k2.5"),
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=max_tokens,
-                    temperature=temperature
-                )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                errors.append(f"OpenRouter: {e}")
-        
-        # 4. OpenAI にフォールバック
-        openai_key = os.environ.get("OPENAI_API_KEY")
-        if openai_key:
-            try:
-                from openai import OpenAI
-                
-                client = OpenAI(api_key=openai_key)
-                model_name = os.environ.get("OPENAI_MODEL", "gpt-5.2-codex")
-                # gpt-5系は max_completion_tokens を使用
-                if "gpt-5" in model_name or "o1" in model_name or "o3" in model_name:
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_completion_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                else:
-                    response = client.chat.completions.create(
-                        model=model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=max_tokens,
-                        temperature=temperature
-                    )
-                return response.choices[0].message.content or ""
-            except Exception as e:
-                errors.append(f"OpenAI: {e}")
-        
-        # 全て失敗
-        raise RuntimeError(f"All LLM providers failed: {'; '.join(errors)}")
+        """Optimizer用のLLM生成関数（統一プロバイダー・同期版）"""
+        from .llm_provider import generate_text, get_preferred_provider, get_analyzer_model
+        provider_name = getattr(self.provider, "value", self.provider) or get_preferred_provider()
+        model_name = model or get_analyzer_model(provider_name)
+        try:
+            return generate_text(
+                prompt=prompt,
+                provider=provider_name,
+                model=model_name,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Optimizer LLM generation failed: {e}")
     
     def get_optimizer_stats(self, days: int = 30) -> Dict[str, Any]:
         """Optimizer の統計情報を取得"""

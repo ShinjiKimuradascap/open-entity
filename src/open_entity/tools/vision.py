@@ -8,33 +8,13 @@ import socket
 from typing import Optional
 from urllib.parse import urlparse
 
-# オプショナル依存の遅延インポート
-_GENAI_AVAILABLE = None
-_OPENAI_AVAILABLE = None
-
-
-def _check_genai() -> bool:
-    """google.generativeaiが利用可能か確認"""
-    global _GENAI_AVAILABLE
-    if _GENAI_AVAILABLE is None:
-        try:
-            from google import genai  # noqa: F401
-            _GENAI_AVAILABLE = True
-        except ImportError:
-            _GENAI_AVAILABLE = False
-    return _GENAI_AVAILABLE
-
-
-def _check_openai() -> bool:
-    """openaiが利用可能か確認"""
-    global _OPENAI_AVAILABLE
-    if _OPENAI_AVAILABLE is None:
-        try:
-            from openai import OpenAI  # noqa: F401
-            _OPENAI_AVAILABLE = True
-        except ImportError:
-            _OPENAI_AVAILABLE = False
-    return _OPENAI_AVAILABLE
+from open_entity.core.llm_provider import (
+    PROVIDER_GEMINI,
+    generate_vision,
+    get_vision_model,
+    get_vision_provider,
+    resolve_provider_and_model,
+)
 
 
 # 画像の拡張子
@@ -132,162 +112,21 @@ def _parse_base64_source(source: str) -> tuple[str, str]:
     return source, "image/png"  # デフォルトはPNG
 
 
-def _detect_provider() -> Optional[str]:
-    """環境変数からプロバイダを自動検出"""
-    if os.environ.get("GENAI_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
-        return "gemini"
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
-    if os.environ.get("OPENROUTER_API_KEY"):
-        return "openrouter"
-    return None
-
-
-def _analyze_with_gemini(
-    image_source: str,
-    question: str,
-    base64_data: Optional[str] = None,
-    mime_type: str = "image/png",
-) -> str:
-    """Gemini Vision APIで画像を解析"""
-    if not _check_genai():
-        return "Error: google-generativeai is not installed. Install with: pip install google-generativeai"
-
-    from google import genai
-    from google.genai import types
-
-    api_key = os.environ.get("GENAI_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        return "Error: GENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, or GENAI_API_KEY environment variable not set"
-
-    client = genai.Client(api_key=api_key)
-    model = os.environ.get("GEMINI_VISION_MODEL", "gemini-2.0-flash")
-
-    # コンテンツを構築
-    parts = []
-
-    if _is_url(image_source) and not base64_data:
-        # URLの場合: Gemini はURLを直接処理できないため、ダウンロードが必要
-        # SSRF対策
-        if _is_private_ip(image_source):
-            return "Error: Access to private/internal URLs is not allowed"
-        try:
-            import urllib.request
-            with urllib.request.urlopen(image_source, timeout=30) as response:
-                image_data = response.read()
-                base64_data = base64.b64encode(image_data).decode("utf-8")
-                # URLから拡張子を推測
-                parsed = urlparse(image_source)
-                ext = os.path.splitext(parsed.path)[1].lower()
-                mime_type = EXTENSION_TO_MIME.get(ext, "image/png")
-        except Exception as e:
-            return f"Error downloading image from URL: {e}"
-
-    if base64_data:
-        parts = [
-            types.Part(
-                inline_data=types.Blob(
-                    mime_type=mime_type,
-                    data=base64.b64decode(base64_data),
-                )
-            ),
-            types.Part(text=question),
-        ]
-    else:
-        # base64_dataがない場合（通常は発生しない）
-        parts = [types.Part(text=question)]
-
+def _download_image_as_base64(image_url: str) -> tuple[str, str]:
+    """URL画像をダウンロードして base64 と MIME を返す（SSRF対策込み）。"""
+    if _is_private_ip(image_url):
+        raise ValueError("Access to private/internal URLs is not allowed")
     try:
-        response = client.models.generate_content(
-            model=model,
-            contents=[types.Content(role="user", parts=parts)],
-        )
-
-        if response.candidates and response.candidates[0].content:
-            texts = [
-                part.text
-                for part in response.candidates[0].content.parts
-                if part.text
-            ]
-            return "\n".join(texts)
-        return "Error: No response from Gemini"
-
+        import urllib.request
+        with urllib.request.urlopen(image_url, timeout=30) as response:
+            image_data = response.read()
+        base64_data = base64.b64encode(image_data).decode("utf-8")
+        parsed = urlparse(image_url)
+        ext = os.path.splitext(parsed.path)[1].lower()
+        mime_type = EXTENSION_TO_MIME.get(ext, "image/png")
+        return base64_data, mime_type
     except Exception as e:
-        return f"Error calling Gemini Vision API: {e}"
-
-
-def _analyze_with_openai(
-    image_source: str,
-    question: str,
-    base64_data: Optional[str] = None,
-    mime_type: str = "image/png",
-    is_openrouter: bool = False,
-) -> str:
-    """OpenAI/OpenRouter Vision APIで画像を解析"""
-    if not _check_openai():
-        return "Error: openai is not installed. Install with: pip install openai"
-
-    from openai import OpenAI
-
-    if is_openrouter:
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        base_url = "https://openrouter.ai/api/v1"
-        model = os.environ.get("OPENROUTER_VISION_MODEL", "openai/gpt-4o")
-        if not api_key:
-            return "Error: OPENROUTER_API_KEY environment variable not set"
-    else:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        base_url = None
-        model = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o")
-        if not api_key:
-            return "Error: OPENAI_API_KEY environment variable not set"
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
-
-    # コンテンツを構築
-    content = []
-
-    # 画像部分
-    if _is_url(image_source):
-        # SSRF対策
-        if _is_private_ip(image_source):
-            return "Error: Access to private/internal URLs is not allowed"
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": image_source},
-        })
-    elif base64_data:
-        data_url = f"data:{mime_type};base64,{base64_data}"
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": data_url},
-        })
-
-    # テキスト部分
-    content.append({
-        "type": "text",
-        "text": question,
-    })
-
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-            max_tokens=1024,
-        )
-
-        if response.choices and response.choices[0].message:
-            return response.choices[0].message.content or ""
-        return "Error: No response from API"
-
-    except Exception as e:
-        provider_name = "OpenRouter" if is_openrouter else "OpenAI"
-        return f"Error calling {provider_name} Vision API: {e}"
+        raise RuntimeError(f"Error downloading image from URL: {e}")
 
 
 def analyze_image(
@@ -332,26 +171,33 @@ def analyze_image(
     if not question:
         question = "この画像を詳しく説明してください"
 
-    # プロバイダの決定
-    if provider is None:
-        provider = _detect_provider()
-        if provider is None:
-            return (
-                "Error: No API key found. Please set one of: "
-                "GEMINI_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY"
-            )
+    # プロバイダ・モデルの決定
+    model_override: Optional[str] = None
+    if provider:
+        provider_name, model_override = resolve_provider_and_model(provider, None)
+    else:
+        provider_name = get_vision_provider()
 
-    provider = provider.lower()
-    if provider not in ("gemini", "openai", "openrouter"):
-        return f"Error: Unsupported provider: {provider}. Use gemini, openai, or openrouter"
+    if provider_name not in ("gemini", "openai", "openrouter", "moonshot"):
+        return f"Error: Unsupported provider: {provider_name}. Use gemini, openai, openrouter, or moonshot"
 
     # 画像ソースの処理
     base64_data: Optional[str] = None
     mime_type = "image/png"
 
+    image_url: Optional[str] = None
+
     if _is_url(image_source):
         # URLはそのまま（OpenAI系）またはダウンロード（Gemini）
-        pass
+        if provider_name == PROVIDER_GEMINI:
+            try:
+                base64_data, mime_type = _download_image_as_base64(image_source)
+            except Exception as e:
+                return str(e)
+        else:
+            if _is_private_ip(image_source):
+                return "Error: Access to private/internal URLs is not allowed"
+            image_url = image_source
     elif _is_base64(image_source):
         # Base64文字列
         base64_data, mime_type = _parse_base64_source(image_source)
@@ -366,12 +212,18 @@ def analyze_image(
     else:
         return f"Error: Invalid image source. Not a valid URL, file path, or Base64 string: {image_source[:100]}..."
 
-    # プロバイダ別の処理
-    if provider == "gemini":
-        return _analyze_with_gemini(image_source, question, base64_data, mime_type)
-    elif provider == "openai":
-        return _analyze_with_openai(image_source, question, base64_data, mime_type, is_openrouter=False)
-    elif provider == "openrouter":
-        return _analyze_with_openai(image_source, question, base64_data, mime_type, is_openrouter=True)
+    model_name = model_override or get_vision_model(provider_name)
+    max_tokens = 1024 if provider_name in ("openai", "openrouter", "moonshot") else None
 
-    return f"Error: Unknown provider: {provider}"
+    try:
+        return generate_vision(
+            prompt=question,
+            image_url=image_url,
+            image_base64=base64_data,
+            image_mime_type=mime_type,
+            provider=provider_name,
+            model=model_name,
+            max_tokens=max_tokens,
+        )
+    except Exception as e:
+        return f"Error: {e}"

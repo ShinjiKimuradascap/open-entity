@@ -490,6 +490,37 @@ def _strip_orchestrator_prefixes(text: str) -> str:
         return text
     return re.sub(r'(?m)^\s*(?:@orchestrator:\s*)+', '', text)
 
+def _detect_pseudo_tool_calls(text: str, tool_names: List[str]) -> List[str]:
+    """Detect tool calls written in plain text (e.g., read_file(...)) instead of actual tool calls."""
+    if not text or not tool_names:
+        return []
+    # Match "tool_name(" at line start (or after newline), which is typical of pseudo tool calls.
+    try:
+        pattern = r'(?m)^\s*(' + "|".join(re.escape(n) for n in tool_names) + r')\s*\('
+    except Exception:
+        return []
+    matches = re.findall(pattern, text)
+    # De-dup while preserving order
+    seen = set()
+    ordered = []
+    for m in matches:
+        if m not in seen:
+            ordered.append(m)
+            seen.add(m)
+    return ordered
+
+def _has_tool_results(messages: List[Any]) -> bool:
+    """Return True if messages include tool results."""
+    for msg in messages:
+        role = None
+        if isinstance(msg, dict):
+            role = msg.get("role")
+        elif hasattr(msg, "role"):
+            role = getattr(msg, "role", None)
+        if role == "tool":
+            return True
+    return False
+
 
 def _compact_text(text: str, max_len: int = 400) -> str:
     """Compact text into a single line with a max length."""
@@ -1463,6 +1494,9 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         # Commented out max_iterations: managed by token limit
         # iterations = 0
         # max_iterations = 20
+        pseudo_tool_retry = 0
+        empty_response_retry = 0
+        had_tool_results = False
         while True:
             if session_id:
                 check_cancelled(session_id)
@@ -1711,6 +1745,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                                 "tool_call_id": tc["id"],
                                 "content": str(result)
                             })
+                        had_tool_results = True
                         
                         # Compress context when exceeding 80%
                         usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
@@ -1731,9 +1766,33 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         if not collected_content:
                              if self._partial_response:
                                  return self._partial_response
+                             if had_tool_results and empty_response_retry < 1:
+                                 empty_response_retry += 1
+                                 messages.append({
+                                     "role": "user",
+                                     "content": (
+                                         "You ran tools but did not provide a final response. "
+                                         "Please provide the final response now."
+                                     )
+                                 })
+                                 continue
                              # Fallback to reasoning content (Z.ai / GLM-4.7)
                              if full_reasoning_content:
                                  return full_reasoning_content
+                        # If the model wrote tool calls in plain text, ask it to call tools properly.
+                        if tools and collected_content:
+                            pseudo = _detect_pseudo_tool_calls(collected_content, list(self.available_tools.keys()))
+                            if pseudo and pseudo_tool_retry < 1:
+                                pseudo_tool_retry += 1
+                                messages.append({"role": "assistant", "content": collected_content})
+                                messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "You wrote a tool call in plain text. "
+                                        "Please call tools using function calling (tool_calls), not code blocks."
+                                    )
+                                })
+                                continue
                         return collected_content
                 else:
                     # Non-streaming mode
@@ -1846,6 +1905,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 tasks = [execute_one(tc) for tc in message.tool_calls]
                 tool_results = await asyncio.gather(*tasks)
                 messages.extend(tool_results)
+                had_tool_results = True
                 
                 # Compress context when exceeding 80%
                 usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
@@ -1875,6 +1935,29 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                     self.progress_callback(event_type="start", agent_name=self.name)
                     self.progress_callback(event_type="chunk", content=content, agent_name=self.name)
                     self.progress_callback(event_type="done", agent_name=self.name)
+                if tools and content:
+                    pseudo = _detect_pseudo_tool_calls(content, list(self.available_tools.keys()))
+                    if pseudo and pseudo_tool_retry < 1:
+                        pseudo_tool_retry += 1
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "You wrote a tool call in plain text. "
+                                "Please call tools using function calling (tool_calls), not code blocks."
+                            )
+                        })
+                        continue
+                if (not content) and had_tool_results and empty_response_retry < 1:
+                    empty_response_retry += 1
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You ran tools but did not provide a final response. "
+                            "Please provide the final response now."
+                        )
+                    })
+                    continue
                 return content
 
         # If max_iterations is reached
@@ -1940,6 +2023,9 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 temperature=0.7,
             )
 
+        pseudo_tool_retry = 0
+        empty_response_retry = 0
+        had_tool_results = False
         while True:
             if session_id:
                 check_cancelled(session_id)
@@ -2033,8 +2119,32 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         tasks = [execute_one(fc) for fc in function_calls]
                         tool_responses = await asyncio.gather(*tasks)
                         messages.append(types.Content(role="tool", parts=tool_responses))
+                        had_tool_results = True
                         continue
                     else:
+                        if (not collected_text) and had_tool_results and empty_response_retry < 1:
+                            empty_response_retry += 1
+                            messages.append(types.Content(
+                                role="user",
+                                parts=[types.Part(text=(
+                                    "You ran tools but did not provide a final response. "
+                                    "Please provide the final response now."
+                                ))]
+                            ))
+                            continue
+                        if tools_config and collected_text:
+                            pseudo = _detect_pseudo_tool_calls(collected_text, list(self.available_tools.keys()))
+                            if pseudo and pseudo_tool_retry < 1:
+                                pseudo_tool_retry += 1
+                                messages.append(types.Content(role="model", parts=collected_parts))
+                                messages.append(types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=(
+                                        "You wrote a tool call in plain text. "
+                                        "Please call tools using function calling, not code blocks."
+                                    ))]
+                                ))
+                                continue
                         return collected_text
 
                 else:
@@ -2097,9 +2207,33 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         tasks = [execute_one(fc) for fc in function_calls]
                         tool_responses = await asyncio.gather(*tasks)
                         messages.append(types.Content(role="tool", parts=tool_responses))
+                        had_tool_results = True
                         continue
                     else:
                         full_text = "".join(p.text for p in message.parts if p.text)
+                        if (not full_text) and had_tool_results and empty_response_retry < 1:
+                            empty_response_retry += 1
+                            messages.append(types.Content(
+                                role="user",
+                                parts=[types.Part(text=(
+                                    "You ran tools but did not provide a final response. "
+                                    "Please provide the final response now."
+                                ))]
+                            ))
+                            continue
+                        if tools_config and full_text:
+                            pseudo = _detect_pseudo_tool_calls(full_text, list(self.available_tools.keys()))
+                            if pseudo and pseudo_tool_retry < 1:
+                                pseudo_tool_retry += 1
+                                messages.append(message)
+                                messages.append(types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=(
+                                        "You wrote a tool call in plain text. "
+                                        "Please call tools using function calling, not code blocks."
+                                    ))]
+                                ))
+                                continue
                         return full_text
 
             except OperationCancelled:

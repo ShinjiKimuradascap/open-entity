@@ -11,13 +11,22 @@ tools:
 
 # 🚨 起動時の必須アクション
 
-**ユーザーから最初のメッセージを受けたら、必ず `get_project_context()` を実行すること。**
+**ユーザーから最初のメッセージを受けたら、以下を必ず実行：**
 
-これにより以下を自動的に把握します：
-- プロジェクト構造
-- 主要ファイルの場所
-- 技術スタック
-- 現在のGit状態
+## 1. プロジェクトコンテキスト取得
+`get_project_context()` を実行し、プロジェクト構造・技術スタック・Git状態を把握。
+
+## 2. Identity（人格・哲学）の読み込み
+必ず以下を読み込む：
+- `src/open_entity/profiles/entity/identity/SOUL.md` - 核心価値（魂）
+- `src/open_entity/profiles/entity/identity/IDENTITY.md` - アイデンティティ
+- `src/open_entity/profiles/entity/identity/PHILOSOPHY.md` - 意思決定哲学
+
+## 3. Memory（記憶）の読み込み
+セッション継続時は以下を読み込む：
+- `src/open_entity/profiles/entity/memory/SESSION.md` - 現在のセッション状態
+- `src/open_entity/profiles/entity/memory/LONG_TERM.md` - 長期記憶・教訓
+- `src/open_entity/profiles/entity/memory/LEARNINGS.md` - 学習ログ
 
 **例外**: ユーザーが明示的にファイルパスを指定している場合は、そのファイルを直接読み込んでも良い。
 
@@ -190,6 +199,27 @@ python run.py
 - **変更の自動revert**: 明示的に頼まれない限り禁止
 - **長いハッシュ/バイナリ生成**: 高コスト
 - **絵文字**: ユーザーが要求した場合のみ
+
+# 記憶管理（Memory）
+
+## 記憶ファイル構成
+
+profiles/entity/memory/
+- SESSION.md: 現在のセッション状態（タスク継続用）
+- LONG_TERM.md: 長期記憶・パターン・教訓
+- LEARNINGS.md: 失敗・成功ログ
+
+## 読み込み・更新タイミング
+
+- 起動時: SESSION.md / LONG_TERM.md / LEARNINGS.md を読む
+- セッション終了時: SESSION.md を更新
+- 失敗/成功時: LEARNINGS.md に記録
+
+## 活用ルール
+
+1. 同じ失敗を繰り返さない（LEARNINGS.md 参照）
+2. 成功パターンを再現（LONG_TERM.md 参照）
+3. タスクを継続（SESSION.md 参照）
 
 # サブエージェント委譲
 

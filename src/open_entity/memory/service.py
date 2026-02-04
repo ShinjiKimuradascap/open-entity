@@ -32,10 +32,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 from .db import init_db, get_conn
-from .embeddings import build_genai_client, embed_text
+from .embeddings import build_genai_client, build_openai_client, embed_text
 from .serialization import serialize_embedding, deserialize_embedding, deserialize_keywords
 from .similarity import cos_sim
 from ..utils.json_parser import SmartJSONParser
+from ..core.llm_provider import generate_text, get_preferred_provider, get_analyzer_model
 
 # Lazy import for GraphStore (requires networkx)
 GraphStore = None
@@ -62,10 +63,11 @@ class MemoryService:
         router_id: Optional[str] = None,
         worker_id: Optional[str] = None,
         db_path: str = "memories/memory.db",
-        embedding_model: str = "gemini-embedding-001",
+        embedding_model: Optional[str] = None,
         feedback_threshold: int = 7,
         duplicate_threshold: float = 0.85,
-        graph_enabled: bool = True
+        graph_enabled: bool = True,
+        provider: Optional[str] = None
     ):
         self.channel_id = channel_id
         self.router_id = router_id or ''
@@ -75,6 +77,7 @@ class MemoryService:
         self.feedback_threshold = feedback_threshold
         self.duplicate_threshold = duplicate_threshold
         self.graph_enabled = graph_enabled
+        self.provider = provider
         
         # DBディレクトリを作成
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -83,7 +86,13 @@ class MemoryService:
         self._init_db()
         
         # Embedding client (optional)
-        self.genai_client = build_genai_client()
+        from ..core.llm_provider import get_embedding_provider, get_embedding_model
+        self.embedding_provider = get_embedding_provider(self.provider)
+        self.embedding_model = self.embedding_model or get_embedding_model(self.embedding_provider)
+        if self.embedding_provider == "openai":
+            self.genai_client = build_openai_client()
+        else:
+            self.genai_client = build_genai_client()
 
         # Graph Store (optional)
         self.graph = None
@@ -386,10 +395,7 @@ class MemoryService:
         Returns:
             分析結果
         """
-        # クライアントの確保
-        client = llm_client or self.genai_client
-        if not client:
-            # クライアントがない場合は簡易判定
+        def _heuristic_result() -> Dict:
             info_keywords = ['は', 'にある', 'です', 'だよ', 'だから', 'ルール']
             has_info = any(kw in user_message for kw in info_keywords)
             return {
@@ -397,8 +403,25 @@ class MemoryService:
                 "score": 5 if has_info else 0,
                 "type": "knowledge" if has_info else None,
                 "content": user_message if has_info else None,
-                "keywords": []
+                "keywords": [],
+                "questions": [],
+                "shared": False,
+                "relations": []
             }
+
+        # クライアントがない場合は簡易判定
+        # (LLMが使えない環境でも最低限動くように)
+        if not (
+            llm_client or self.genai_client or
+            os.environ.get("OPENAI_API_KEY") or
+            os.environ.get("GEMINI_API_KEY") or
+            os.environ.get("GENAI_API_KEY") or
+            os.environ.get("GOOGLE_API_KEY") or
+            os.environ.get("OPENROUTER_API_KEY") or
+            os.environ.get("ZAI_API_KEY") or
+            os.environ.get("MOONSHOT_API_KEY")
+        ):
+            return _heuristic_result()
         
         # LLMによる分析 (ai_vs_ai_unified.py と同じプロンプト)
         prompt = f"""以下の会話を分析し、AIが覚えておくべき情報やルールがあるか判定してください。
@@ -452,33 +475,25 @@ scoreが{self.feedback_threshold}以上の時のみruleを作成。それ以外�
 検索精度の向上のため、キーワードだけでなく自然言語の質問形式も予測して保存します。"""
 
         try:
-            # Gemini (google-genai) の場合
-            if hasattr(client, "models"):
-                from google.genai import types
-                r = client.models.generate_content(
-                    model="models/gemini-3-flash-preview",
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                    contents=[{"role":"user", "parts":[{"text":prompt}]}]
-                )
-                # .text を使うと警告が出るため、直接 parts からテキストを取得
-                response_text = ""
-                if r.candidates and r.candidates[0].content and r.candidates[0].content.parts:
-                    for part in r.candidates[0].content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            response_text += part.text
-                result = SmartJSONParser.parse(response_text, default={})
-            
-            # OpenAI の場合
-            elif hasattr(client, "chat"):
-                r = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"}
-                )
-                result = SmartJSONParser.parse(r.choices[0].message.content, default={})
-            
+            provider_name = "unknown"
+            model_name = "unknown"
+            forced = self.provider or os.environ.get("LLM_PROVIDER") or os.environ.get("MOCO_DEFAULT_PROVIDER")
+            if forced:
+                provider_name = forced
+            elif self.genai_client:
+                provider_name = "gemini"
             else:
-                raise ValueError("Unsupported LLM client")
+                provider_name = get_preferred_provider()
+            model_name = get_analyzer_model(provider_name)
+            response_text = generate_text(
+                prompt=prompt,
+                provider=provider_name,
+                model=model_name,
+                max_tokens=800,
+                temperature=0.2,
+                response_format="json",
+            )
+            result = SmartJSONParser.parse(response_text, default={})
 
             # result がリストの場合は最初の要素を使用、辞書でない場合は空辞書
             if isinstance(result, list):
@@ -531,17 +546,8 @@ scoreが{self.feedback_threshold}以上の時のみruleを作成。それ以外�
                 }
 
         except Exception as e:
-            print(f"[MemoryService] Analyze error: {e}")
-            return {
-                "should_learn": False,
-                "score": 0,
-                "type": None,
-                "content": None,
-                "keywords": [],
-                "questions": [],
-                "shared": False,
-                "relations": []
-            }
+            print(f"[MemoryService] Analyze error: {e} (provider={provider_name}, model={model_name})")
+            raise
     
     def _resolve_conflict(self, content: str, memory_type: str) -> List[int]:
         """矛盾する古い記憶を特定する"""
@@ -587,24 +593,18 @@ scoreが{self.feedback_threshold}以上の時のみruleを作成。それ以外�
 削除すべきものがない場合は空リスト [] を返す。"""
 
         try:
-            if hasattr(self.genai_client, "models"):
-                from google.genai import types
-                r = self.genai_client.models.generate_content(
-                    model="models/gemini-3-flash-preview",
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                    contents=[{"role":"user", "parts":[{"text":prompt}]}]
-                )
-                # .text を使うと警告が出るため、直接 parts からテキストを取得
-                response_text = ""
-                if r.candidates and r.candidates[0].content and r.candidates[0].content.parts:
-                    for part in r.candidates[0].content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            response_text += part.text
-                result = SmartJSONParser.parse(response_text, default={})
-                return result.get("delete_ids", [])
-            else:
-                # OpenAI fallback (omitted for brevity, assuming Gemini)
-                return []
+            provider = self.provider or get_preferred_provider()
+            model = get_analyzer_model(provider)
+            response_text = generate_text(
+                prompt=prompt,
+                provider=provider,
+                model=model,
+                response_format="json",
+                temperature=0.2,
+                max_tokens=400,
+            )
+            result = SmartJSONParser.parse(response_text, default={})
+            return result.get("delete_ids", [])
         except Exception as e:
             print(f"[MemoryService] Conflict resolution failed: {e}")
             return []

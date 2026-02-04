@@ -15,6 +15,7 @@ import tiktoken
 from typing import List, Dict, Any, Optional, Set
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
+from open_entity.core.llm_provider import get_embedding_provider, get_embedding_model
 
 logger = logging.getLogger(__name__)
 _DOTENV_LOADED = False
@@ -84,11 +85,16 @@ def _get_gemini_api_key() -> Optional[str]:
     )
 
 
-def _get_embedding_provider() -> Optional[str]:
-    if OPENAI_AVAILABLE and _get_openai_api_key():
+def _get_embedding_provider(preferred: Optional[str] = None) -> Optional[str]:
+    provider = get_embedding_provider(preferred)
+    if provider == "openai" and OPENAI_AVAILABLE and _get_openai_api_key():
         return "openai"
+    if provider == "gemini" and GENAI_AVAILABLE and _get_gemini_api_key():
+        return "gemini"
     if GENAI_AVAILABLE and _get_gemini_api_key():
         return "gemini"
+    if OPENAI_AVAILABLE and _get_openai_api_key():
+        return "openai"
     return None
 
 
@@ -176,7 +182,7 @@ class SemanticSearcher:
     """ドキュメント向け意味検索を管理するクラス"""
 
     def __init__(self, provider: Optional[str] = None):
-        self.provider = provider or _get_embedding_provider()
+        self.provider = provider or _get_embedding_provider(provider)
         if not self.provider:
             raise ValueError(
                 "No embedding provider available. "
@@ -195,7 +201,8 @@ class SemanticSearcher:
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
 
-        self.chunker = DocChunker()
+        self.embedding_model = get_embedding_model(self.provider)
+        self.chunker = DocChunker(model_name=self.embedding_model)
         self.index: Optional[faiss.Index] = None
         self.metadata: List[Dict[str, Any]] = []
         self.file_cache: Dict[str, Dict[str, Any]] = {}
@@ -228,7 +235,7 @@ class SemanticSearcher:
     def _get_openai_embeddings(self, texts: List[str]) -> np.ndarray:
         response = self._openai_client.embeddings.create(
             input=texts,
-            model=OPENAI_EMBEDDING_MODEL
+            model=self.embedding_model
         )
         embeddings = np.array([data.embedding for data in response.data], dtype=np.float32)
         faiss.normalize_L2(embeddings)
@@ -238,7 +245,7 @@ class SemanticSearcher:
         embeddings_list = []
         for text in texts:
             response = self._gemini_client.models.embed_content(
-                model=GEMINI_EMBEDDING_MODEL,
+                model=self.embedding_model,
                 contents=text
             )
             emb = response.embeddings[0].values

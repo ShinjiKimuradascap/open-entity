@@ -15,14 +15,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Gemini client for summarization
-try:
-    from google import genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    genai = None
-    GENAI_AVAILABLE = False
-
 # Summarization settings
 DEFAULT_MAX_TOKENS = 8000
 
@@ -179,8 +171,9 @@ class SessionLogger:
     Supports rolling summarization for long sessions.
     """
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, provider: Optional[str] = None):
         self.db_path = db_path or _get_default_db_path()
+        self.provider = provider
         self._lock = threading.RLock()
         self.context_monitor = ContextHealthMonitor()
         # Transcript directory (same parent as db)
@@ -671,95 +664,45 @@ class SessionLogger:
             return existing_summary
 
         try:
-            # Moonshot API を優先（OpenAI互換）
-            api_key = os.environ.get("MOONSHOT_API_KEY")
-            if api_key:
-                import openai
-                client = openai.OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.moonshot.ai/v1"
-                )
-                
-                # Build conversation text
-                conversation_lines = []
-                for msg in messages:
-                    role = msg.get("role", "assistant")
-                    content = msg.get("content", "")[:1000]
-                    if role == "user":
-                        conversation_lines.append(f"ユーザー: {content}")
-                    elif role == "tool":
-                        conversation_lines.append(f"ツール: {content}")
-                    else:
-                        conversation_lines.append(f"アシスタント: {content}")
-                new_conversation = "\n".join(conversation_lines)
+            from open_entity.core.llm_provider import generate_text, get_preferred_provider, get_analyzer_model
 
-                # Build prompt
-                if existing_summary:
-                    prompt = ROLLING_SUMMARIZE_PROMPT.format(
-                        previous_summary=existing_summary,
-                        new_conversation=new_conversation
-                    )
+            # Build conversation text
+            conversation_lines = []
+            for msg in messages:
+                role = msg.get("role", "assistant")
+                content = msg.get("content", "")[:1000]
+                if role == "user":
+                    conversation_lines.append(f"ユーザー: {content}")
+                elif role == "tool":
+                    conversation_lines.append(f"ツール: {content}")
                 else:
-                    prompt = SUMMARIZE_PROMPT.format(conversation=new_conversation)
+                    conversation_lines.append(f"アシスタント: {content}")
+            new_conversation = "\n".join(conversation_lines)
 
-                # Call Moonshot
-                response = client.chat.completions.create(
-                    model="kimi-k2.5",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=2000
+            # Build prompt
+            if existing_summary:
+                prompt = ROLLING_SUMMARIZE_PROMPT.format(
+                    previous_summary=existing_summary,
+                    new_conversation=new_conversation
                 )
-                new_summary = response.choices[0].message.content.strip() if response.choices else None
+            else:
+                prompt = SUMMARIZE_PROMPT.format(conversation=new_conversation)
 
-                if new_summary:
-                    self._save_rolling_summary(session_id, new_summary)
-                    logger.info(f"Updated summary for session {session_id} using Moonshot")
+            provider_name = self.provider or get_preferred_provider()
+            model_name = get_analyzer_model(provider_name)
+            new_summary = generate_text(
+                prompt=prompt,
+                provider=provider_name,
+                model=model_name,
+                max_tokens=2000,
+                temperature=0.3,
+            ).strip()
 
-                return new_summary
+            if new_summary:
+                self._save_rolling_summary(session_id, new_summary)
+                logger.info(f"Updated summary for session {session_id} using {provider_name}")
 
-            # Gemini fallback
-            if GENAI_AVAILABLE:
-                gemini_key = (
-                    os.environ.get("GENAI_API_KEY") or
-                    os.environ.get("GEMINI_API_KEY") or
-                    os.environ.get("GOOGLE_API_KEY")
-                )
-                if gemini_key:
-                    client = genai.Client(api_key=gemini_key)
-                    
-                    conversation_lines = []
-                    for msg in messages:
-                        role = msg.get("role", "assistant")
-                        content = msg.get("content", "")[:1000]
-                        if role == "user":
-                            conversation_lines.append(f"ユーザー: {content}")
-                        elif role == "tool":
-                            conversation_lines.append(f"ツール: {content}")
-                        else:
-                            conversation_lines.append(f"アシスタント: {content}")
-                    new_conversation = "\n".join(conversation_lines)
-
-                    if existing_summary:
-                        prompt = ROLLING_SUMMARIZE_PROMPT.format(
-                            previous_summary=existing_summary,
-                            new_conversation=new_conversation
-                        )
-                    else:
-                        prompt = SUMMARIZE_PROMPT.format(conversation=new_conversation)
-
-                    response = client.models.generate_content(
-                        model=_get_summarize_model(),
-                        contents=prompt
-                    )
-                    new_summary = response.text.strip() if response.text else None
-
-                    if new_summary:
-                        self._save_rolling_summary(session_id, new_summary)
-                        logger.info(f"Updated summary for session {session_id} using Gemini")
-
-                    return new_summary
-
-            logger.warning("No API key for summarization (MOONSHOT_API_KEY or GEMINI_API_KEY)")
-            return existing_summary
+            return new_summary or existing_summary
 
         except Exception as e:
             logger.error(f"Failed to update summary: {e}")

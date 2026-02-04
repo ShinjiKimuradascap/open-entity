@@ -173,6 +173,18 @@ OPENROUTER_API_KEY=your-openrouter-api-key
 
 # Z.ai（オプション）
 ZAI_API_KEY=your-zai-api-key
+
+# Moonshot（オプション）
+MOONSHOT_API_KEY=your-moonshot-api-key
+
+# 統一プロバイダ設定（推奨）
+LLM_PROVIDER=moonshot
+MOONSHOT_MODEL=kimi-for-coding
+MOONSHOT_VISION_MODEL=kimi-k2.5
+
+# Embedding（フォールバック用）
+EMBEDDING_PROVIDER=gemini
+EMBEDDING_MODEL=gemini-embedding-001
 EOF
 ```
 

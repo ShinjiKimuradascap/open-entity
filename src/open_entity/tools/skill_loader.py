@@ -1082,27 +1082,16 @@ class SkillLoader:
             return query
         
         try:
-            from google import genai
-            from google.genai import types
-            
-            api_key = (
-                os.environ.get("GENAI_API_KEY") or
-                os.environ.get("GEMINI_API_KEY") or
-                os.environ.get("GOOGLE_API_KEY")
-            )
-            if not api_key:
-                return query
-            
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=f"Translate to English (only output the translation, no explanation): {query}",
-                config=types.GenerateContentConfig(
-                    max_output_tokens=100,
-                    temperature=0.0
-                )
-            )
-            translated = response.text.strip()
+            from open_entity.core.llm_provider import generate_text, get_preferred_provider, get_analyzer_model
+            provider_name = get_preferred_provider()
+            model_name = get_analyzer_model(provider_name)
+            translated = generate_text(
+                prompt=f"Translate to English (only output the translation, no explanation): {query}",
+                provider=provider_name,
+                model=model_name,
+                max_tokens=100,
+                temperature=0.0,
+            ).strip()
             logger.info(f"Translated query: '{query}' -> '{translated}'")
             # verbose 用に print も出力
             logger.debug(f"[Skills] Translated: '{query}' -> '{translated}'")

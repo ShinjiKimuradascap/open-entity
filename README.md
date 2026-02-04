@@ -59,6 +59,15 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 # Optional: Additional providers
 GEMINI_API_KEY=your_gemini_key
 OPENAI_API_KEY=your_openai_key
+
+# Unified provider (recommended)
+LLM_PROVIDER=moonshot
+MOONSHOT_MODEL=kimi-for-coding
+MOONSHOT_VISION_MODEL=kimi-k2.5
+
+# Embeddings (fallback provider for memory/search)
+EMBEDDING_PROVIDER=gemini
+EMBEDDING_MODEL=gemini-embedding-001
 EOF
 ```
 
