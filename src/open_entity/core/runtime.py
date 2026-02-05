@@ -1115,15 +1115,18 @@ class AgentRuntime:
         self._tool_call_count += 1
         
         usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
+        warn_enabled = os.environ.get("MOCO_CONTEXT_WARNINGS", "").lower() in ("1", "true", "yes", "on")
         
         # Over 100%: Instruction for forced termination
         if usage_ratio >= 1.0:
             self._context_limit_reached = True
-            return (
-                f"{result}\n\n"
-                f"⛔ **Context limit reached** ({self._accumulated_tokens:,} / {MAX_CONTEXT_TOKENS:,} tokens)\n"
-                f"Do not call any more tools and complete the response with the current information."
-            )
+            if warn_enabled:
+                return (
+                    f"{result}\n\n"
+                    f"⛔ **Context limit reached** ({self._accumulated_tokens:,} / {MAX_CONTEXT_TOKENS:,} tokens)\n"
+                    f"Do not call any more tools and complete the response with the current information."
+                )
+            return result
         
         # Tool call limit - Commented out: Managed by ContextCompressor
         # if self._tool_call_count >= MAX_TOOL_CALLS:
@@ -1136,13 +1139,14 @@ class AgentRuntime:
         
         # 80% warning
         if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
-            remaining = MAX_CONTEXT_TOKENS - self._accumulated_tokens
-            return (
-                f"{result}\n\n"
-                f"⚠️ Context {usage_ratio*100:.0f}% in use "
-                f"(Approx. {remaining:,} tokens remaining)\n"
-                f"Please keep tool calls to a minimum."
-            )
+            if warn_enabled:
+                remaining = MAX_CONTEXT_TOKENS - self._accumulated_tokens
+                return (
+                    f"{result}\n\n"
+                    f"⚠️ Context {usage_ratio*100:.0f}% in use "
+                    f"(Approx. {remaining:,} tokens remaining)\n"
+                    f"Please keep tool calls to a minimum."
+                )
         
         return result
 
@@ -2261,6 +2265,43 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         if tools_config and not allow_tool_stream:
             use_stream = False
 
+        def _compress_gemini_messages_if_needed(message_list: List[Any]) -> List[Any]:
+            usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
+            if usage_ratio < CONTEXT_WARNING_THRESHOLD:
+                return message_list
+            compressor = ContextCompressor(
+                max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
+                preserve_recent=10
+            )
+            dict_messages = _gemini_messages_to_dict(message_list)
+            compressed_dicts, was_compressed = compressor.compress_if_needed(dict_messages, self.provider)
+            if not was_compressed:
+                return message_list
+
+            # Try to keep recent messages in original Gemini format to preserve tool structure.
+            summary_content = ""
+            for msg in compressed_dicts:
+                role = msg.get("role")
+                content = str(msg.get("content", ""))
+                if role in ("assistant", "model") and content.startswith("[以前の会話の要約]"):
+                    summary_content = content
+                    break
+
+            if summary_content:
+                recent_messages = message_list[-compressor.preserve_recent:]
+                new_messages: List[Any] = [
+                    types.Content(role="model", parts=[types.Part(text=summary_content)])
+                ]
+                new_messages.extend(recent_messages)
+            else:
+                new_messages = _dict_to_gemini_messages(compressed_dicts)
+
+            # Update estimated tokens after compression
+            self._accumulated_tokens = compressor.estimate_tokens(_gemini_messages_to_dict(new_messages))
+            if self.verbose:
+                print(f"\n🗜️ [Context compressed: {self._accumulated_tokens:,} tokens]")
+            return new_messages
+
         pseudo_tool_retry = 0
         empty_response_retry = 0
         had_tool_results = False
@@ -2358,6 +2399,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         tool_responses = await asyncio.gather(*tasks)
                         messages.append(types.Content(role="tool", parts=tool_responses))
                         had_tool_results = True
+                        messages = _compress_gemini_messages_if_needed(messages)
                         continue
                     else:
                         tag_calls, cleaned_text = _parse_tool_call_tags(
@@ -2387,6 +2429,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             tool_responses = await asyncio.gather(*tasks)
                             messages.append(types.Content(role="tool", parts=tool_responses))
                             had_tool_results = True
+                            messages = _compress_gemini_messages_if_needed(messages)
                             continue
                         if (not collected_text) and had_tool_results and empty_response_retry < 1:
                             empty_response_retry += 1
@@ -2474,6 +2517,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         tool_responses = await asyncio.gather(*tasks)
                         messages.append(types.Content(role="tool", parts=tool_responses))
                         had_tool_results = True
+                        messages = _compress_gemini_messages_if_needed(messages)
                         continue
                     else:
                         full_text = "".join(p.text for p in message.parts if p.text)
@@ -2504,6 +2548,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             tool_responses = await asyncio.gather(*tasks)
                             messages.append(types.Content(role="tool", parts=tool_responses))
                             had_tool_results = True
+                            messages = _compress_gemini_messages_if_needed(messages)
                             continue
                         if (not full_text) and had_tool_results and empty_response_retry < 1:
                             empty_response_retry += 1
