@@ -662,15 +662,34 @@ def _extract_key_info_block(result_text: str) -> str:
     block = _extract_important_info(result_text)
     return block.strip()
 
+def _extract_preview_block(result_text: str) -> str:
+    """Extract preview block if present in truncated output."""
+    if not result_text:
+        return ""
+    import re
+    match = re.search(r"## Preview\s*\n(.*?)\n\n⚠️ OUTPUT TRUNCATED", result_text, flags=re.S)
+    if match:
+        return match.group(1).strip()
+    return ""
+
 
 def _build_tool_memo(tool_name: str, args: Dict[str, Any], result_text: str) -> Dict[str, Any]:
     """Build a compact tool memo for persistence between turns."""
+    truncated_path = _extract_truncated_path(result_text)
+    preview_block = _extract_preview_block(result_text)
+    preview = preview_block or _compact_text(result_text, max_len=500)
+    if preview and len(preview) > 500:
+        preview = preview[:500]
+    read_hint = None
+    if truncated_path:
+        read_hint = f"read_file(path=\"{truncated_path}\", offset=1, limit=10000)"
     memo = {
         "tool": tool_name,
         "args": _compact_args(args),
         "key_info": _extract_key_info_block(result_text),
-        "preview": _compact_text(result_text, max_len=300),
-        "truncated_path": _extract_truncated_path(result_text),
+        "preview": preview,
+        "truncated_path": truncated_path,
+        "read_hint": read_hint,
     }
     # Keep memo fields compact
     if memo["key_info"] and len(memo["key_info"]) > 800:

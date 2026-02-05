@@ -477,10 +477,15 @@ class SessionLogger:
                     args = memo.get("args", "")
                     key_info = memo.get("key_info", "")
                     preview = memo.get("preview", "")
+                    read_hint = memo.get("read_hint", "")
                     truncated_path = memo.get("truncated_path")
 
-                    detail = key_info or preview
-                    detail = self._compact_line(detail, max_len=280)
+                    if truncated_path:
+                        detail = preview or key_info
+                    else:
+                        detail = key_info or preview
+                    max_len = 520 if preview and truncated_path else 280
+                    detail = self._compact_line(detail, max_len=max_len)
 
                     line = f"- {tool}"
                     if args:
@@ -490,6 +495,8 @@ class SessionLogger:
                     if truncated_path:
                         line += f" (full: {truncated_path})"
                     memo_lines.append(line)
+                    if read_hint:
+                        memo_lines.append(f"  read_file: {read_hint}")
 
                 memo_text = "\n".join(memo_lines)
                 if format == "gemini":
