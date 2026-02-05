@@ -1615,9 +1615,13 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         # Tool settings
         tools = self.openai_tools if self.openai_tools else None
 
-        # Z.ai doesn't support tool_stream in streaming mode for glm-4.7
-        # Force non-streaming when using tools to ensure tool calls work correctly
+        # Streaming can drop or corrupt tool calls. Default to non-streaming when tools are enabled.
+        # Override with MOCO_TOOL_STREAM=1 if you explicitly want streaming with tools.
         use_stream = self.stream
+        allow_tool_stream = os.environ.get("MOCO_TOOL_STREAM", "").lower() in ("1", "true", "yes", "on")
+        if tools and not allow_tool_stream:
+            use_stream = False
+        # Z.ai doesn't support tool_stream in streaming mode for glm-4.7
         if self.provider == LLMProvider.ZAI:
             # ZAI はストリーミング中の tool_calls が不安定なので常に非ストリーミング
             use_stream = False
@@ -2250,6 +2254,13 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 temperature=0.7,
             )
 
+        # Streaming can drop or corrupt tool calls. Default to non-streaming when tools are enabled.
+        # Override with MOCO_TOOL_STREAM=1 if you explicitly want streaming with tools.
+        use_stream = self.stream
+        allow_tool_stream = os.environ.get("MOCO_TOOL_STREAM", "").lower() in ("1", "true", "yes", "on")
+        if tools_config and not allow_tool_stream:
+            use_stream = False
+
         pseudo_tool_retry = 0
         empty_response_retry = 0
         had_tool_results = False
@@ -2258,7 +2269,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 check_cancelled(session_id)
 
             try:
-                if self.stream:
+                if use_stream:
                     # Streaming mode
                     response_stream = self.client.models.generate_content_stream(
                         model=self.model_name,
