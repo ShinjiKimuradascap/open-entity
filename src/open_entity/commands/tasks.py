@@ -225,35 +225,23 @@ def tasks_status():
 def tasks_logs(
     task_id: str = typer.Argument(..., help="タスクID"),
     follow: bool = typer.Option(False, "--follow", "-f", help="リアルタイム更新"),
+    max_bytes: int = typer.Option(0, "--max-bytes", "-n", help="表示する最大バイト数（0=無制限）"),
 ):
     """タスクのログを表示"""
-    import time
-    
-    store = TaskStore()
+    from ..core.task_runner import TaskRunner
+
+    runner = TaskRunner()
     console = Console()
 
-    def show_logs():
-        logs = store.get_task_logs(task_id)
-        if not logs:
-            return "[dim]No logs found.[/dim]"
-        return "\n".join(logs)
-
-    if not follow:
-        console.print(show_logs())
-        return
-
-    # フォローモード
-    last_len = 0
-    try:
-        while True:
-            logs = store.get_task_logs(task_id)
-            if len(logs) > last_len:
-                new_logs = logs[last_len:]
-                console.print("\n".join(new_logs))
-                last_len = len(logs)
-            time.sleep(1)
-    except KeyboardInterrupt:
-        console.print("\n[dim]Log stream closed.[/dim]")
+    if follow:
+        # tail -f モード
+        runner.tail_logs(task_id)
+    else:
+        logs = runner.get_logs(task_id, max_bytes=max_bytes)
+        if logs == "Log file not found.":
+            console.print("[dim]No logs found.[/dim]")
+        else:
+            console.print(logs)
 
 
 @tasks_app.command("cancel")
@@ -275,15 +263,23 @@ def tasks_exec(
     task_id: str = typer.Argument(..., help="タスクID"),
     profile: str = typer.Option(..., "--profile", "-p"),
     working_dir: Optional[str] = typer.Option(None, "--working-dir", "-w"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-P"),
+    model: Optional[str] = typer.Option(None, "--model", "-m"),
 ):
     """内部用: タスクを実行（直接呼び出し用）"""
     init_environment()
-    
+
     store = TaskStore()
     task_info = store.get_task(task_id)
     if not task_info:
         typer.echo(f"Task {task_id} not found.", err=True)
         raise typer.Exit(code=1)
+
+    # コマンドライン引数で上書き
+    if provider:
+        task_info["provider"] = provider
+    if model:
+        task_info["model"] = model
 
     runner = TaskRunner(store)
     runner.execute_task(task_id, task_info, profile, working_dir)

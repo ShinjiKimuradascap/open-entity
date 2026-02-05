@@ -117,3 +117,55 @@ class TaskStore:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
             conn.commit()
+
+    def get_task_logs(self, task_id: str) -> List[str]:
+        """タスクのログを取得（短縮ID対応）"""
+        # 短縮IDの場合は完全なIDを解決
+        task = self.get_task(task_id)
+        if task:
+            task_id = task["task_id"]
+
+        # ログファイルのパス
+        logs_dir = self.db_path.parent / "logs"
+        log_file = logs_dir / f"{task_id}.log"
+
+        if not log_file.exists():
+            return []
+
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                if not content.strip():
+                    return []
+                return content.splitlines()
+        except Exception:
+            return []
+
+    def cancel_task(self, task_id: str) -> bool:
+        """タスクをキャンセル（短縮ID対応）"""
+        import signal
+
+        task = self.get_task(task_id)
+        if not task:
+            return False
+
+        # 実行中のタスクのみキャンセル可能
+        if task["status"] != TaskStatus.RUNNING.value:
+            return False
+
+        # PIDがあればプロセスを終了
+        pid = task.get("pid")
+        if pid:
+            try:
+                import os
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        # ステータスを更新
+        self.update_task(
+            task["task_id"],
+            status=TaskStatus.CANCELLED,
+            completed_at=datetime.now().isoformat()
+        )
+        return True

@@ -26,14 +26,24 @@ class TaskRunner:
         log_file = self.log_dir / f"{task_id}.log"
         
         # 内部的に実行するためのコマンド
-        # moco tasks _exec <task_id> <profile> <description> のような形を想定
-        cmd = [
-            sys.executable, "-m", "open_entity.cli", 
-            "tasks", "_exec", 
-            task_id, 
-            profile, 
-            description
-        ]
+        # oe コマンドを直接使用（インストールされたエントリポイントを使う）
+        import shutil
+        oe_path = shutil.which("oe")
+        if oe_path:
+            cmd = [
+                oe_path,
+                "tasks", "_exec",
+                task_id,
+                "--profile", profile,
+            ]
+        else:
+            # フォールバック: python -m で実行
+            cmd = [
+                sys.executable, "-m", "open_entity.cli",
+                "tasks", "_exec",
+                task_id,
+                "--profile", profile,
+            ]
         
         # 作業ディレクトリが指定されている場合は引数として追加
         if working_dir:
@@ -51,10 +61,11 @@ class TaskRunner:
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         
-        # 作業ディレクトリの .env を読み込んで環境変数に追加
-        env_file = Path(working_dir or os.getcwd()) / ".env"
-        if env_file.exists():
-            with open(env_file) as f:
+        # .env ファイルを読み込んで環境変数に追加
+        def load_env_file(env_path: Path):
+            if not env_path.exists():
+                return
+            with open(env_path) as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#') and '=' in line:
@@ -63,6 +74,15 @@ class TaskRunner:
                         value = value.strip().strip('"').strip("'")
                         if key and key not in env:  # 既存の環境変数を上書きしない
                             env[key] = value
+
+        # 優先順で .env を読み込む
+        # 1. 作業ディレクトリの .env
+        load_env_file(Path(working_dir or os.getcwd()) / ".env")
+        # 2. open-entity の .env
+        open_entity_root = Path(__file__).parent.parent.parent.parent
+        load_env_file(open_entity_root / ".env")
+        # 3. moco-workspace の .env (open-entity の親ディレクトリ)
+        load_env_file(open_entity_root.parent / ".env")
         current_pythonpath = env.get("PYTHONPATH", "")
         # src ディレクトリがあれば開発中とみなして追加
         src_path = Path(__file__).parent.parent.parent
@@ -94,6 +114,56 @@ class TaskRunner:
         finally:
             # 親プロセス側では log_f を閉じて良い（子プロセスが引き継ぐ）
             log_f.close()
+
+    def execute_task(self, task_id: str, task_info: dict, profile: str, working_dir: Optional[str] = None):
+        """
+        タスクを実際に実行する（サブプロセス内で呼ばれる）。
+        Orchestratorを使ってタスクを処理し、結果をDBに保存する。
+        """
+        import asyncio
+        from ..core.orchestrator import Orchestrator
+
+        description = task_info.get("task_description", "")
+        provider = task_info.get("provider")
+        session_id = task_info.get("session_id")
+
+        try:
+            print(f"[Task] Starting: {description[:50]}...")
+            print(f"[Task] Profile: {profile}, Provider: {provider}")
+
+            # Orchestratorを初期化
+            orchestrator = Orchestrator(
+                profile=profile,
+                provider=provider,
+                working_directory=working_dir,
+            )
+
+            # タスクを実行
+            async def run():
+                response = await orchestrator.run(description, session_id=session_id)
+                return response
+
+            result = asyncio.run(run())
+
+            # 成功
+            print(f"\n[Task] Completed successfully")
+            self.store.update_task(
+                task_id,
+                status=TaskStatus.COMPLETED,
+                result=result,
+                completed_at=datetime.now().isoformat()
+            )
+
+        except Exception as e:
+            import traceback
+            error_msg = f"{type(e).__name__}: {e}\n{traceback.format_exc()}"
+            print(f"\n[Task] Failed: {error_msg}")
+            self.store.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=error_msg,
+                completed_at=datetime.now().isoformat()
+            )
 
     def cancel_task(self, task_id: str) -> bool:
         task = self.store.get_task(task_id)
