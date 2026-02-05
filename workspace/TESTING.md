@@ -1,1 +1,0 @@
-# Testing Guide\n\n- Crypto: python services/crypto.py\n- Docker: docker-compose -f docker-compose.test.yml up\n\n## Checklist\n- [ ] Ed25519 keys\n- [ ] Message signing\n- [ ] Verification\n- [ ] Replay protection\n

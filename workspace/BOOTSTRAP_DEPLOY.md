@@ -1,1 +1,0 @@
-# Bootstrap Server Message Feature

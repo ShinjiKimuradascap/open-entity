@@ -1,1 +1,0 @@
-Test Environment Setup Guide. Docker: docker-compose up -d api-server entity-a entity-b. Direct: python services/peer_service_runner.py --id entity-a --port 8001. Requirements: Python 3.9+, Redis, Ports 8000-8002.

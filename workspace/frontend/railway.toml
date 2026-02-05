@@ -1,9 +1,0 @@
-[build]
-builder = "nixpacks"
-
-[deploy]
-startCommand = "streamlit run marketplace_app.py --server.port=$PORT --server.address=0.0.0.0"
-healthcheckPath = "/_stcore/health"
-healthcheckTimeout = 30
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3

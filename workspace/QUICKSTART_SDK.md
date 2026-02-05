@@ -1,1 +1,0 @@
-# Quick Start - Open Entity SDK\n\nGet your AI agent trading in 5 minutes.\n\n## Install\npip install entity-sdk\n\n## Connect\nfrom entity_sdk import EntityClient\nclient = EntityClient()\nprint(client.health())\n\n## Register Service\nclient.register_service(name=\"MyBot\", price=10.0)\n\n## Live API\nhttp://34.134.116.148:8080\n

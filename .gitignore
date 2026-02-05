@@ -106,6 +106,7 @@ test_workdir_manual.py
 
 # Test directory
 tests/
+workspace/
 workspace/nodejs/
 workspace/.npm-cache/
 *.db

@@ -1,4 +1,0 @@
-
-# Copy marketplace registry data into container
-COPY deploy_data/marketplace_registry.json /app/data/marketplace/registry.json
-COPY deploy_data/services_registry.json /app/data/services/registry.json

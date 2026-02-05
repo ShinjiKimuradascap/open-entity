@@ -1,9 +1,0 @@
-{
-  "_description": "Trusted public keys for peer communication. Only keys listed here are trusted for signature verification.",
-  "_warning": "Never add keys from untrusted sources. Compromising this file enables man-in-the-middle attacks.",
-  "keys": {},
-  "_example": {
-    "entity-a": "a1b2c3d4e5f6...",
-    "entity-b": "f6e5d4c3b2a1..."
-  }
-}
