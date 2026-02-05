@@ -52,7 +52,7 @@ def _format_duration(start_str: str, end_str: str = None) -> str:
 @tasks_app.command("run")
 def tasks_run(
     task: str = typer.Argument(..., help="実行するタスク内容"),
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
     provider: Optional[str] = typer.Option(None, "--provider", "-P", help="プロバイダ (gemini/openai/openrouter/zai/moonshot/ollama) - 省略時は自動選択"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="使用するモデル名"),
     working_dir: Optional[str] = typer.Option(None, "--working-dir", "-w", help="作業ディレクトリ"),

@@ -1,6 +1,7 @@
 """Skills management commands."""
 import typer
 from typing import Optional
+import os
 from rich.console import Console
 from rich.table import Table
 
@@ -14,7 +15,7 @@ skills_app = typer.Typer(help="Skills 管理")
 
 @skills_app.command("list")
 def skills_list(
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
 ):
     """インストール済み Skills 一覧"""
     console = Console()
@@ -48,7 +49,7 @@ def skills_list(
 def skills_install(
     repo: str = typer.Argument(..., help="GitHub リポジトリ (例: anthropics/skills)"),
     skill_name: Optional[str] = typer.Argument(None, help="スキル名（省略時は全スキル）"),
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
     branch: str = typer.Option("main", "--branch", "-b", help="ブランチ"),
 ):
     """GitHub から Skills をインストール"""
@@ -79,7 +80,7 @@ def skills_install(
 @skills_app.command("sync")
 def skills_sync(
     registry: str = typer.Argument("anthropics", help="レジストリ名 (anthropics/community/claude-code/collection)"),
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
 ):
     """レジストリから Skills を同期"""
     console = Console()
@@ -101,7 +102,7 @@ def skills_sync(
 @skills_app.command("uninstall")
 def skills_uninstall(
     skill_name: str = typer.Argument(..., help="スキル名"),
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
 ):
     """Skill をアンインストール"""
     console = Console()
@@ -118,7 +119,7 @@ def skills_uninstall(
 @skills_app.command("search")
 def skills_search(
     query: str = typer.Argument(..., help="検索クエリ"),
-    profile: str = typer.Option("default", "--profile", "-p", help="プロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="プロファイル"),
 ):
     """インストール済み Skills を検索"""
     console = Console()

@@ -27,6 +27,10 @@ import subprocess
 import shutil
 import os
 from typing import Optional
+try:
+    from ..utils.path import get_working_directory
+except ImportError:
+    from open_entity.utils.path import get_working_directory
 
 
 def _find_node_bin_dir() -> Optional[str]:
@@ -79,31 +83,48 @@ def _run_agent_browser(*args: str, timeout: int = 60) -> str:
     Returns:
         コマンドの出力
     """
-    # 1. ワークスペース内のローカルインストールを優先
-    # このファイルは moco-agent/src/moco/tools/ にあると仮定
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    local_bin = os.path.join(base_dir, "node_modules", ".bin", "agent-browser")
-    
-    if os.path.isfile(local_bin) and os.access(local_bin, os.X_OK):
-        cmd = [local_bin] + list(args)
-        # local_bin のディレクトリを PATH に追加（依存する node などが見つかるように）
+    # 0. Env override (absolute path)
+    env_bin = os.environ.get("MOCO_AGENT_BROWSER_BIN")
+    if env_bin and os.path.isfile(env_bin) and os.access(env_bin, os.X_OK):
+        cmd = [env_bin] + list(args)
         env = os.environ.copy()
-        node_bin_dir = _find_node_bin_dir()
-        if node_bin_dir:
-            env["PATH"] = f"{node_bin_dir}:{env.get('PATH', '')}"
     else:
-        # 2. node/npx の bin ディレクトリを検出して npx 経由で実行
-        node_bin_dir = _find_node_bin_dir()
-        if not node_bin_dir:
-            return "Error: npx not found. Please install Node.js and npm, or check your nvm setup."
-        
-        npx_path = os.path.join(node_bin_dir, "npx")
-        cmd = [npx_path, "agent-browser"] + list(args)
-        
-        # 環境変数を設定（node が見つかるように PATH を追加）
-        env = os.environ.copy()
-        current_path = env.get("PATH", "")
-        env["PATH"] = f"{node_bin_dir}:{current_path}"
+        # 1. Working directory local install
+        working_dir = get_working_directory() or os.getcwd()
+        local_bin = os.path.join(working_dir, "node_modules", ".bin", "agent-browser")
+        if os.path.isfile(local_bin) and os.access(local_bin, os.X_OK):
+            cmd = [local_bin] + list(args)
+            # local_bin のディレクトリを PATH に追加（依存する node などが見つかるように）
+            env = os.environ.copy()
+            node_bin_dir = _find_node_bin_dir()
+            if node_bin_dir:
+                env["PATH"] = f"{node_bin_dir}:{env.get('PATH', '')}"
+        else:
+            # 2. Module-relative local install (fallback)
+            # このファイルは open-entity/src/open_entity/tools/ にあると仮定
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            local_bin = os.path.join(base_dir, "node_modules", ".bin", "agent-browser")
+    
+            if os.path.isfile(local_bin) and os.access(local_bin, os.X_OK):
+                cmd = [local_bin] + list(args)
+                # local_bin のディレクトリを PATH に追加（依存する node などが見つかるように）
+                env = os.environ.copy()
+                node_bin_dir = _find_node_bin_dir()
+                if node_bin_dir:
+                    env["PATH"] = f"{node_bin_dir}:{env.get('PATH', '')}"
+            else:
+                # 3. node/npx の bin ディレクトリを検出して npx 経由で実行
+                node_bin_dir = _find_node_bin_dir()
+                if not node_bin_dir:
+                    return "Error: npx not found. Please install Node.js and npm, or check your nvm setup."
+                
+                npx_path = os.path.join(node_bin_dir, "npx")
+                cmd = [npx_path, "agent-browser"] + list(args)
+                
+                # 環境変数を設定（node が見つかるように PATH を追加）
+                env = os.environ.copy()
+                current_path = env.get("PATH", "")
+                env["PATH"] = f"{node_bin_dir}:{current_path}"
     
     try:
         result = subprocess.run(
@@ -575,5 +596,4 @@ def browser_set_device(device_name: str) -> str:
         結果メッセージ
     """
     return _run_agent_browser("set", "device", device_name)
-
 

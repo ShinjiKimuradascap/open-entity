@@ -1,5 +1,6 @@
 """自己進化・自己改善コマンド。"""
 import typer
+import os
 from pathlib import Path
 from typing import List, Optional
 from rich.console import Console
@@ -15,7 +16,7 @@ evolve_app = typer.Typer(help="自己進化・コード改善")
 @evolve_app.command("analyze")
 def analyze_self(
     target: str = typer.Option("src", "--target", "-t", help="分析対象ディレクトリ"),
-    profile: str = typer.Option("cursor", "--profile", "-p", help="使用するプロファイル"),
+    profile: str = typer.Option(os.environ.get("MOCO_PROFILE", "entity"), "--profile", "-p", help="使用するプロファイル"),
 ):
     """自分自身のコードを分析し改善点を提案"""
     console = Console()

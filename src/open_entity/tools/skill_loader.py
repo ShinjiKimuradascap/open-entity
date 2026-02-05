@@ -45,6 +45,11 @@ _PROJECT_ROOT = os.path.dirname(_MOCO_ROOT)
 
 def _find_profiles_dir() -> str:
     """profiles ディレクトリを探索して見つける"""
+    # 1. MOCO_PROFILES_DIR 環境変数（最優先）
+    env_dir = os.getenv("MOCO_PROFILES_DIR")
+    if env_dir and os.path.exists(env_dir) and os.path.isdir(env_dir):
+        return env_dir
+
     # 作業ディレクトリが指定されている場合は最優先
     working_dir = os.environ.get("MOCO_WORKING_DIRECTORY")
     if working_dir:

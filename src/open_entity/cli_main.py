@@ -51,6 +51,7 @@ def init_environment():
     if env_path:
         load_dotenv(env_path, override=True)
 
+DEFAULT_PROFILE = os.environ.get("MOCO_PROFILE", "entity")
 
 def resolve_provider(provider_str: str, model: Optional[str] = None) -> tuple:
     """プロバイダ文字列を解決してLLMProviderとモデル名を返す
@@ -186,7 +187,7 @@ def prompt_profile_selection() -> str:
 @app.command()
 def run(
     task: str = typer.Argument(..., help="実行するタスク"),
-    profile: str = typer.Option("default", "--profile", "-p", help="使用するプロファイル", autocompletion=complete_profile),
+    profile: str = typer.Option(DEFAULT_PROFILE, "--profile", "-p", help="使用するプロファイル", autocompletion=complete_profile),
     provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai/moonshot/ollama) - 省略時は自動選択"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="使用するモデル名 (例: gpt-4o, gemini-2.5-pro, claude-sonnet-4)"),
     stream: bool = typer.Option(False, "--stream/--no-stream", help="ストリーミング出力（デフォルト: オフ）"),
@@ -877,7 +878,16 @@ def chat(
 
     # プロファイルの解決（指定なしの場合は対話選択）
     if profile is None:
-        profile = prompt_profile_selection()
+        available_profiles = get_available_profiles()
+        env_profile = os.environ.get("MOCO_PROFILE")
+        if env_profile and env_profile in available_profiles:
+            profile = env_profile
+        elif "entity" in available_profiles:
+            profile = "entity"
+        elif len(available_profiles) == 1:
+            profile = available_profiles[0]
+        else:
+            profile = prompt_profile_selection()
 
     # プロバイダーの解決（指定なしの場合は優先順位で自動選択）
     if provider is None:

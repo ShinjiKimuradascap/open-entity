@@ -78,6 +78,7 @@ knowledge_base/
 # Keep package profiles
 !src/open_entity/profiles/
 runbooks/
+programs/
 
 # Mobile integration
 moco_whatsapp

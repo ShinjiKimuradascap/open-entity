@@ -28,7 +28,7 @@ def _get_loader() -> SkillLoader:
     """Get or create the global skill loader."""
     global _skill_loader
     import os
-    profile = os.environ.get("MOCO_PROFILE", "development")
+    profile = os.environ.get("MOCO_PROFILE", "entity")
 
     # Recreate loader if profile changed.
     # NOTE: Web UI / Orchestrator can switch profiles per request/session.
