@@ -362,7 +362,7 @@ def handle_command(text: str, channel: str, thread_ts: str, settings: dict):
             settings["provider"] = args[0]
             reply = f"✅ プロバイダを変更: `{args[0]}`"
         else:
-            providers = ["openrouter", "gemini", "openai", "anthropic"]
+            providers = ["openrouter", "gemini", "openai", "moonshot", "ollama", "zai", "anthropic"]
             reply = f"📋 現在のプロバイダ: `{settings['provider']}`\n利用可能: {', '.join(providers)}\n使用例: `/provider openrouter`"
     
     # モデル変更

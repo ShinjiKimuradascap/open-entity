@@ -45,7 +45,9 @@ def generate_commit_message(diff: str) -> str:
         "gemini": LLMProvider.GEMINI,
         "openai": LLMProvider.OPENAI,
         "openrouter": LLMProvider.OPENROUTER,
-        "zai": LLMProvider.ZAI
+        "zai": LLMProvider.ZAI,
+        "moonshot": LLMProvider.MOONSHOT,
+        "ollama": LLMProvider.OLLAMA,
     }
     provider = provider_map.get(provider_name, LLMProvider.GEMINI)
     

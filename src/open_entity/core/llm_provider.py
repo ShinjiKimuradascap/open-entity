@@ -47,6 +47,7 @@ PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_GEMINI = "gemini"
 PROVIDER_OPENAI = "openai"
 PROVIDER_MOONSHOT = "moonshot"
+PROVIDER_OLLAMA = "ollama"
 
 # プロバイダー優先順位
 PROVIDER_PRIORITY = [PROVIDER_ZAI, PROVIDER_OPENROUTER, PROVIDER_GEMINI]
@@ -60,7 +61,8 @@ DEFAULT_MODELS = {
     PROVIDER_OPENROUTER: "moonshotai/kimi-k2.5",
     PROVIDER_GEMINI: "gemini-2.0-flash",
     PROVIDER_OPENAI: "gpt-4o",
-    PROVIDER_MOONSHOT: "kimi-for-coding",
+    PROVIDER_MOONSHOT: "kimi-k2.5",
+    PROVIDER_OLLAMA: "llama3.1",
 }
 
 # 分析用（軽量）モデル
@@ -69,7 +71,8 @@ ANALYZER_MODELS = {
     PROVIDER_OPENROUTER: "google/gemini-3-flash-preview",
     PROVIDER_GEMINI: "gemini-2.0-flash",
     PROVIDER_OPENAI: "gpt-4o-mini",
-    PROVIDER_MOONSHOT: "kimi-for-coding",
+    PROVIDER_MOONSHOT: "kimi-k2.5",
+    PROVIDER_OLLAMA: "llama3.1",
 }
 
 # 埋め込み（embedding）用デフォルトモデル
@@ -100,6 +103,8 @@ def _check_api_key(provider: str) -> bool:
         return bool(os.environ.get("OPENAI_API_KEY"))
     elif provider == PROVIDER_MOONSHOT:
         return bool(os.environ.get("MOONSHOT_API_KEY"))
+    elif provider == PROVIDER_OLLAMA:
+        return True
     return False
 
 
@@ -116,7 +121,7 @@ def get_available_provider() -> str:
     """
     # 環境変数で強制指定 (LLM_PROVIDER を最優先)
     forced = os.environ.get("LLM_PROVIDER") or os.environ.get("MOCO_DEFAULT_PROVIDER")
-    if forced and forced in [PROVIDER_ZAI, PROVIDER_OPENROUTER, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_MOONSHOT]:
+    if forced and forced in [PROVIDER_ZAI, PROVIDER_OPENROUTER, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_MOONSHOT, PROVIDER_OLLAMA]:
         if _check_api_key(forced):
             logger.info(f"Using forced provider: {forced}")
             return forced
@@ -215,8 +220,23 @@ def _get_openai_like_client(provider: str) -> "OpenAI":
         api_key = os.environ.get("MOONSHOT_API_KEY")
         if not api_key:
             raise ValueError("MOONSHOT_API_KEY environment variable not set")
-        # Use Kimi coding endpoint for consistency with runtime
-        return OpenAI(api_key=api_key, base_url="https://api.kimi.com/coding/v1")
+        base_url = os.environ.get("MOONSHOT_BASE_URL")
+        if not base_url:
+            model = os.environ.get("MOONSHOT_MODEL", DEFAULT_MODELS[PROVIDER_MOONSHOT])
+            if model == "kimi-for-coding":
+                base_url = "https://api.kimi.com/coding/v1"
+            else:
+                base_url = "https://api.moonshot.ai/v1"
+        kwargs = {"api_key": api_key, "base_url": base_url}
+        if "kimi.com/coding" in base_url:
+            kwargs["default_headers"] = {"User-Agent": "Kilo-Code/1.0.0"}
+        return OpenAI(**kwargs)
+
+    if provider == PROVIDER_OLLAMA:
+        # Ollama uses OpenAI-compatible API without auth
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
+        return OpenAI(api_key=api_key, base_url=base_url)
 
     # PROVIDER_OPENAI (including OpenAI-compatible via OPENAI_BASE_URL)
     api_key = os.environ.get("OPENAI_API_KEY")

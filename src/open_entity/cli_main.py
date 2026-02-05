@@ -79,6 +79,7 @@ def resolve_provider(provider_str: str, model: Optional[str] = None) -> tuple:
         "zai": LLMProvider.ZAI,
         "gemini": LLMProvider.GEMINI,
         "moonshot": LLMProvider.MOONSHOT,
+        "ollama": LLMProvider.OLLAMA,
     }
     
     if provider_name not in VALID_PROVIDERS:
@@ -186,7 +187,7 @@ def prompt_profile_selection() -> str:
 def run(
     task: str = typer.Argument(..., help="実行するタスク"),
     profile: str = typer.Option("default", "--profile", "-p", help="使用するプロファイル", autocompletion=complete_profile),
-    provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai) - 省略時は自動選択"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai/moonshot/ollama) - 省略時は自動選択"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="使用するモデル名 (例: gpt-4o, gemini-2.5-pro, claude-sonnet-4)"),
     stream: bool = typer.Option(False, "--stream/--no-stream", help="ストリーミング出力（デフォルト: オフ）"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="詳細ログ"),
@@ -425,7 +426,7 @@ def _print_result(console, result: str, theme_name: ThemeName = ThemeName.DEFAUL
 @app.command()
 def chat(
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="使用するプロファイル", autocompletion=complete_profile),
-    provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai) - 省略時は自動選択"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai/moonshot/ollama) - 省略時は自動選択"),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="使用するモデル名"),
     stream: Optional[bool] = typer.Option(None, "--stream/--no-stream", help="ストリーミング出力（デフォルト: プロバイダ依存）"),
     subagent_stream: bool = typer.Option(False, "--subagent-stream/--no-subagent-stream", help="サブエージェント本文のストリーミング表示（デフォルト: オフ）"),

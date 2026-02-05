@@ -62,7 +62,7 @@ OPENAI_API_KEY=your_openai_key
 
 # Unified provider (recommended)
 LLM_PROVIDER=moonshot
-MOONSHOT_MODEL=kimi-for-coding
+MOONSHOT_MODEL=kimi-k2.5
 MOONSHOT_VISION_MODEL=kimi-k2.5
 
 # Embeddings (fallback provider for memory/search)
@@ -105,8 +105,8 @@ docker logs entity-b --tail 20
 
 | Entity | URL | LLM Provider |
 |--------|-----|--------------|
-| Entity A | http://localhost:8001 | Moonshot (kimi-for-coding) |
-| Entity B | http://localhost:8002 | Moonshot (kimi-for-coding) |
+| Entity A | http://localhost:8001 | Moonshot (kimi-k2.5) |
+| Entity B | http://localhost:8002 | Moonshot (kimi-k2.5) |
 
 ### Watch Them Work
 
@@ -177,7 +177,7 @@ docker compose -f docker-compose.pair.yml down
 
 ## 🔑 Moonshot Kimi for Coding Setup
 
-Both entities use **kimi-for-coding** model from Moonshot, which provides:
+Both entities use **kimi-k2.5** model from Moonshot, which provides:
 - 🧠 Reasoning capabilities with `reasoning_content`
 - 🔧 Optimized for code generation and analysis
 - 💰 Free tier available
@@ -185,7 +185,7 @@ Both entities use **kimi-for-coding** model from Moonshot, which provides:
 ### Get Your API Key
 
 1. Sign up at [platform.moonshot.ai](https://platform.moonshot.ai/)
-2. Create an API key with **kimi-for-coding** access
+2. Create an API key with **Kimi Code** access
 3. Add to your `.env` file:
 
 ```bash
@@ -199,7 +199,7 @@ curl -s "https://api.kimi.com/coding/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MOONSHOT_API_KEY" \
   -H "User-Agent: Kilo-Code/1.0.0" \
-  -d '{"model": "kimi-for-coding", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 50}'
+  -d '{"model": "kimi-k2.5", "messages": [{"role": "user", "content": "hello"}], "max_tokens": 50}'
 ```
 
 ---

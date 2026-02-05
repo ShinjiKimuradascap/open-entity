@@ -45,7 +45,7 @@ class SetupWizard:
         console.print("\n[bold green]Step 2: LLM プロバイダの選択[/bold green]")
         provider = Prompt.ask(
             "デフォルトの LLM プロバイダを選択してください",
-            choices=["openrouter", "openai", "gemini", "zai", "anthropic"],
+            choices=["openrouter", "openai", "gemini", "zai", "moonshot", "ollama", "anthropic"],
             default=os.environ.get("LLM_PROVIDER", "openrouter")
         )
         self.env.update("LLM_PROVIDER", provider)

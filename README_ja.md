@@ -179,7 +179,7 @@ MOONSHOT_API_KEY=your-moonshot-api-key
 
 # 統一プロバイダ設定（推奨）
 LLM_PROVIDER=moonshot
-MOONSHOT_MODEL=kimi-for-coding
+MOONSHOT_MODEL=kimi-k2.5
 MOONSHOT_VISION_MODEL=kimi-k2.5
 
 # Embedding（フォールバック用）

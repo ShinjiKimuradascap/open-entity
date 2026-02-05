@@ -488,7 +488,12 @@ def _strip_orchestrator_prefixes(text: str) -> str:
     """Remove repeated '@orchestrator:' prefixes at line starts."""
     if not text:
         return text
-    return re.sub(r'(?m)^\s*(?:@orchestrator:\s*)+', '', text)
+    cleaned_lines = []
+    for line in text.splitlines():
+        # Remove repeated prefixes like "🤖 @orchestrator: @orchestrator: ..."
+        cleaned = re.sub(r'^(?:\s*🤖\s*)?(?:@orchestrator:\s*)+', '', line, flags=re.IGNORECASE)
+        cleaned_lines.append(cleaned)
+    return "\n".join(cleaned_lines).lstrip()
 
 def _detect_pseudo_tool_calls(text: str, tool_names: List[str]) -> List[str]:
     """Detect tool calls written in plain text (e.g., read_file(...)) instead of actual tool calls."""
@@ -508,6 +513,95 @@ def _detect_pseudo_tool_calls(text: str, tool_names: List[str]) -> List[str]:
             ordered.append(m)
             seen.add(m)
     return ordered
+
+
+_TOOL_CALL_OPEN = "<tool_call>"
+_TOOL_CALL_CLOSE = "</tool_call>"
+_ARG_PAIR_RE = re.compile(r"(?is)<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>")
+_TOOL_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
+
+
+def _coerce_arg_value(raw: str) -> Any:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if s[0] in "{[":
+        parsed = SmartJSONParser.parse(s, default=None)
+        if parsed is not None:
+            return parsed
+    if re.fullmatch(r"true|false|null|-?\d+(\.\d+)?", s, flags=re.IGNORECASE):
+        try:
+            return json.loads(s.lower())
+        except Exception:
+            return s
+    return s
+
+
+def _extract_tool_call_blocks(text: str) -> List[tuple]:
+    """Extract tool_call blocks even if closing tags are malformed."""
+    blocks: List[tuple] = []
+    if not text:
+        return blocks
+    idx = 0
+    while True:
+        start = text.find(_TOOL_CALL_OPEN, idx)
+        if start == -1:
+            break
+        start_content = start + len(_TOOL_CALL_OPEN)
+        end = text.find(_TOOL_CALL_CLOSE, start_content)
+        if end != -1:
+            blocks.append((start, end + len(_TOOL_CALL_CLOSE), text[start_content:end]))
+            idx = end + len(_TOOL_CALL_CLOSE)
+            continue
+        # No closing tag: treat next opening tag as the end of this block
+        next_start = text.find(_TOOL_CALL_OPEN, start_content)
+        if next_start == -1:
+            blocks.append((start, len(text), text[start_content:]))
+            idx = len(text)
+        else:
+            blocks.append((start, next_start, text[start_content:next_start]))
+            idx = next_start
+    return blocks
+
+
+def _parse_tool_call_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
+    """Parse <tool_call> tags into tool_calls list; return (tool_calls, cleaned_text)."""
+    if not text or not tool_names:
+        return [], text
+    blocks = _extract_tool_call_blocks(text)
+    if not blocks:
+        return [], text
+
+    tool_calls = []
+    for i, (_, _, body) in enumerate(blocks):
+        inner = (body or "").strip()
+        name_match = _TOOL_NAME_RE.match(inner)
+        if not name_match:
+            continue
+        func_name = name_match.group(1)
+        if func_name not in tool_names:
+            if func_name == "todoread_all" and "todoread" in tool_names:
+                func_name = "todoread"
+            else:
+                continue
+
+        args_dict: Dict[str, Any] = {}
+        for key, value in _ARG_PAIR_RE.findall(inner):
+            args_dict[key.strip()] = _coerce_arg_value(value)
+        args_json = json.dumps(args_dict, ensure_ascii=False)
+        tool_calls.append({
+            "id": f"tag_call_{i}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": args_json,
+            }
+        })
+
+    cleaned = text
+    for start, end, _ in reversed(blocks):
+        cleaned = cleaned[:start] + cleaned[end:]
+    return tool_calls, cleaned.strip()
 
 def _has_tool_results(messages: List[Any]) -> bool:
     """Return True if messages include tool results."""
@@ -643,6 +737,7 @@ class LLMProvider:
     OPENROUTER = "openrouter"
     ZAI = "zai"  # Z.ai GLM-4.7
     MOONSHOT = "moonshot"  # Moonshot Kimi
+    OLLAMA = "ollama"  # Ollama (OpenAI-compatible)
 
 
 def _is_reasoning_model(model_name: str) -> bool:
@@ -847,7 +942,9 @@ class AgentRuntime:
         elif self.provider == LLMProvider.ZAI:
             self.model_name = os.environ.get("ZAI_MODEL", "glm-4.7")
         elif self.provider == LLMProvider.MOONSHOT:
-            self.model_name = os.environ.get("MOONSHOT_MODEL", "kimi-for-coding")
+            self.model_name = os.environ.get("MOONSHOT_MODEL", "kimi-k2.5")
+        elif self.provider == LLMProvider.OLLAMA:
+            self.model_name = os.environ.get("OLLAMA_MODEL", "llama3.1")
         else:
             self.model_name = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 
@@ -889,18 +986,33 @@ class AgentRuntime:
             )
             self.client = None
         elif self.provider == LLMProvider.MOONSHOT:
-            # Moonshot Kimi for Coding (OpenAI-compatible API)
+            # Moonshot Kimi Code / Open Platform (OpenAI-compatible API)
             if not OPENAI_AVAILABLE:
                 raise ImportError("OpenAI package not installed. Run: pip install openai")
             moonshot_key = os.environ.get("MOONSHOT_API_KEY")
             if not moonshot_key:
                 raise ValueError("MOONSHOT_API_KEY environment variable not set")
-            # Use kimi-for-coding endpoint with Kilo-Code User-Agent
-            self.openai_client = AsyncOpenAI(
-                api_key=moonshot_key,
-                base_url="https://api.kimi.com/coding/v1",
-                default_headers={"User-Agent": "Kilo-Code/1.0.0"}
-            )
+            base_url = os.environ.get("MOONSHOT_BASE_URL")
+            if not base_url:
+                if self.model_name == "kimi-for-coding":
+                    base_url = "https://api.kimi.com/coding/v1"
+                else:
+                    base_url = "https://api.moonshot.ai/v1"
+            kwargs = {
+                "api_key": moonshot_key,
+                "base_url": base_url,
+            }
+            # Use Kimi Code User-Agent only for coding endpoint
+            if "kimi.com/coding" in base_url:
+                kwargs["default_headers"] = {"User-Agent": "Kilo-Code/1.0.0"}
+            self.openai_client = AsyncOpenAI(**kwargs)
+            self.client = None
+        elif self.provider == LLMProvider.OLLAMA:
+            if not OPENAI_AVAILABLE:
+                raise ImportError("OpenAI package not installed. Run: pip install openai")
+            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+            api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
+            self.openai_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
             self.client = None
         else:
             # Gemini
@@ -1360,7 +1472,7 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 if self.verbose:
                     print(f"Warning: Memory recall failed: {e}")
 
-        if self.provider in (LLMProvider.OPENAI, LLMProvider.OPENROUTER, LLMProvider.ZAI, LLMProvider.MOONSHOT):
+        if self.provider in (LLMProvider.OPENAI, LLMProvider.OPENROUTER, LLMProvider.ZAI, LLMProvider.MOONSHOT, LLMProvider.OLLAMA):
             result = await self._run_openai(user_input, history, session_id=session_id)
         else:
             result = await self._run_gemini(user_input, history, session_id=session_id)
@@ -1762,6 +1874,57 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         
                         continue  # Next iteration
                     else:
+                        # Parse tool_call tags if present
+                        tag_calls, cleaned_content = _parse_tool_call_tags(
+                            collected_content, list(self.available_tools.keys())
+                        )
+                        if tag_calls:
+                            assistant_msg = {
+                                "role": "assistant",
+                                "content": cleaned_content or "",
+                                "tool_calls": tag_calls
+                            }
+                            if collected_reasoning:
+                                assistant_msg["reasoning_content"] = collected_reasoning
+                            messages.append(assistant_msg)
+
+                            for tc in tag_calls:
+                                func_name = tc["function"]["name"]
+                                raw_args = tc["function"].get("arguments") or ""
+                                stripped = raw_args.strip()
+                                if not func_name:
+                                    result = "Error: tool call has empty function name"
+                                elif not stripped:
+                                    result = "Error: tool call has empty arguments"
+                                elif not (stripped.startswith("{") and stripped.endswith("}")):
+                                    result = "Error: tool call arguments are incomplete JSON"
+                                else:
+                                    args_dict = SmartJSONParser.parse(raw_args, default=None)
+                                    if not isinstance(args_dict, dict):
+                                        result = "Error: tool call arguments are invalid JSON (expected a single JSON object)"
+                                    else:
+                                        result = await self._execute_tool_with_tracking(func_name, args_dict, session_id)
+
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": str(result)
+                                })
+
+                            had_tool_results = True
+                            usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
+                            if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
+                                compressor = ContextCompressor(
+                                    max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
+                                    preserve_recent=10
+                                )
+                                messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
+                                if was_compressed:
+                                    self._accumulated_tokens = compressor.estimate_tokens(messages)
+                                    if self.verbose:
+                                        print(f"\n🗜️ [Context compressed: {self._accumulated_tokens:,} tokens]")
+                            continue
+
                         # If empty, return partial response
                         if not collected_content:
                              if self._partial_response:
@@ -1935,6 +2098,51 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                     self.progress_callback(event_type="start", agent_name=self.name)
                     self.progress_callback(event_type="chunk", content=content, agent_name=self.name)
                     self.progress_callback(event_type="done", agent_name=self.name)
+                tag_calls, cleaned_content = _parse_tool_call_tags(
+                    content, list(self.available_tools.keys())
+                )
+                if tag_calls:
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": cleaned_content or "",
+                        "tool_calls": tag_calls
+                    }
+                    if hasattr(message, 'reasoning') and message.reasoning:
+                        assistant_msg["reasoning_content"] = message.reasoning
+                    elif hasattr(message, 'reasoning_content') and message.reasoning_content:
+                        assistant_msg["reasoning_content"] = message.reasoning_content
+                    messages.append(assistant_msg)
+
+                    async def execute_one_tag(tc):
+                        func_name = tc["function"]["name"]
+                        args_dict = SmartJSONParser.parse(tc["function"]["arguments"], default=None)
+                        if not isinstance(args_dict, dict):
+                            result = "Error: tool call arguments are invalid JSON (expected a single JSON object)"
+                        else:
+                            result = await self._execute_tool_with_tracking(func_name, args_dict, session_id)
+                        return {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": str(result)
+                        }
+
+                    tasks = [execute_one_tag(tc) for tc in tag_calls]
+                    tool_results = await asyncio.gather(*tasks)
+                    messages.extend(tool_results)
+                    had_tool_results = True
+
+                    usage_ratio = self._accumulated_tokens / MAX_CONTEXT_TOKENS
+                    if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
+                        compressor = ContextCompressor(
+                            max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
+                            preserve_recent=10
+                        )
+                        messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
+                        if was_compressed:
+                            self._accumulated_tokens = compressor.estimate_tokens(messages)
+                            if self.verbose:
+                                print(f"[Context compressed: {self._accumulated_tokens:,} tokens]")
+                    continue
                 if tools and content:
                     pseudo = _detect_pseudo_tool_calls(content, list(self.available_tools.keys()))
                     if pseudo and pseudo_tool_retry < 1:
@@ -2122,6 +2330,34 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         had_tool_results = True
                         continue
                     else:
+                        tag_calls, cleaned_text = _parse_tool_call_tags(
+                            collected_text, list(self.available_tools.keys())
+                        )
+                        if tag_calls:
+                            parts_for_history = []
+                            if cleaned_text:
+                                parts_for_history.append(types.Part(text=cleaned_text))
+                            messages.append(types.Content(role="model", parts=parts_for_history))
+
+                            async def execute_one_tag(tc):
+                                func_name = tc["function"]["name"]
+                                args_dict = SmartJSONParser.parse(tc["function"]["arguments"], default=None)
+                                if not isinstance(args_dict, dict):
+                                    result = "Error: tool call arguments are invalid JSON (expected a single JSON object)"
+                                else:
+                                    result = await self._execute_tool_with_tracking(func_name, args_dict, session_id)
+                                return types.Part(
+                                    function_response=types.FunctionResponse(
+                                        name=func_name,
+                                        response={"result": _ensure_jsonable(result)}
+                                    )
+                                )
+
+                            tasks = [execute_one_tag(tc) for tc in tag_calls]
+                            tool_responses = await asyncio.gather(*tasks)
+                            messages.append(types.Content(role="tool", parts=tool_responses))
+                            had_tool_results = True
+                            continue
                         if (not collected_text) and had_tool_results and empty_response_retry < 1:
                             empty_response_retry += 1
                             messages.append(types.Content(
@@ -2211,6 +2447,34 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         continue
                     else:
                         full_text = "".join(p.text for p in message.parts if p.text)
+                        tag_calls, cleaned_text = _parse_tool_call_tags(
+                            full_text, list(self.available_tools.keys())
+                        )
+                        if tag_calls:
+                            parts_for_history = []
+                            if cleaned_text:
+                                parts_for_history.append(types.Part(text=cleaned_text))
+                            messages.append(types.Content(role="model", parts=parts_for_history))
+
+                            async def execute_one_tag(fc):
+                                func_name = fc["function"]["name"]
+                                args_dict = SmartJSONParser.parse(fc["function"]["arguments"], default=None)
+                                if not isinstance(args_dict, dict):
+                                    result = "Error: tool call arguments are invalid JSON (expected a single JSON object)"
+                                else:
+                                    result = await self._execute_tool_with_tracking(func_name, args_dict, session_id)
+                                return types.Part(
+                                    function_response=types.FunctionResponse(
+                                        name=func_name,
+                                        response={"result": _ensure_jsonable(result)}
+                                    )
+                                )
+
+                            tasks = [execute_one_tag(tc) for tc in tag_calls]
+                            tool_responses = await asyncio.gather(*tasks)
+                            messages.append(types.Content(role="tool", parts=tool_responses))
+                            had_tool_results = True
+                            continue
                         if (not full_text) and had_tool_results and empty_response_retry < 1:
                             empty_response_retry += 1
                             messages.append(types.Content(
