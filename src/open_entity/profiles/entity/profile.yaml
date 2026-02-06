@@ -1,3 +1,7 @@
-name: cursor
-description: Cursor IDE向け開発支援プロファイル
+name: entity
+description: 自律型AIオペレーター向けプロファイル
 include_base_tools: true
+
+# Feature flags (on/off)
+memory_service: on
+embeddings: on

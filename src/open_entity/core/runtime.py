@@ -143,6 +143,20 @@ TOOL_STYLES = {
     "_default": ("🔧", "dim"),
 }
 
+def _safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    """Parse int defensively (handles commas/whitespace)."""
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            if not cleaned:
+                return default
+            return int(float(cleaned))
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 def _format_tool_log(tool_name: str, args: dict) -> tuple:
     """Format tool log. Returns (icon, name, arg_str, color)"""
     style = TOOL_STYLES.get(tool_name, TOOL_STYLES["_default"])
@@ -161,9 +175,11 @@ def _format_tool_log(tool_name: str, args: dict) -> tuple:
         # Also display offset/limit (if used)
         offset = args.get("offset")
         limit = args.get("limit")
-        if offset or limit:
-            start = int(offset) if offset else 1
-            end = start + (int(limit) if limit else 0) - 1 if limit else "end"
+        offset_val = _safe_int(offset, None)
+        limit_val = _safe_int(limit, None)
+        if offset_val is not None or limit_val is not None:
+            start = offset_val if offset_val is not None else 1
+            end = start + (limit_val if limit_val is not None else 0) - 1 if limit_val is not None else "end"
             arg_str += f" [L{start}-{end}]"
 
     elif tool_name == "execute_bash":
@@ -909,6 +925,7 @@ class AgentRuntime:
         progress_callback: Optional[Callable] = None,
         parent_agent: Optional[str] = None,
         semantic_memory: Optional[SemanticMemory] = None,
+        enable_semantic_memory: bool = True,
         skills: Optional[List[SkillConfig]] = None,
         memory_service = None,
         system_prompt_override: Optional[str] = None,
@@ -937,7 +954,7 @@ class AgentRuntime:
         
         # Initialization of semantic memory
         self.semantic_memory = semantic_memory
-        if not self.semantic_memory:
+        if not self.semantic_memory and enable_semantic_memory:
             from pathlib import Path
             db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
             self.semantic_memory = SemanticMemory(db_path=db_path)
@@ -1472,17 +1489,18 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
 
         # Recall from semantic memory
         self._recall_results = []
-        try:
-            self._recall_results = self.semantic_memory.search(user_input, top_k=3)
-            if self._recall_results and self.progress_callback:
-                self.progress_callback(
-                    event_type="recall",
-                    agent_name=self.name,
-                    results=self._recall_results
-                )
-        except Exception as e:
-            if self.verbose:
-                print(f"Warning: Semantic recall failed: {e}")
+        if self.semantic_memory:
+            try:
+                self._recall_results = self.semantic_memory.search(user_input, top_k=3)
+                if self._recall_results and self.progress_callback:
+                    self.progress_callback(
+                        event_type="recall",
+                        agent_name=self.name,
+                        results=self._recall_results
+                    )
+            except Exception as e:
+                if self.verbose:
+                    print(f"Warning: Semantic recall failed: {e}")
 
         # MemoryService からの記憶コンテキスト取得
         self._memory_context = ""

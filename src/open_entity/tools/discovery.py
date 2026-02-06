@@ -111,6 +111,26 @@ def _find_all_profiles_dirs() -> list:
 
 # --- Tool Discovery ---
 
+def _flag_is_disabled(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return not value
+    return str(value).strip().lower() in ("off", "false", "0", "no", "disable", "disabled")
+
+
+def load_profile_config(profile: str) -> Dict[str, Any]:
+    """Load profile.yaml for the given profile (if present)."""
+    profiles_dir = _find_profiles_dir()
+    profile_dir = os.path.join(profiles_dir, profile)
+    profile_path = os.path.join(profile_dir, "profile.yaml")
+    profile_config: Dict[str, Any] = {}
+    if os.path.exists(profile_path):
+        with open(profile_path, "r") as f:
+            profile_config = yaml.safe_load(f) or {}
+    return profile_config if isinstance(profile_config, dict) else {}
+
+
 def discover_tools(profile: str, additional_mcp: Optional[List[Any]] = None) -> Dict[str, Callable]:
     """
     指定されたプロファイルの tools/ ディレクトリと、
@@ -121,11 +141,7 @@ def discover_tools(profile: str, additional_mcp: Optional[List[Any]] = None) -> 
     # プロファイル設定を読み込む（環境変数 > cwd > パッケージ内）
     profiles_dir = _find_profiles_dir()
     profile_dir = os.path.join(profiles_dir, profile)
-    profile_path = os.path.join(profile_dir, "profile.yaml")
-    profile_config = {}
-    if os.path.exists(profile_path):
-        with open(profile_path, 'r') as f:
-            profile_config = yaml.safe_load(f)
+    profile_config = load_profile_config(profile)
 
     # 1. プロファイル固有のツールを読み込む
     profile_tools_dir = os.path.join(profile_dir, "tools")
@@ -178,6 +194,16 @@ def discover_tools(profile: str, additional_mcp: Optional[List[Any]] = None) -> 
         tool_map["sandbox_list_services"] = sandbox_list_services
         tool_map["sandbox_service_logs"] = sandbox_service_logs
         tool_map["sandbox_health"] = sandbox_health
+
+    # 2.5 Embedding系ツールを無効化（プロファイル設定）
+    embeddings_disabled = (
+        _flag_is_disabled(profile_config.get("embeddings")) or
+        _flag_is_disabled(profile_config.get("embedding_tools")) or
+        _flag_is_disabled(profile_config.get("enable_embeddings"))
+    )
+    if embeddings_disabled:
+        for tool_name in ("semantic_search", "codebase_search"):
+            tool_map.pop(tool_name, None)
         
     # 3. MCP ツールを読み込む
     mcp_servers_config = profile_config.get("mcp_servers", []) if isinstance(profile_config, dict) else []

@@ -5,7 +5,7 @@ import time
 import logging
 from pathlib import Path
 from typing import Dict, Optional, List, Any
-from ..tools.discovery import AgentLoader, AgentConfig, discover_tools
+from ..tools.discovery import AgentLoader, AgentConfig, discover_tools, load_profile_config, _flag_is_disabled
 from ..tools.skill_loader import SkillLoader, SkillConfig
 from ..tools.skill_tools import get_loaded_skills, clear_session_skills
 from ..cancellation import check_cancelled, clear_cancel_event, OperationCancelled
@@ -39,6 +39,18 @@ def _strip_orchestrator_prefixes(text: str) -> str:
         cleaned = re.sub(r'^(?:\s*🤖\s*)?(?:@orchestrator:\s*)+', '', line, flags=re.IGNORECASE)
         cleaned_lines.append(cleaned)
     return "\n".join(cleaned_lines).lstrip()
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Parse int defensively (handles commas/whitespace)."""
+    try:
+        if isinstance(value, str):
+            cleaned = value.strip().replace(",", "")
+            if not cleaned:
+                return default
+            return int(float(cleaned))
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 try:
     from rich.console import Console
@@ -126,7 +138,22 @@ class Orchestrator:
             os.environ["LLM_PROVIDER"] = str(provider_name)
 
         self.loader = AgentLoader(profile=self.profile)
-        self.skill_loader = SkillLoader(profile=self.profile)
+
+        # プロファイル設定の読み込み
+        profile_config = load_profile_config(self.profile)
+        embeddings_disabled = (
+            _flag_is_disabled(profile_config.get("embeddings")) or
+            _flag_is_disabled(profile_config.get("embedding_tools")) or
+            _flag_is_disabled(profile_config.get("enable_embeddings"))
+        )
+        memory_service_disabled = (
+            _flag_is_disabled(profile_config.get("memory_service")) or
+            _flag_is_disabled(profile_config.get("memory"))
+        )
+
+        self._embeddings_disabled = embeddings_disabled
+        self._memory_service_disabled = memory_service_disabled
+        self.skill_loader = SkillLoader(profile=self.profile, use_semantic=not embeddings_disabled)
         self._all_skills: Dict[str, SkillConfig] = {}  # ローカルスキルキャッシュ
         self._session_skills: List[SkillConfig] = []   # セッション中にロードしたスキル（プール）
         
@@ -148,13 +175,19 @@ class Orchestrator:
         self._inline_evaluations: Dict[str, dict] = {}  # エージェント名 -> 評価結果
         self._agent_execution_metrics: List[Any] = []   # エージェント別実行メトリクス
 
-        # セマンティックメモリの初期化
-        db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
-        self.semantic_memory = SemanticMemory(db_path=db_path)
+        # セマンティックメモリの初期化（embedding無効ならスキップ）
+        if embeddings_disabled:
+            self.semantic_memory = None
+        else:
+            db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
+            self.semantic_memory = SemanticMemory(db_path=db_path)
 
         # MemoryService（学習・記憶システム）の初期化
         # MOCO_MEMORY_SERVICE=off で無効化可能
-        if os.getenv("MOCO_MEMORY_SERVICE", "on").lower() in ("off", "false", "0"):
+        if (
+            os.getenv("MOCO_MEMORY_SERVICE", "on").lower() in ("off", "false", "0")
+            or memory_service_disabled
+        ):
             self.memory_service = None
         else:
             memory_db_path = os.getenv("MEMORY_DB_PATH", str(Path.cwd() / "data" / "memory.db"))
@@ -277,6 +310,7 @@ class Orchestrator:
                     progress_callback=self.progress_callback,
                     parent_agent=None if name == "orchestrator" else "orchestrator",
                     semantic_memory=self.semantic_memory,
+                    enable_semantic_memory=not self._embeddings_disabled,
                     memory_service=self.memory_service,
                     system_prompt_override=full_system_prompt,
                     session_logger=self.session_logger
@@ -294,6 +328,7 @@ class Orchestrator:
                     progress_callback=self.progress_callback,
                     parent_agent="orchestrator",
                     semantic_memory=self.semantic_memory,
+                    enable_semantic_memory=not self._embeddings_disabled,
                     memory_service=self.memory_service,
                     system_prompt_override=full_system_prompt,
                     session_logger=self.session_logger
@@ -316,18 +351,52 @@ class Orchestrator:
 
         # Re-initialize loaders to ensure profile-specific directories are recomputed
         self.loader = AgentLoader(profile=self.profile)
-        self.skill_loader.profile = self.profile
+
+        # Reload profile config flags
+        profile_config = load_profile_config(self.profile)
+        self._embeddings_disabled = (
+            _flag_is_disabled(profile_config.get("embeddings")) or
+            _flag_is_disabled(profile_config.get("embedding_tools")) or
+            _flag_is_disabled(profile_config.get("enable_embeddings"))
+        )
+        self._memory_service_disabled = (
+            _flag_is_disabled(profile_config.get("memory_service")) or
+            _flag_is_disabled(profile_config.get("memory"))
+        )
+
+        self.skill_loader = SkillLoader(profile=self.profile, use_semantic=not self._embeddings_disabled)
 
         # Optimizer config (if present)
         if hasattr(self, "optimizer_config"):
             self.optimizer_config.profile = self.profile
 
-        # Profile-scoped memory (channel_id)
-        if hasattr(self, "memory_service") and self.memory_service:
-            try:
-                self.memory_service.channel_id = self.profile
-            except Exception:
-                pass
+        # Profile-scoped memory (channel_id) or re-init if enabled
+        if (
+            os.getenv("MOCO_MEMORY_SERVICE", "on").lower() in ("off", "false", "0")
+            or self._memory_service_disabled
+        ):
+            self.memory_service = None
+        else:
+            if self.memory_service:
+                try:
+                    self.memory_service.channel_id = self.profile
+                except Exception:
+                    pass
+            else:
+                memory_db_path = os.getenv("MEMORY_DB_PATH", str(Path.cwd() / "data" / "memory.db"))
+                provider_name = getattr(self.provider, "value", self.provider)
+                self.memory_service = MemoryService(
+                    channel_id=self.profile,
+                    db_path=memory_db_path,
+                    provider=provider_name
+                )
+
+        # Semantic memory refresh
+        if self._embeddings_disabled:
+            self.semantic_memory = None
+        elif not self.semantic_memory:
+            db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
+            self.semantic_memory = SemanticMemory(db_path=db_path)
 
         # Refresh tool map for the new profile
         self.tool_map = discover_tools(profile=self.profile)
@@ -653,10 +722,10 @@ class Orchestrator:
             if aggregated_eval:
                 # インライン評価を使用（追加LLMコールなし）
                 quality_scores = {
-                    "completion": int(aggregated_eval.get("completion", 5)),
-                    "quality": int(aggregated_eval.get("quality", 5)),
-                    "task_complexity": int(aggregated_eval.get("task_complexity", 5)),
-                    "prompt_specificity": int(aggregated_eval.get("prompt_specificity", 5)),
+                    "completion": _safe_int(aggregated_eval.get("completion", 5), 5),
+                    "quality": _safe_int(aggregated_eval.get("quality", 5), 5),
+                    "task_complexity": _safe_int(aggregated_eval.get("task_complexity", 5), 5),
+                    "prompt_specificity": _safe_int(aggregated_eval.get("prompt_specificity", 5), 5),
                 }
                 if self.verbose:
                     print(f"[Optimizer] Using inline evaluation from {len(self._inline_evaluations)} agents")
@@ -730,8 +799,8 @@ class Orchestrator:
                     o_runtime = self.runtimes.get("orchestrator")
                     if o_runtime:
                         o_usage = o_runtime.get_metrics() or {}
-                        o_prompt_tokens = int(o_usage.get("prompt_tokens", 0) or 0)
-                        o_completion_tokens = int(o_usage.get("completion_tokens", 0) or 0)
+                        o_prompt_tokens = _safe_int(o_usage.get("prompt_tokens", 0) or 0, 0)
+                        o_completion_tokens = _safe_int(o_usage.get("completion_tokens", 0) or 0, 0)
                 except Exception:
                     pass  # メトリクス取得失敗は無視
 
@@ -747,8 +816,8 @@ class Orchestrator:
                     eval_quality=None,
                     eval_task_complexity=None,
                     eval_prompt_specificity=None,
-                    summary_depth=int(summary_depth or 0),
-                    history_turns=int(history_turns or 0),
+                    summary_depth=_safe_int(summary_depth or 0, 0),
+                    history_turns=_safe_int(history_turns or 0, 0),
                     error_message=None,
                 )
 
@@ -817,10 +886,10 @@ class Orchestrator:
                 eval_block = f"""
 ---
 【サブエージェント評価】
-- completion: {int(eval_summary.get('completion', 5))}
-- quality: {int(eval_summary.get('quality', 5))}
-- task_complexity: {int(eval_summary.get('task_complexity', 5))}
-- prompt_specificity: {int(eval_summary.get('prompt_specificity', 5))}
+- completion: {_safe_int(eval_summary.get('completion', 5), 5)}
+- quality: {_safe_int(eval_summary.get('quality', 5), 5)}
+- task_complexity: {_safe_int(eval_summary.get('task_complexity', 5), 5)}
+- prompt_specificity: {_safe_int(eval_summary.get('prompt_specificity', 5), 5)}
 """
                 response = response + eval_block
 
@@ -1345,7 +1414,7 @@ class Orchestrator:
         
         for eval_data in self._inline_evaluations.values():
             for key in total:
-                total[key] += eval_data.get(key, 5)
+                total[key] += _safe_int(eval_data.get(key, 5), 5)
         
         return {key: val / count for key, val in total.items()}
 

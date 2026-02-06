@@ -10,6 +10,10 @@ description: General-purpose AI agent for common tasks
 # Include base tools (read_file, write_file, bash, grep, etc.)
 include_base_tools: true
 
+# Feature flags (on/off)
+memory_service: on
+embeddings: on
+
 # Optional: Specify which base tools to include/exclude
 # tools:
 #   include:
