@@ -530,6 +530,10 @@ def _detect_pseudo_tool_calls(text: str, tool_names: List[str]) -> List[str]:
 
 _TOOL_CALL_OPEN = "<tool_call>"
 _TOOL_CALL_CLOSE = "</tool_call>"
+_TOOL_CALL_BEGIN = "<|tool_call_begin|>"
+_TOOL_CALL_ARG_BEGIN = "<|tool_call_argument_begin|>"
+_TOOL_CALL_ARG_END = "<|tool_call_argument_end|>"
+_TOOL_CALL_END = "<|tool_call_end|>"
 _ARG_PAIR_RE = re.compile(r"(?is)<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>")
 _TOOL_NAME_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+)")
 
@@ -577,7 +581,49 @@ def _extract_tool_call_blocks(text: str) -> List[tuple]:
     return blocks
 
 
-def _parse_tool_call_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
+def _extract_tool_call_begin_blocks(text: str) -> List[tuple]:
+    """Extract <|tool_call_begin|> blocks. Returns (start, end, header, args_text)."""
+    blocks: List[tuple] = []
+    if not text:
+        return blocks
+    idx = 0
+    while True:
+        start = text.find(_TOOL_CALL_BEGIN, idx)
+        if start == -1:
+            break
+        header_start = start + len(_TOOL_CALL_BEGIN)
+        arg_start = text.find(_TOOL_CALL_ARG_BEGIN, header_start)
+        if arg_start == -1:
+            break
+        header = text[header_start:arg_start]
+        args_start = arg_start + len(_TOOL_CALL_ARG_BEGIN)
+        arg_end = text.find(_TOOL_CALL_ARG_END, args_start)
+        if arg_end != -1:
+            args_text = text[args_start:arg_end]
+            end = text.find(_TOOL_CALL_END, arg_end + len(_TOOL_CALL_ARG_END))
+        else:
+            end = text.find(_TOOL_CALL_END, args_start)
+            args_text = text[args_start:end if end != -1 else len(text)]
+        if end == -1:
+            block_end = len(text)
+        else:
+            block_end = end + len(_TOOL_CALL_END)
+        blocks.append((start, block_end, header, args_text))
+        idx = block_end
+    return blocks
+
+
+def _normalize_tool_name(raw: str) -> str:
+    """Normalize tool names from various tag formats."""
+    name = (raw or "").strip().split()[0] if raw else ""
+    if ":" in name:
+        name = name.split(":", 1)[0]
+    if "." in name:
+        name = name.split(".")[-1]
+    return name
+
+
+def _parse_tool_call_angle_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
     """Parse <tool_call> tags into tool_calls list; return (tool_calls, cleaned_text)."""
     if not text or not tool_names:
         return [], text
@@ -614,6 +660,47 @@ def _parse_tool_call_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
     cleaned = text
     for start, end, _ in reversed(blocks):
         cleaned = cleaned[:start] + cleaned[end:]
+    return tool_calls, cleaned.strip()
+
+
+def _parse_tool_call_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
+    """Parse supported tool-call tag formats into tool_calls list; return (tool_calls, cleaned_text)."""
+    if not text or not tool_names:
+        return [], text
+
+    tool_calls: List[Dict[str, Any]] = []
+    cleaned = text
+
+    # 1) <|tool_call_begin|> ... <|tool_call_end|> format
+    begin_blocks = _extract_tool_call_begin_blocks(cleaned)
+    if begin_blocks:
+        for i, (_, _, header, args_text) in enumerate(begin_blocks):
+            func_name = _normalize_tool_name(header)
+            if func_name not in tool_names:
+                if func_name == "todoread_all" and "todoread" in tool_names:
+                    func_name = "todoread"
+                else:
+                    continue
+            args_dict = SmartJSONParser.parse((args_text or "").strip(), default=None)
+            if not isinstance(args_dict, dict):
+                continue
+            args_json = json.dumps(args_dict, ensure_ascii=False)
+            tool_calls.append({
+                "id": f"tag_call_begin_{i}",
+                "type": "function",
+                "function": {
+                    "name": func_name,
+                    "arguments": args_json,
+                }
+            })
+        for start, end, _, _ in reversed(begin_blocks):
+            cleaned = cleaned[:start] + cleaned[end:]
+
+    # 2) <tool_call> ... </tool_call> format
+    angle_calls, cleaned = _parse_tool_call_angle_tags(cleaned, tool_names)
+    if angle_calls:
+        tool_calls.extend(angle_calls)
+
     return tool_calls, cleaned.strip()
 
 def _has_tool_results(messages: List[Any]) -> bool:
