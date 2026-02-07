@@ -12,6 +12,7 @@ WhatsApp ↔ moco 連携
 - 画像（自動認識してmocoに送信）
 """
 
+import os
 import httpx
 import threading
 import uuid
@@ -19,11 +20,19 @@ from neonize.client import NewClient
 from neonize.events import MessageEv, ConnectedEv, QREv, event
 
 # 設定
-MOCO_BASE_URL = "http://localhost:8000/api"
+MOCO_BASE_URL = os.getenv("MOCO_BASE_URL", "http://localhost:8000/api")
 MOCO_API_URL = f"{MOCO_BASE_URL}/chat"
+MOCO_API_TOKEN = os.getenv("MOCO_API_TOKEN", "")
 DEFAULT_PROFILE = "cursor"
 DEFAULT_PROVIDER = "openrouter"
 DEFAULT_WORKING_DIR = "."  # モバイルからの作業ディレクトリ（実行時のカレントディレクトリ）
+
+def _api_headers() -> dict:
+    """API リクエスト用ヘッダーを構築"""
+    headers = {"Content-Type": "application/json"}
+    if MOCO_API_TOKEN:
+        headers["Authorization"] = f"Bearer {MOCO_API_TOKEN}"
+    return headers
 
 # WhatsApp クライアント
 client = NewClient("moco_whatsapp")
@@ -176,7 +185,7 @@ def on_message(c: NewClient, ev: MessageEv):
             if settings["session_id"]:
                 try:
                     with httpx.Client() as http:
-                        resp = http.post(f"{MOCO_BASE_URL}/sessions/{settings['session_id']}/cancel")
+                        resp = http.post(f"{MOCO_BASE_URL}/sessions/{settings['session_id']}/cancel", headers=_api_headers())
                     if resp.status_code == 200:
                         client.reply_message("🛑 実行を中断しました", ev)
                         print(f"📤 中断成功: {settings['session_id']}")
@@ -207,7 +216,8 @@ def on_message(c: NewClient, ev: MessageEv):
                         with httpx.Client() as http:
                             resp = http.post(
                                 f"{MOCO_BASE_URL}/sessions/{settings['session_id']}/workdir",
-                                json={"working_directory": new_dir}
+                                json={"working_directory": new_dir},
+                                headers=_api_headers()
                             )
                             if resp.status_code == 200:
                                 data = resp.json()
@@ -366,7 +376,7 @@ def on_message(c: NewClient, ev: MessageEv):
             
             # タイムアウトを 無制限に設定
             with httpx.Client(timeout=None) as http:
-                response = http.post(MOCO_API_URL, json=payload)
+                response = http.post(MOCO_API_URL, json=payload, headers=_api_headers())
             
             # キャンセルチェック: リクエストIDが変わっていたら無視
             if settings["active_request_id"] != request_id:
