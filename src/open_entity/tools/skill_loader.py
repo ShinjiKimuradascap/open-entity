@@ -77,39 +77,54 @@ def _find_profiles_dir() -> str:
 
 @dataclass
 class SkillConfig:
-    """Skill configuration loaded from SKILL.md
-    
-    Claude Skills 互換フォーマット:
-    - name: スキル名
-    - description: 説明
-    - triggers: 発動トリガー（キーワード）
-    - version: バージョン
-    - allowed_tools: 許可されたツール（Claude互換: allowed-tools）
-    - content: 知識・ルール本文
-    - is_logic: ロジック（JS/TS/Py）を含むか
-    - path: スキルディレクトリの絶対パス
-    - exposed_tools: スキルが露出するツール定義
+    """Skill configuration loaded from SKILL.md (Claude Code compatible).
+
+    Standard fields (Claude Code spec):
+    - name: Skill identifier (lowercase, hyphens, max 64 chars)
+    - description: What the skill does and when to use it
+    - allowed_tools: Tools Claude can use without asking (allowed-tools)
+    - disable_model_invocation: If True, only user can invoke via /name
+    - user_invocable: If False, hidden from / menu (only Claude invokes)
+    - argument_hint: Autocomplete hint (e.g. "[issue-number]")
+    - content: Markdown body (instructions, knowledge)
+    - model: Override model for this skill
+    - context: "fork" for isolated subagent execution
+    - agent: Subagent type when context=fork
+
+    Extension fields (Open Entity):
+    - version: Skill version
+    - is_logic: Has executable scripts (JS/TS/Py)
+    - path: Skill directory absolute path
+    - exposed_tools: Tool definitions exposed by this skill
     """
     name: str
     description: str
-    triggers: List[str]
     version: str
     content: str
     allowed_tools: List[str] = field(default_factory=list)
     path: str = ""
     is_logic: bool = False
     exposed_tools: Dict[str, Any] = field(default_factory=dict)
+    # Claude Code standard fields
+    disable_model_invocation: bool = False
+    user_invocable: bool = True
+    argument_hint: str = ""
+    model: str = ""
+    context: str = ""
+    agent: str = ""
 
     def matches_input(self, user_input: str) -> bool:
-        """Check if this skill matches the user input based on triggers or description keywords"""
+        """Check if this skill matches user input (description-based, Claude Code compatible).
+
+        Skills with disable_model_invocation=True are never auto-matched
+        (they can only be invoked explicitly by the user via /name).
+        """
+        if self.disable_model_invocation:
+            return False
+
         input_lower = user_input.lower()
-        
-        # triggers ベースのマッチング
-        if self.triggers:
-            if any(trigger.lower() in input_lower for trigger in self.triggers):
-                return True
-        
-        # スキル名が入力に含まれていればマッチ（部分一致）
+
+        # 1. スキル名マッチ（名前が入力に含まれていればマッチ）
         name_variants = [
             self.name.lower(),
             self.name.replace('-', ' ').lower(),
@@ -118,58 +133,96 @@ class SkillConfig:
         for variant in name_variants:
             if variant in input_lower:
                 return True
-        
+
         # スキル名の各パーツが入力に含まれていればマッチ
         name_parts = self.name.lower().split('-')
         if len(name_parts) >= 2:
-            # 例: frontend-design → "frontend" and "design" が両方含まれていればマッチ
             if all(part in input_lower for part in name_parts if len(part) >= 3):
                 return True
-        
-        # description からキーワードを抽出してマッチング（フォールバック）
+
+        # 2. description ベースのマッチング（Claude Code 標準方式）
         if self.description:
-            # 重要なキーワードを抽出
+            desc_lower = self.description.lower()
+
+            # description からキーワードを抽出
             important_keywords = set()
-            for word in self.description.split():
-                word_clean = word.lower().strip('.,()[]/:')
-                # 4文字以上で、技術的なキーワードを優先
-                if len(word_clean) >= 4:
+            for word in desc_lower.split():
+                word_clean = word.strip('.,()[]/:')
+                if len(word_clean) >= 3:
                     important_keywords.add(word_clean)
-            
+
             # 一般的すぎる単語を除外
-            stop_words = {'this', 'that', 'with', 'from', 'when', 'user', 'asks', 'create', 
+            stop_words = {'this', 'that', 'with', 'from', 'when', 'user', 'asks', 'create',
                          'build', 'make', 'code', 'using', 'includes', 'examples', 'skill',
                          'guide', 'helps', 'uses', 'like', 'such', 'also', 'some', 'more',
-                         'than', 'into', 'your', 'they', 'will', 'have', 'been', 'about'}
+                         'than', 'into', 'your', 'they', 'will', 'have', 'been', 'about',
+                         'the', 'and', 'for', 'are', 'not', 'can', 'use', 'how', 'its'}
             important_keywords -= stop_words
-            
-            # 入力に含まれるキーワードをカウント
-            matched_keywords = [kw for kw in important_keywords if kw in input_lower]
-            if len(matched_keywords) >= 2:
+
+            # 入力から単語を抽出
+            input_words = set()
+            for w in input_lower.split():
+                w_clean = w.strip('.,()[]/:?!')
+                if len(w_clean) >= 3:
+                    input_words.add(w_clean)
+
+            # 完全一致（単語レベル）: 2つ以上一致
+            exact_matches = input_words & important_keywords
+            if len(exact_matches) >= 2:
                 return True
-        
+
+            # description キーワードが入力テキストに含まれる（部分一致）
+            for kw in important_keywords:
+                if len(kw) >= 5 and kw in input_lower:
+                    return True
+
+            # 入力の単語が description テキストに含まれる（逆方向部分一致）
+            # 短い単語の偽陽性を防ぐため5文字以上に制限
+            for w in input_words:
+                if len(w) >= 5 and w in desc_lower:
+                    return True
+
+            # 語幹マッチ: 共通プレフィックスが5文字以上なら同じ語幹とみなす
+            # navigate↔navigation, click↔clicking, scrape↔scraping 等
+            for w in input_words:
+                if len(w) < 4:
+                    continue
+                stem = w[:5] if len(w) >= 5 else w[:4]
+                for kw in important_keywords:
+                    if len(kw) >= len(stem) and kw[:len(stem)] == stem:
+                        return True
+
         return False
 
 
 class SkillLoader:
-    """Loader for Skills from a profile directory.
+    """Loader for Skills from a profile directory (Claude Code compatible).
 
     Skills are defined as:
     profiles/<profile>/skills/<skill-name>/SKILL.md
 
-    SKILL.md format:
+    SKILL.md format (Claude Code standard):
     ---
-    name: python-style
-    description: Python coding guidelines
-    triggers:
-      - python
-      - .py
+    name: my-skill
+    description: What this skill does and when to use it
+    disable-model-invocation: false
+    user-invocable: true
+    argument-hint: "[arg]"
+    allowed-tools: Read, Grep, Bash
+    model: ""
+    context: fork
+    agent: general-purpose
+    # Open Entity extensions:
     version: 1.0.0
+    tools:
+      tool_name:
+        description: Tool description
     ---
-    (content: knowledge/rules)
-    
+    (content: knowledge/rules/instructions)
+
     Supports:
-    - Keyword-based matching (triggers, name, description)
+    - Description-based matching (Claude Code standard)
+    - Name-based matching
     - Semantic (vector) matching using embeddings
     """
 
@@ -299,14 +352,7 @@ class SkillLoader:
         if not name:
             return None
 
-        # triggers が文字列の場合はリストに変換、None も考慮
-        triggers = metadata.get("triggers") or []
-        if isinstance(triggers, str):
-            triggers = [triggers]
-        elif not isinstance(triggers, list):
-            triggers = []
-
-        # allowed-tools (Claude互換) または allowed_tools をパース
+        # allowed-tools (Claude Code standard) または allowed_tools をパース
         allowed_tools = metadata.get("allowed-tools") or metadata.get("allowed_tools") or []
         if isinstance(allowed_tools, str):
             allowed_tools = [allowed_tools]
@@ -356,16 +402,32 @@ class SkillLoader:
         else:
             exposed_tools = {}
 
+        # Claude Code standard fields
+        disable_model_invocation = bool(metadata.get("disable-model-invocation", False))
+        user_invocable = bool(metadata.get("user-invocable", True))
+        # Handle explicit False for user-invocable (YAML parses "false" as False)
+        if "user-invocable" in metadata:
+            user_invocable = bool(metadata["user-invocable"])
+        argument_hint = str(metadata.get("argument-hint", ""))
+        model = str(metadata.get("model", ""))
+        context = str(metadata.get("context", ""))
+        agent = str(metadata.get("agent", ""))
+
         return SkillConfig(
             name=name,
             description=metadata.get("description", ""),
-            triggers=triggers,
             version=metadata.get("version", "1.0.0"),
             content=body,
             allowed_tools=allowed_tools,
             path=skill_dir,
             is_logic=is_logic,
-            exposed_tools=exposed_tools
+            exposed_tools=exposed_tools,
+            disable_model_invocation=disable_model_invocation,
+            user_invocable=user_invocable,
+            argument_hint=argument_hint,
+            model=model,
+            context=context,
+            agent=agent,
         )
 
     def match_skills(
@@ -375,7 +437,7 @@ class SkillLoader:
         use_semantic: Optional[bool] = None,
         max_skills: int = 3
     ) -> List[SkillConfig]:
-        """Find skills that match the user input based on triggers and/or semantic similarity.
+        """Find skills that match the user input based on description and/or semantic similarity.
 
         Args:
             user_input: The user's input text
@@ -484,12 +546,10 @@ class SkillLoader:
                     continue
                 skill = skills[name]
                 
-                # description + name + triggers を結合してインデックス
+                # description + name を結合してインデックス
                 text_parts = [skill.name.replace('-', ' ')]
                 if skill.description:
                     text_parts.append(skill.description)
-                if skill.triggers:
-                    text_parts.extend(skill.triggers)
                 
                 combined_text = " ".join(text_parts)
                 
@@ -590,7 +650,8 @@ class SkillLoader:
                 "description": skill.description,
                 "version": skill.version,
                 "source": source,
-                "triggers": skill.triggers
+                "disable-model-invocation": skill.disable_model_invocation,
+                "user-invocable": skill.user_invocable,
             })
         return result
 
@@ -989,10 +1050,6 @@ class SkillLoader:
             metadata = yaml.safe_load(match.group(1)) or {}
             body = match.group(2).strip()
 
-            triggers = metadata.get("triggers") or []
-            if isinstance(triggers, str):
-                triggers = [triggers]
-
             allowed_tools = metadata.get("allowed-tools") or metadata.get("allowed_tools") or []
             if isinstance(allowed_tools, str):
                 allowed_tools = [allowed_tools]
@@ -1000,7 +1057,6 @@ class SkillLoader:
             return SkillConfig(
                 name=metadata.get("name", skill_name),
                 description=metadata.get("description", ""),
-                triggers=triggers,
                 version=metadata.get("version", "1.0.0"),
                 content=body,
                 allowed_tools=allowed_tools

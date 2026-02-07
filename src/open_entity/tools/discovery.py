@@ -279,7 +279,8 @@ def _load_tools_from_dir(tools_dir: str) -> Dict[str, Callable]:
     dir_hash = abs(hash(tools_dir)) % 10000
     
     # 動的ロードから除外するファイル（グローバル状態を持つもの、または静的インポートされるもの）
-    exclude_files = {"discovery.py", "todo.py", "skill_tools.py", "skill_loader.py", "mobile.py", "scheduler.py"}
+    exclude_files = {"discovery.py", "todo.py", "skill_tools.py", "skill_loader.py", "mobile.py", "scheduler.py",
+                      "browser.py", "amp_client.py", "peer.py", "stats.py"}
     
     # 相対インポートを動作させるため、親ディレクトリを sys.path に追加
     parent_dir = os.path.dirname(tools_dir)
@@ -318,7 +319,7 @@ def _load_tools_from_dir(tools_dir: str) -> Dict[str, Callable]:
                             spec.loader.exec_module(module)
                     
                     for name, func in inspect.getmembers(module, inspect.isfunction):
-                        if not name.startswith("_"):
+                        if not name.startswith("_") and getattr(func, "__module__", None) == module.__name__:
                             tool_map[name] = func
                 except Exception as e:
                     logger.warning(f"Error loading module from {filepath}: {e}")
@@ -331,7 +332,7 @@ def _load_tools_from_dir(tools_dir: str) -> Dict[str, Callable]:
                     try:
                         spec.loader.exec_module(module)
                         for name, func in inspect.getmembers(module, inspect.isfunction):
-                            if not name.startswith("_"):
+                            if not name.startswith("_") and getattr(func, "__module__", None) == module.__name__:
                                 tool_map[name] = func
                     except Exception as e:
                         logger.warning(f"Error loading module from {filepath}: {e}")

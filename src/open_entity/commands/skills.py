@@ -134,13 +134,18 @@ def skills_search(
     table = Table(title=f"Search: {query}", border_style=theme.tools)
     table.add_column("Name", style=theme.tools)
     table.add_column("Description", style=theme.result)
-    table.add_column("Triggers", style="dim")
+    table.add_column("Invocation", style="dim")
 
     for s in results:
+        inv = "user+model"
+        if s.get("disable-model-invocation"):
+            inv = "user only"
+        elif not s.get("user-invocable", True):
+            inv = "model only"
         table.add_row(
             s["name"],
             s["description"][:50],
-            ", ".join(s["triggers"][:3]),
+            inv,
         )
 
     console.print(table)

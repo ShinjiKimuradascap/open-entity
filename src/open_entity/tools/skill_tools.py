@@ -223,6 +223,7 @@ def execute_skill(skill_name: str, tool_name: str, arguments: dict) -> str:
         JSON result string
     """
     import subprocess
+    import sys
     import os
     import json
     
@@ -244,7 +245,20 @@ def execute_skill(skill_name: str, tool_name: str, arguments: dict) -> str:
         )
     
     skill_dir = skill.path
-    
+
+    # LLMが引数を kwargs にラップするパターンを展開
+    if arguments and "kwargs" in arguments and len(arguments) == 1:
+        kw = arguments["kwargs"]
+        if isinstance(kw, str) and kw.strip():
+            try:
+                parsed = json.loads(kw)
+                if isinstance(parsed, dict):
+                    arguments = parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        elif isinstance(kw, dict):
+            arguments = kw
+
     # JavaScript/TypeScript (index.js / index.ts)
     js_path = os.path.join(skill_dir, "index.js")
     ts_path = os.path.join(skill_dir, "index.ts")
@@ -259,7 +273,34 @@ def execute_skill(skill_name: str, tool_name: str, arguments: dict) -> str:
         except Exception as e:
             return f"Error executing JS skill tool '{skill_name}.{tool_name}': {e}"
 
-    # Python スクリプトとしての実行
+    # Python: index.py があれば直接 import して関数を呼ぶ（高速・引数パース不要）
+    index_py = os.path.join(skill_dir, "index.py")
+    if os.path.exists(index_py):
+        try:
+            import importlib.util
+            cache_key = f"_skill_idx_{skill_name}"
+            if cache_key in sys.modules:
+                mod = sys.modules[cache_key]
+            else:
+                spec = importlib.util.spec_from_file_location(cache_key, index_py)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    sys.modules[cache_key] = mod
+                    spec.loader.exec_module(mod)
+                else:
+                    mod = None
+            if mod:
+                func = getattr(mod, tool_name, None)
+                if func and callable(func):
+                    result = func(**(arguments or {}))
+                    if isinstance(result, str):
+                        return result
+                    return json.dumps(result, ensure_ascii=False, default=str)
+                return f"Error: Function '{tool_name}' not found in index.py for skill '{skill_name}'"
+        except Exception as e:
+            return f"Error executing skill '{skill_name}.{tool_name}' via index.py: {e}"
+
+    # Python スクリプトとしての実行（サブプロセス）
     # 1. 直接的なツール名.py を探す（宣言された tool_name のみ）
     py_script = os.path.join(skill_dir, f"{tool_name}.py")
     # 2. scripts/ツール名.py を探す

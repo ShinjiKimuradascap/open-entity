@@ -1130,32 +1130,46 @@ class Orchestrator:
             # 評価指示は追加しない（オーケストレーターが事後評価を行うため）
             enhanced_query = query_with_workdir
             
-            # Skills 管理: Orchestrator がロードしたスキルの情報をサブエージェントに共有
-            # 自動注入はせず、サブエージェントが自分で load_skill を使うことを推奨するプロンプトを付与
+            # Skills 管理: トリガーマッチングでスキルを自動検出・自動注入
             loaded_skills = get_loaded_skills()
+
+            # 1. 全スキルからトリガーマッチで自動検出
+            auto_matched = []
+            if self._all_skills:
+                for name, skill in self._all_skills.items():
+                    if skill.matches_input(query):
+                        auto_matched.append(skill)
+                        # 自動ロードキャッシュにも追加（後続ターンで利用可能に）
+                        if name not in loaded_skills:
+                            loaded_skills[name] = skill
+
+            # 2. 既にロード済みのスキルも含める（重複排除）
+            matched_names = {s.name for s in auto_matched}
+            for name, skill in loaded_skills.items():
+                if name not in matched_names and skill.matches_input(query):
+                    auto_matched.append(skill)
+
+            # 3. スキルをランタイムに注入
+            if auto_matched:
+                runtime.skills = auto_matched
+                if self.verbose:
+                    print(f"[Skills] Auto-injected {len(auto_matched)} skills to @{agent_name}: {[s.name for s in auto_matched]}")
+            else:
+                runtime.skills = []
+
+            # 4. 利用可能なスキルのヒントをプロンプトに追加
             available_skills_hint = ""
             if self._all_skills:
-                skill_names = ", ".join(self._all_skills.keys())
-                available_skills_hint = f"\n\n[Available Skills Hint]\nYou can use 'load_skill' to access specialized knowledge. Available local skills: {skill_names}\n"
+                # user_invocable=True のスキルのみ表示（disable_model_invocation は auto-match で除外済み）
+                visible_skills = [
+                    name for name, skill in self._all_skills.items()
+                    if skill.user_invocable
+                ]
+                if visible_skills:
+                    skill_names = ", ".join(visible_skills)
+                    available_skills_hint = f"\n\n[Available Skills]\nLocal skills: {skill_names}\n"
 
             enhanced_query = query_with_workdir + available_skills_hint
-            
-            # ロード済みスキルがある場合のみ、コンテキストとして注入（マッチするものに限定）
-            if loaded_skills:
-                relevant_skills = []
-                for name, skill in loaded_skills.items():
-                    if skill.matches_input(query):
-                        relevant_skills.append(skill)
-                
-                # 自動的に全注入せず、関連性が高いもののみ
-                if relevant_skills:
-                    runtime.skills = relevant_skills
-                    if self.verbose:
-                        print(f"[Skills] Context-injected {len(relevant_skills)} skills to @{agent_name}: {[s.name for s in relevant_skills]}")
-                else:
-                    # 以前はここで無理やり 3 つ渡していたが、
-                    # サブエージェントに load_skill を使わせる方針のため、空にする（注入しない）
-                    runtime.skills = []
             
             # 実行時間計測開始
             agent_start_time = time.time()

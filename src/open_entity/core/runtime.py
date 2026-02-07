@@ -410,16 +410,15 @@ COMMON_AGENT_RULES = """
 `delegate_to_agent` でサブエージェントに委譲するときは、**必ずツール呼び出し（JSON形式）で実行**してください。
 Markdown で「delegate_to_agent: @name」と書くのではなく、実際にツールを呼び出してください。
 
-## 🧠 Skills（スキル）ツール
+## 🧠 Skills（スキル）
 
-このシステムでは、スキルは **自動ロードされません**。必要なときにツールで明示的にロードしてください。
+スキルはユーザーの入力に応じて**自動的にロード**されます。トリガーキーワードに一致するスキルの知識がシステムプロンプトに注入されます。
+ロジック型スキルの宣言済みツールは常に利用可能です（直接呼び出し可能）。
 
-- `list_loaded_skills()`: 利用可能なスキル一覧を表示。
-- `load_skill(skill_name: str, source: str = "auto")`: スキル本文（ガイド/知識）をロードして参照。
-- `execute_skill(skill_name: str, tool_name: str, arguments: dict)`: ロジック型スキル（JS/TS/Python）の **宣言済みツール**を実行（`SKILL.md` の frontmatter `tools:` に定義されているもののみ）。
-
-注意:
-- ロード済みスキルのキャッシュは **ユーザー入力ごとにクリアされる**ため、毎ターン必要なら再度 `load_skill` してください。
+追加のスキル操作ツール:
+- `load_skill(skill_name)`: 特定のスキルを明示的にロード（自動検出されなかった場合）
+- `search_skills(query)`: スキルを検索
+- `list_loaded_skills()`: ロード済みスキル一覧
 
 ## ⛔ ツール呼び出し上限時のルール
 
@@ -702,6 +701,173 @@ def _parse_tool_call_tags(text: str, tool_names: List[str]) -> tuple[list, str]:
         tool_calls.extend(angle_calls)
 
     return tool_calls, cleaned.strip()
+
+
+def _parse_json_code_block_tool_calls(text: str, tool_names: List[str]) -> tuple[list, str]:
+    """Parse tool calls written as JSON in markdown code blocks (common Qwen3 pattern).
+
+    Matches patterns like:
+        ```json
+        {"name": "tool_name", "arguments": {"key": "value"}}
+        ```
+    or:
+        ```
+        [{"name": "tool_name", "arguments": {"key": "value"}}]
+        ```
+
+    Returns (tool_calls, cleaned_text).
+    """
+    if not text or not tool_names:
+        return [], text
+
+    tool_calls = []
+    cleaned = text
+
+    # Find all ```json ... ``` or ``` ... ``` blocks
+    pattern = r'```(?:json)?\s*\n?([\s\S]*?)```'
+    matches = list(re.finditer(pattern, text))
+
+    if not matches:
+        return [], text
+
+    blocks_to_remove = []
+
+    for i, match in enumerate(matches):
+        content = match.group(1).strip()
+        if not content:
+            continue
+
+        parsed = SmartJSONParser.parse(content, default=None)
+        if parsed is None:
+            continue
+
+        # Handle both single object and array of objects
+        items = parsed if isinstance(parsed, list) else [parsed]
+
+        block_has_tool_calls = False
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            # Check for {"name": "tool", "arguments": {...}} format
+            func_name = item.get("name")
+            if not func_name and isinstance(item.get("function"), dict):
+                func_name = item["function"].get("name")
+
+            if not func_name or func_name not in tool_names:
+                continue
+
+            args = item.get("arguments") or item.get("parameters") or {}
+            if isinstance(item.get("function"), dict):
+                args = item["function"].get("arguments", args)
+
+            if isinstance(args, str):
+                args = SmartJSONParser.parse(args, default={})
+
+            if not isinstance(args, dict):
+                args = {}
+
+            args_json = json.dumps(args, ensure_ascii=False)
+            tool_calls.append({
+                "id": f"codeblock_call_{i}",
+                "type": "function",
+                "function": {
+                    "name": func_name,
+                    "arguments": args_json,
+                }
+            })
+            block_has_tool_calls = True
+
+        if block_has_tool_calls:
+            blocks_to_remove.append((match.start(), match.end()))
+
+    # Remove parsed blocks from text (reverse order to preserve indices)
+    for start, end in reversed(blocks_to_remove):
+        cleaned = cleaned[:start] + cleaned[end:]
+
+    return tool_calls, cleaned.strip()
+
+
+def _parse_function_tag_tool_calls(text: str, tool_names: List[str]) -> tuple[list, str]:
+    """Parse Qwen3-style <function=name><parameter=key>value</parameter></function> tags.
+
+    Matches patterns like:
+        <function=read_file>
+        <parameter=path>README.md</parameter>
+        </function>
+
+    Returns (tool_calls, cleaned_text).
+    """
+    if not text or not tool_names:
+        return [], text
+
+    tool_calls = []
+    cleaned = text
+
+    # Match <function=name>...</function> blocks
+    pattern = r'<function=([A-Za-z0-9_.-]+)>([\s\S]*?)</function>'
+    matches = list(re.finditer(pattern, text))
+
+    if not matches:
+        return [], text
+
+    blocks_to_remove = []
+
+    for i, match in enumerate(matches):
+        func_name = match.group(1).strip()
+        body = match.group(2).strip()
+
+        if func_name not in tool_names:
+            continue
+
+        # Parse <parameter=key>value</parameter> pairs
+        args_dict = {}
+        param_pattern = r'<parameter=([A-Za-z0-9_.-]+)>([\s\S]*?)</parameter>'
+        for param_match in re.finditer(param_pattern, body):
+            key = param_match.group(1).strip()
+            value = param_match.group(2).strip()
+            args_dict[key] = _coerce_arg_value(value)
+
+        args_json = json.dumps(args_dict, ensure_ascii=False)
+        tool_calls.append({
+            "id": f"functag_call_{i}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": args_json,
+            }
+        })
+        blocks_to_remove.append((match.start(), match.end()))
+
+    for start, end in reversed(blocks_to_remove):
+        cleaned = cleaned[:start] + cleaned[end:]
+
+    return tool_calls, cleaned.strip()
+
+
+def _clean_tool_call_artifacts(text: str) -> str:
+    """Remove all tool call tag artifacts from final response text.
+
+    Cleans up patterns that local models (Qwen3 etc.) may leave in their output:
+    - <function=name>...</function>
+    - </tool_call>
+    - <tool_call>...</tool_call>
+    - <|tool_call_begin|>...<|tool_call_end|>
+    """
+    if not text:
+        return text
+    # <function=...>...</function> (with any content)
+    cleaned = re.sub(r'<function=[A-Za-z0-9_.-]+>[\s\S]*?</function>', '', text)
+    # Stray </tool_call> or </function> tags
+    cleaned = re.sub(r'</(?:tool_call|function)>', '', cleaned)
+    # <tool_call>...</tool_call>
+    cleaned = re.sub(r'<tool_call>[\s\S]*?</tool_call>', '', cleaned)
+    # Stray <tool_call> tags
+    cleaned = re.sub(r'<tool_call>', '', cleaned)
+    # <|tool_call_begin|>...<|tool_call_end|>
+    cleaned = re.sub(r'<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>', '', cleaned)
+    return cleaned.strip()
+
 
 def _has_tool_results(messages: List[Any]) -> bool:
     """Return True if messages include tool results."""
@@ -1164,13 +1330,37 @@ class AgentRuntime:
 
         self._prepare_tools()
 
+    # Ollama/ローカルモデル向け: LLMに公開すべきでないツール
+    # ローカルモデルはコンテキストウィンドウが限られているため、
+    # 不要なツールを除外してツール選択の精度を向上させる。
+    # 環境変数 OLLAMA_ENABLE_ALL_TOOLS=1 で全ツール有効化可能。
+    _OLLAMA_TOOL_BLOCKLIST = frozenset({
+        # 内部ヘルパー（LLMが直接呼ぶべきでない関数）
+        "is_dangerous_command", "wrap_js_tool", "render_command",
+        "parse_command_args", "parse_command_file", "clear_command_cache",
+        "set_memory_service",
+        # ファイルアップロード（内部用）
+        "file_upload", "file_upload_str",
+        # サンドボックス（execute_bash で十分）
+        "sandbox_delete_file", "sandbox_exec", "sandbox_health",
+        "sandbox_list_services", "sandbox_read_file", "sandbox_service_logs",
+        "sandbox_start_service", "sandbox_stop_service", "sandbox_write_file",
+        # 画像分析（ローカルモデルではvision未対応が多い）
+        "analyze_image", "generate_image",
+        # モバイル連携
+        "send_file_to_mobile",
+    })
+
     def _prepare_tools(self):
         """Prepare enabled tools.
-        
+
         Tool selection rules:
         - tools: 省略 or 空 → 全ての基礎ツール
         - tools: ["*", ...] → 全ての基礎ツール + 追加指定
         - tools: [a, b] → a, b のみ（厳密ホワイトリスト）
+
+        Ollama/ローカルモデルの場合、内部ユーティリティツールを除外して
+        コンテキストウィンドウの消費を削減し、ツール選択の精度を向上させる。
         """
         # Determine which tools to enable
         if not self.config.tools or "*" in self.config.tools:
@@ -1183,6 +1373,14 @@ class AgentRuntime:
         else:
             # Explicit whitelist
             tools_to_enable = set(self.config.tools)
+
+        # Ollama/ローカルモデル: 不要ツールを除外（OLLAMA_ENABLE_ALL_TOOLS=1 でバイパス可）
+        enable_all = os.environ.get("OLLAMA_ENABLE_ALL_TOOLS", "").lower() in ("1", "true", "yes", "on")
+        if self.provider == LLMProvider.OLLAMA and not enable_all:
+            blocked = tools_to_enable & self._OLLAMA_TOOL_BLOCKLIST
+            if blocked and self.verbose:
+                print(f"[Ollama] Excluding {len(blocked)} tools (set OLLAMA_ENABLE_ALL_TOOLS=1 to include all)")
+            tools_to_enable -= self._OLLAMA_TOOL_BLOCKLIST
 
         for tool_name in tools_to_enable:
             if tool_name in self.tool_map:
@@ -1292,6 +1490,38 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
 
 """
             prompt += delegation_rules
+
+        # Ollama/ローカルモデル向けツール呼び出し安定化プロンプト
+        if self.provider == LLMProvider.OLLAMA:
+            ollama_tool_rules = """
+
+## CRITICAL: Tool Calling Rules (Local Model)
+
+You have access to tools via the function calling API. You MUST use the function calling mechanism (tool_calls) to invoke tools.
+
+### Rules:
+1. Use the `tool_calls` mechanism — do NOT write JSON or function calls as plain text
+2. Call ONE tool at a time — do NOT attempt parallel or multiple tool calls
+3. Always include ALL required parameters for each tool
+4. Use valid JSON: double-quoted keys and values, no trailing commas
+5. Do NOT write `tool_name(arg1, arg2)` or `<function=...>` as text in your response
+6. If a tool call fails, fix the arguments and retry — do NOT repeat the exact same call
+7. NEVER call the same tool with the same arguments more than once
+
+### IMPORTANT: After receiving a tool result
+- **STOP and analyze the result first** before calling another tool
+- If the result answers the user's question, **respond directly** — do NOT call more tools
+- Only call another tool if you genuinely need MORE information
+- Do NOT chain unnecessary tools (e.g., don't call browser_open after websearch succeeds)
+- Do NOT call semantic_search, browser_open, or webfetch unless specifically needed
+
+### Tool selection guidance:
+- To search the web: use `websearch` — the result is usually sufficient, no need for webfetch
+- To read a file: use `read_file` — one call is enough
+- To run a command: use `execute_bash` — one call is enough
+- To check the project: use `get_project_context` — one call is enough
+"""
+            prompt += ollama_tool_rules
 
         # Injection of Skills
         if self.skills:
@@ -1700,6 +1930,9 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         if self.provider == LLMProvider.ZAI:
             # ZAI はストリーミング中の tool_calls が不安定なので常に非ストリーミング
             use_stream = False
+        # Ollama/ローカルモデルもストリーミング中の tool_calls が不安定なので非ストリーミング
+        if self.provider == LLMProvider.OLLAMA:
+            use_stream = False
 
         # Commented out max_iterations: managed by token limit
         # iterations = 0
@@ -1739,8 +1972,10 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             "stream_options": {"include_usage": True},
                         }
                         # Enable parallel_tool_calls (OpenRouter models like kimi-k2.5 support this)
-                        create_kwargs["parallel_tool_calls"] = True
-                        
+                        # Ollama/ローカルモデルは parallel_tool_calls 未対応
+                        if self.provider != LLMProvider.OLLAMA:
+                            create_kwargs["parallel_tool_calls"] = True
+
                         # Moonshot Kimi uses temperature=1.0 and max_tokens instead of reasoning_effort
                         if self.provider == LLMProvider.MOONSHOT:
                             create_kwargs["temperature"] = 1.0
@@ -1754,15 +1989,24 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         
                         response = await self.openai_client.chat.completions.create(**create_kwargs)
                     else:
+                        # Ollama はローカルモデル用に低 temperature
+                        if self.provider == LLMProvider.MOONSHOT:
+                            temp = 1.0
+                        elif self.provider == LLMProvider.OLLAMA:
+                            temp = float(os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
+                        else:
+                            temp = 0.7
                         create_kwargs = {
                             "model": self.model_name,
                             "messages": messages,
                             "tools": tools,
-                            "temperature": 1.0 if self.provider == LLMProvider.MOONSHOT else 0.7,
+                            "temperature": temp,
                             "stream": True,
                             "stream_options": {"include_usage": True},
-                            "parallel_tool_calls": True,
                         }
+                        # Ollama/ローカルモデルは parallel_tool_calls 未対応
+                        if self.provider != LLMProvider.OLLAMA:
+                            create_kwargs["parallel_tool_calls"] = True
                         # Moonshot Kimi requires higher max_tokens for thinking
                         if self.provider == LLMProvider.MOONSHOT:
                             create_kwargs["max_tokens"] = 16384
@@ -1975,6 +2219,16 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         tag_calls, cleaned_content = _parse_tool_call_tags(
                             collected_content, list(self.available_tools.keys())
                         )
+                        # Fallback: parse JSON code blocks (Qwen3 pattern)
+                        if not tag_calls:
+                            tag_calls, cleaned_content = _parse_json_code_block_tool_calls(
+                                collected_content, list(self.available_tools.keys())
+                            )
+                        # Fallback: parse <function=name> tags (Qwen3 pattern)
+                        if not tag_calls:
+                            tag_calls, cleaned_content = _parse_function_tag_tool_calls(
+                                collected_content, list(self.available_tools.keys())
+                            )
                         if tag_calls:
                             assistant_msg = {
                                 "role": "assistant",
@@ -2052,6 +2306,9 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                                     )
                                 })
                                 continue
+                        # Clean up any remaining tool call tags in final response
+                        if collected_content:
+                            collected_content = _clean_tool_call_artifacts(collected_content)
                         return collected_content
                 else:
                     # Non-streaming mode
@@ -2062,9 +2319,11 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             "messages": messages,
                             "tools": tools,
                         }
-                        if self.provider != LLMProvider.OPENROUTER:
+                        if self.provider not in (LLMProvider.OPENROUTER, LLMProvider.OLLAMA):
                             create_kwargs["reasoning_effort"] = "medium"
-                        create_kwargs["parallel_tool_calls"] = True
+                        # Ollama/ローカルモデルは parallel_tool_calls 未対応
+                        if self.provider != LLMProvider.OLLAMA:
+                            create_kwargs["parallel_tool_calls"] = True
                         # ZAI: force tool calling when tools are available
                         if self.provider == LLMProvider.ZAI and tools:
                             create_kwargs["tool_choice"] = "required"
@@ -2077,16 +2336,28 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             else:
                                 raise
                     else:
+                        # Ollama はローカルモデル用に低 temperature
+                        if self.provider == LLMProvider.MOONSHOT:
+                            temp = 1.0
+                        elif self.provider == LLMProvider.OLLAMA:
+                            temp = float(os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
+                        else:
+                            temp = 0.7
                         create_kwargs = {
                             "model": self.model_name,
                             "messages": messages,
                             "tools": tools,
-                            "temperature": 1.0 if self.provider == LLMProvider.MOONSHOT else 0.7,
-                            "parallel_tool_calls": True,
+                            "temperature": temp,
                         }
+                        # Ollama/ローカルモデルは parallel_tool_calls 未対応
+                        if self.provider != LLMProvider.OLLAMA:
+                            create_kwargs["parallel_tool_calls"] = True
                         # Moonshot Kimi requires higher max_tokens for thinking
                         if self.provider == LLMProvider.MOONSHOT:
                             create_kwargs["max_tokens"] = 16384
+                        # Ollama: tool_choice=auto を明示
+                        if self.provider == LLMProvider.OLLAMA and tools:
+                            create_kwargs["tool_choice"] = "auto"
                         # ZAI: force tool calling when tools are available
                         if self.provider == LLMProvider.ZAI and tools:
                             create_kwargs["tool_choice"] = "required"
@@ -2196,6 +2467,16 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 tag_calls, cleaned_content = _parse_tool_call_tags(
                     content, list(self.available_tools.keys())
                 )
+                # Fallback: parse JSON code blocks (Qwen3 pattern)
+                if not tag_calls:
+                    tag_calls, cleaned_content = _parse_json_code_block_tool_calls(
+                        content, list(self.available_tools.keys())
+                    )
+                # Fallback: parse <function=name> tags (Qwen3 pattern)
+                if not tag_calls:
+                    tag_calls, cleaned_content = _parse_function_tag_tool_calls(
+                        content, list(self.available_tools.keys())
+                    )
                 if tag_calls:
                     assistant_msg = {
                         "role": "assistant",
@@ -2260,6 +2541,9 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         )
                     })
                     continue
+                # Clean up any remaining tool call tags in final response
+                if content:
+                    content = _clean_tool_call_artifacts(content)
                 return content
 
         # If max_iterations is reached
