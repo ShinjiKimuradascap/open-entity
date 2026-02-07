@@ -23,7 +23,7 @@ from neonize.events import MessageEv, ConnectedEv, QREv, event
 MOCO_BASE_URL = os.getenv("MOCO_BASE_URL", "http://localhost:8000/api")
 MOCO_API_URL = f"{MOCO_BASE_URL}/chat"
 MOCO_API_TOKEN = os.getenv("MOCO_API_TOKEN", "")
-DEFAULT_PROFILE = "cursor"
+DEFAULT_PROFILE = "entity"
 DEFAULT_PROVIDER = "openrouter"
 DEFAULT_WORKING_DIR = "."  # モバイルからの作業ディレクトリ（実行時のカレントディレクトリ）
 
