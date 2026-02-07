@@ -46,6 +46,21 @@ from open_entity.adapters.line_adapter import LINEAdapter
 from open_entity.adapters.telegram_adapter import TelegramAdapter
 from open_entity.adapters.base import OutgoingMessage, ChannelAdapter
 
+# API Token 認証
+MOCO_API_TOKEN = os.getenv("MOCO_API_TOKEN")
+
+
+def _verify_api_token(request: Request) -> None:
+    """Bearer トークンを検証する。MOCO_API_TOKEN 未設定時はスキップ"""
+    if not MOCO_API_TOKEN:
+        return  # トークン未設定 → 認証なし（開発時の後方互換）
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization header required")
+    token = auth[len("Bearer "):]
+    if not secrets.compare_digest(token, MOCO_API_TOKEN):
+        raise HTTPException(status_code=403, detail="Invalid API token")
+
 
 def filter_response_for_display(response: str, verbose: bool = False) -> str:
     """レスポンスをフィルタリング（verboseでない場合は最後のエージェントだけ）"""
@@ -1055,9 +1070,10 @@ async def get_stats(session_id: Optional[str] = None, scope: str = "all"):
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     """チャット（非ストリーミング）- WhatsApp/モバイル連携用"""
-    
+    _verify_api_token(request)
+
     orchestrator = get_orchestrator(
         req.profile,
         req.provider,
@@ -1098,8 +1114,9 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, request: Request):
     """チャット（ストリーミング）- Server-Sent Events with real-time tool updates"""
+    _verify_api_token(request)
 
     # イベントキュー（スレッド間通信用）
     event_queue = queue.Queue()
