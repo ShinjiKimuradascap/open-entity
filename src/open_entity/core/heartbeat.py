@@ -188,6 +188,7 @@ class HeartbeatRunner:
 
         self._beat_count += 1
         logger.info(f"Heartbeat #{self._beat_count} executing...")
+        print(f"    💓 Heartbeat #{self._beat_count} executing...")
 
         # Orchestrator を生成（ファクトリ経由）
         orchestrator = self.orchestrator_factory()
@@ -225,8 +226,10 @@ class HeartbeatRunner:
 
         if is_ok:
             logger.info(f"Heartbeat #{self._beat_count}: OK (silent)")
+            print(f"    💓 Heartbeat #{self._beat_count}: OK ✓")
         else:
             logger.info(f"Heartbeat #{self._beat_count}: Alert detected, notifying...")
+            print(f"    💓 Heartbeat #{self._beat_count}: Alert! Notifying...")
             if self.after_heartbeat_callback:
                 try:
                     if asyncio.iscoroutinefunction(self.after_heartbeat_callback):
@@ -295,6 +298,7 @@ class HeartbeatRunner:
     async def _evolve_checklist(self, orchestrator, current_checklist: str):
         """過去の heartbeat 結果を振り返り、HEARTBEAT.md を更新する"""
         logger.info(f"Heartbeat evolution triggered (every {self.config.evolve_every} beats)")
+        print(f"    💓 Heartbeat evolution triggered (rewriting HEARTBEAT.md...)")
 
         prompt = self._build_evolve_prompt(current_checklist)
 
@@ -312,6 +316,7 @@ class HeartbeatRunner:
         if new_content:
             self._write_heartbeat_md(new_content)
             logger.info(f"HEARTBEAT.md updated by evolution (beat #{self._beat_count})")
+            print(f"    💓 HEARTBEAT.md evolved ✓ (beat #{self._beat_count})")
         else:
             logger.warning("Could not parse evolution response, skipping update")
 

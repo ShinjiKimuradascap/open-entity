@@ -125,3 +125,8 @@ workspace/memory.md
 workspace/*.credentials
 workspace/*.secret
 workspace/mail_credentials.json
+
+# Private keys / certificates
+*.pem
+*.key
+id_rsa*

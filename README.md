@@ -189,16 +189,42 @@ export MOCO_AGENT_BROWSER_BIN=/path/to/agent-browser
 
 ---
 
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    User([User]) -->|CLI / Web UI| OE[oe chat / oe ui]
+    OE --> Runtime[Runtime]
+    Runtime --> Profile[Profile Loader]
+    Profile --> Tools[Tool System]
+    Profile --> Skills[Skill Loader]
+    Profile --> Memory[Memory Service]
+    Runtime --> Orchestrator[Orchestrator]
+    Orchestrator --> LLM[LLM Provider]
+    LLM -->|OpenAI / Gemini / Moonshot / OpenRouter / Ollama| API((API))
+    Runtime --> Heartbeat[HeartbeatRunner]
+    Heartbeat -->|interval| Orchestrator
+    Heartbeat -->|evolve_every N| HBMD[HEARTBEAT.md]
+    Tools -->|filesystem, web, browser, shell, scheduler| ExtSvc[External Services]
+    Memory --> Embeddings[Embedding Provider]
+    Memory --> DB[(SQLite)]
+```
+
 ## 📁 Project Structure
 
 ```
 open-entity/
 ├── src/open_entity/          # Framework core
-│   ├── core/                 # Runtime, context management
+│   ├── core/                 # Runtime, context management, heartbeat
 │   ├── tools/                # Tool implementations
 │   ├── memory/               # Memory service integration
 │   └── storage/              # Sessions & transcripts
 ├── profiles/                 # Agent profiles
+│   └── <profile>/
+│       ├── profile.yaml      # Profile configuration
+│       ├── SYSTEM.md         # System prompt
+│       ├── HEARTBEAT.md      # Heartbeat checklist
+│       └── skills/           # Profile-specific skills
 ├── docs/                     # Documentation
 ├── examples/                 # Example scripts
 └── tests/                    # Tests
