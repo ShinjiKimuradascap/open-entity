@@ -112,6 +112,75 @@ moco skills uninstall <name>   # アンインストール
 ```
 
 
+### 💓 ハートビート（プロアクティブ監視）
+
+ハートビートは組み込みのプロアクティブ監視機構です。エージェントが定期的に起動し、`HEARTBEAT.md` のチェックリストを評価して、注意が必要な場合のみ通知します。
+
+#### 設定
+
+`profiles/<profile>/profile.yaml`:
+
+```yaml
+heartbeat:
+  enabled: true          # 有効/無効
+  interval: 30m          # チェック間隔（30m, 1h, 300s）
+  active_hours: "09:00-22:00"  # アクティブ時間帯
+  timezone: "Asia/Tokyo"
+  ack_token: "HEARTBEAT_OK"    # 正常時の応答トークン
+  ack_max_chars: 300
+  evolve_every: 5        # N回ごとにチェックリストを自己進化
+```
+
+環境変数でのオーバーライド:
+```bash
+MOCO_HEARTBEAT_ENABLED=true
+MOCO_HEARTBEAT_INTERVAL=15m
+```
+
+#### HEARTBEAT.md
+
+`profiles/<profile>/HEARTBEAT.md` に配置。エージェントが毎回評価するチェックリスト:
+
+```markdown
+# Heartbeat Checklist
+
+以下の項目を定期的にチェックしてください。
+全て問題なければ `HEARTBEAT_OK` と返答してください。
+
+## チェック項目
+
+- [ ] 重要なメール・通知の確認
+- [ ] カレンダーの直近の予定
+- [ ] 実行中のタスクの進捗
+```
+
+#### 自己進化
+
+`evolve_every` 回ごとに、エージェントが過去の結果を振り返り、HEARTBEAT.md を自動更新します。常にOKだった項目の削除、アラートが多い項目の改善、新しいチェック項目の追加を行います。
+
+#### CLI コマンド
+
+```bash
+oe heartbeat status    # 設定と状態を表示
+oe heartbeat trigger   # 手動で1回実行
+oe heartbeat edit      # HEARTBEAT.md をエディタで開く
+```
+
+チャットモード:
+```
+/heartbeat             # 状態表示
+/heartbeat trigger     # 1回実行
+```
+
+#### 動作フロー
+
+1. `oe ui` 起動でハートビートループがバックグラウンドで開始
+2. `interval` ごとにエージェントが `HEARTBEAT.md` を読み込み
+3. チェックリストを評価（ツールを使って実際の状態を確認）
+4. 全て正常 → `HEARTBEAT_OK` で沈黙（通知なし）
+5. 注意が必要 → アダプター経由でアラート送信（LINE, Telegram等）
+6. N回ごと → 振り返りを行い `HEARTBEAT.md` を書き換え
+
 ### モバイル連携 (WhatsApp)
 
 `moco` は WhatsApp から操作可能です。詳細は `moco/src/moco/gateway/clients/whatsapp.py` を参照。
