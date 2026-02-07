@@ -1387,7 +1387,7 @@ class AgentRuntime:
         "get_output", "wait_for_pattern", "wait_for_exit", "send_input",  # execute_bash で代替
         "wait",  # 不要
         "schedule_task", "list_scheduled_tasks", "remove_scheduled_task",  # 基本的に不要
-        "load_skill", "list_loaded_skills",  # execute_skill で十分
+        "list_loaded_skills",  # load_skill は残す（LLMがスキルをロードするために必要）
         "memory_recall",  # ローカルモデルでは不要
     })
 
@@ -1452,6 +1452,20 @@ class AgentRuntime:
                     self.available_tools[tool_name] = func
                     self.tool_declarations.append(_func_to_declaration(func, tool_name))
                     self.openai_tools.append(_func_to_openai_tool(func, tool_name))
+
+    def _on_skill_loaded(self):
+        """load_skill 実行後のフック: ロードされたスキルのツール定義を動的に追加する。
+
+        skill_tools.get_loaded_skills() から新たにロードされたスキルを取得し、
+        そのツールを available_tools / openai_tools / tool_declarations に追加する。
+        """
+        from ..tools.skill_tools import get_loaded_skills
+        loaded = get_loaded_skills()
+        if loaded:
+            new_skills = [s for s in loaded.values() if s not in self.skills]
+            if new_skills:
+                self.skills.extend(new_skills)
+                self._inject_skill_tools(new_skills)
 
     def _update_context_usage(self, result: str) -> str:
         """
@@ -1577,7 +1591,7 @@ You have full internet access. Choose the right tool for the task:
 - `read_file` / `edit_file` / `write_file` — local file operations
 - `grep` / `glob_search` — search code and find files
 - `execute_bash` — run shell commands
-- `execute_skill` — use skill tools (browser, AMP, peer, stats)
+- `load_skill(skill_name="...")` — load a skill to use its tools (browser, AMP, peer, stats). After loading, the skill's tools become available as direct tool calls.
 """
             prompt += ollama_tool_rules
 
@@ -1731,6 +1745,10 @@ You have full internet access. Choose the right tool for the task:
                 result = _truncate_tool_output(raw_result, func_name)
             except Exception as e:
                 result = f"Error executing {func_name}: {e}"
+
+            # load_skill 実行後: ロードされたスキルのツール定義を動的追加
+            if func_name == "load_skill":
+                self._on_skill_loaded()
         else:
             result = f"Error: Tool {func_name} not found"
 

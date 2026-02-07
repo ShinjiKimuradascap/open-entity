@@ -1130,45 +1130,51 @@ class Orchestrator:
             # 評価指示は追加しない（オーケストレーターが事後評価を行うため）
             enhanced_query = query_with_workdir
             
-            # Skills 管理: トリガーマッチングでスキルを自動検出・自動注入
+            # Skills 管理
+            # - 大きいモデル（Gemini, OpenAI, Moonshot等）: Claude Code 方式
+            #   description をプロンプトに載せて LLM が load_skill で判断
+            # - ローカルモデル（Ollama）: matches_input() で自動注入
+            #   小さいモデルは load_skill の間接ステップを理解できないため
             loaded_skills = get_loaded_skills()
+            is_local_model = (self.provider == LLMProvider.OLLAMA)
 
-            # 1. 全スキルからトリガーマッチで自動検出
-            auto_matched = []
-            if self._all_skills:
+            if is_local_model and self._all_skills:
+                # Ollama: matches_input() で自動検出・自動注入
+                auto_matched = []
                 for name, skill in self._all_skills.items():
                     if skill.matches_input(query):
                         auto_matched.append(skill)
-                        # 自動ロードキャッシュにも追加（後続ターンで利用可能に）
                         if name not in loaded_skills:
                             loaded_skills[name] = skill
-
-            # 2. 既にロード済みのスキルも含める（重複排除）
-            matched_names = {s.name for s in auto_matched}
-            for name, skill in loaded_skills.items():
-                if name not in matched_names and skill.matches_input(query):
-                    auto_matched.append(skill)
-
-            # 3. スキルをランタイムに注入（ツール定義も動的追加）
-            if auto_matched:
-                runtime.skills = auto_matched
-                runtime._inject_skill_tools(auto_matched)
-                if self.verbose:
-                    print(f"[Skills] Auto-injected {len(auto_matched)} skills to @{agent_name}: {[s.name for s in auto_matched]}")
+                # 既にロード済みのスキルも含める
+                matched_names = {s.name for s in auto_matched}
+                for name, skill in loaded_skills.items():
+                    if name not in matched_names:
+                        auto_matched.append(skill)
+                if auto_matched:
+                    runtime.skills = auto_matched
+                    runtime._inject_skill_tools(auto_matched)
             else:
-                runtime.skills = []
+                # 大きいモデル: 既にロード済みのスキルのツール定義のみ注入
+                if loaded_skills:
+                    already_loaded = list(loaded_skills.values())
+                    runtime.skills = already_loaded
+                    runtime._inject_skill_tools(already_loaded)
 
-            # 4. 利用可能なスキルのヒントをプロンプトに追加
+            # 利用可能なスキルの description をプロンプトに追加
             available_skills_hint = ""
             if self._all_skills:
-                # user_invocable=True のスキルのみ表示（disable_model_invocation は auto-match で除外済み）
                 visible_skills = [
-                    name for name, skill in self._all_skills.items()
-                    if skill.user_invocable
+                    (name, skill) for name, skill in self._all_skills.items()
+                    if skill.user_invocable and not skill.disable_model_invocation
                 ]
                 if visible_skills:
-                    skill_names = ", ".join(visible_skills)
-                    available_skills_hint = f"\n\n[Available Skills]\nLocal skills: {skill_names}\n"
+                    lines = []
+                    for name, skill in visible_skills:
+                        desc = skill.description[:120]
+                        lines.append(f"  - {name}: {desc}")
+                    skills_list = "\n".join(lines)
+                    available_skills_hint = f"\n\n[Available Skills]\nUse `load_skill(\"name\")` to load a skill when needed:\n{skills_list}\n"
 
             enhanced_query = query_with_workdir + available_skills_hint
             
