@@ -117,6 +117,10 @@ app.add_typer(evolve_app, name="evolve")
 from .commands.a2a import a2a_app
 app.add_typer(a2a_app, name="a2a")
 
+# Heartbeat管理用サブコマンド
+from .commands.heartbeat import heartbeat_app
+app.add_typer(heartbeat_app, name="heartbeat")
+
 # profilesコマンドを登録（list-profiles, version等）
 from .commands.profiles import register_commands
 register_commands(app)

@@ -81,7 +81,7 @@ async def health_check():
 
 @app.on_event("startup")
 async def startup_event():
-    """起動時にトンネルをセットアップ"""
+    """起動時にトンネルとハートビートをセットアップ"""
     port = int(os.getenv("PORT", 8000))
     # トンネルのセットアップ（失敗しても本体の起動を妨げない）
     try:
@@ -89,9 +89,55 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error during tunnel setup: {e}")
 
+    # Heartbeat Runner の起動
+    try:
+        from open_entity.tools.discovery import load_profile_config
+        from open_entity.core.heartbeat import HeartbeatConfig, HeartbeatRunner
+
+        default_profile = os.getenv("MOCO_PROFILE", "entity")
+        profile_config = load_profile_config(default_profile)
+        hb_config = HeartbeatConfig(profile_config)
+
+        if hb_config.enabled:
+            def _make_orchestrator():
+                return get_orchestrator(default_profile)
+
+            async def _heartbeat_notify(response: str, beat_count: int):
+                """ハートビート通知をアダプター経由で送信"""
+                msg = OutgoingMessage(text=f"[Heartbeat #{beat_count}]\n{response}")
+                for adapter in getattr(approval_manager, 'adapters', []):
+                    channel = "line" if isinstance(adapter, LINEAdapter) else "telegram"
+                    target_id = os.getenv(
+                        "LINE_USER_ID" if channel == "line" else "TELEGRAM_CHAT_ID"
+                    )
+                    if target_id:
+                        try:
+                            await adapter.send_message(target_id, msg)
+                        except Exception as e:
+                            logger.error(f"Heartbeat notify ({channel}): {e}")
+
+            app.state.heartbeat_runner = HeartbeatRunner(
+                config=hb_config,
+                orchestrator_factory=_make_orchestrator,
+                profile=default_profile,
+                after_heartbeat_callback=_heartbeat_notify,
+            )
+            await app.state.heartbeat_runner.start()
+            logger.info("Heartbeat runner started")
+    except Exception as e:
+        logger.error(f"Failed to start heartbeat runner: {e}")
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """終了時にトンネルを停止"""
+    """終了時にトンネルとハートビートを停止"""
+    # Heartbeat Runner の停止
+    try:
+        runner = getattr(app.state, "heartbeat_runner", None)
+        if runner:
+            await runner.stop()
+    except Exception as e:
+        logger.error(f"Error stopping heartbeat runner: {e}")
+
     try:
         stop_tunnel()
     except Exception as e:

@@ -5,3 +5,13 @@ include_base_tools: true
 # Feature flags (on/off)
 memory_service: on
 embeddings: on
+
+# Heartbeat - プロアクティブ監視機構
+heartbeat:
+  enabled: false
+  interval: 30m
+  active_hours: "09:00-22:00"
+  timezone: "Asia/Tokyo"
+  ack_token: "HEARTBEAT_OK"
+  ack_max_chars: 300
+  evolve_every: 5
