@@ -8,7 +8,7 @@ embeddings: on
 
 # Heartbeat - プロアクティブ監視機構
 heartbeat:
-  enabled: false
+  enabled: true
   interval: 30m
   active_hours: "09:00-22:00"
   timezone: "Asia/Tokyo"
