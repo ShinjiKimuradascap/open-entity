@@ -48,6 +48,7 @@ def handle_slash_command(text: str, context: Dict[str, Any]) -> bool:
         'cd': handle_workdir,
         'ls': handle_ls,
         'tree': handle_tree,
+        'heartbeat': handle_heartbeat,
     }
     
     if command in SLASH_COMMANDS:
@@ -275,6 +276,7 @@ def handle_help(args: List[str], context: Dict[str, Any]) -> bool:
         _print_out(context, "  /tools             List available tools")
         _print_out(context, "  /agents            List available agents")
         _print_out(context, "  /todo              Show current Todo list for this session")
+        _print_out(context, "  /heartbeat [trigger] Show heartbeat status or trigger once")
         _print_out(context, "  /toolstatus on|off Toggle tool/delegation status lines")
         _print_out(context, "  /quit              Exit chat")
         return True
@@ -298,6 +300,7 @@ def handle_help(args: List[str], context: Dict[str, Any]) -> bool:
         ("/tools", "List available tools"),
         ("/agents", "List available agents"),
         ("/todo", "Show current Todo list for this session"),
+        ("/heartbeat [trigger]", "Show heartbeat status or trigger once"),
         ("/toolstatus on|off", "Toggle tool/delegation status lines"),
         ("/quit", "Exit chat"),
     ]
@@ -603,6 +606,61 @@ def handle_agents(args: List[str], context: Dict[str, Any]) -> bool:
         for name, config in orchestrator.agents.items():
             desc = config.description[:50] + "..." if len(config.description) > 50 else config.description
             table.add_row(name, desc)
-    
+
     console.print(table)
+    return True
+
+
+def handle_heartbeat(args: List[str], context: Dict[str, Any]) -> bool:
+    """Heartbeat status or manual trigger"""
+    console = context.get('console', Console())
+    orchestrator = context.get('orchestrator')
+
+    if not orchestrator:
+        _print_out(context, "[red]No orchestrator available[/red]")
+        return True
+
+    from open_entity.tools.discovery import load_profile_config
+    from open_entity.core.heartbeat import HeartbeatConfig, HeartbeatRunner
+
+    profile = getattr(orchestrator, 'profile', 'entity')
+    profile_config = load_profile_config(profile)
+    config = HeartbeatConfig(profile_config)
+
+    sub = args[0] if args else "status"
+
+    if sub == "trigger":
+        import asyncio
+
+        def make_orch():
+            from open_entity.core.orchestrator import Orchestrator
+            return Orchestrator(
+                profile=profile,
+                provider=getattr(orchestrator, 'provider', None),
+                stream=False,
+            )
+
+        config.enabled = True
+        runner = HeartbeatRunner(
+            config=config,
+            orchestrator_factory=make_orch,
+            profile=profile,
+        )
+        _print_out(context, "[dim]Executing heartbeat...[/dim]")
+        try:
+            result = asyncio.run(runner.trigger_once())
+        except Exception as e:
+            _print_out(context, f"[red]Heartbeat error: {e}[/red]")
+            return True
+        _print_out(context, result)
+    else:
+        runner = HeartbeatRunner(
+            config=config,
+            orchestrator_factory=lambda: None,
+            profile=profile,
+        )
+        status = runner.get_status()
+        lines = [f"  [bold]{k}:[/bold] {v}" for k, v in status.items()]
+        _print_out(context, "[bold cyan]Heartbeat Status[/bold cyan]\n" + "\n".join(lines))
+
     return True
