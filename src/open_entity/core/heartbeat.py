@@ -1,6 +1,6 @@
 """
-Heartbeat Runner - OpenClaw 風のプロアクティブ監視機構。
-定期的に HEARTBEAT.md をエージェントに渡し、注意すべき事項があれば通知する。
+Heartbeat Runner - 自律型エージェントの駆動エンジン。
+定期的に HEARTBEAT.md のミッションを読み込み、エージェントに自律的に実行させる。
 """
 import asyncio
 import logging
@@ -210,26 +210,26 @@ class HeartbeatRunner:
             return
 
         # 応答を解析
-        is_ok = self._is_ack(response)
+        progress = self._parse_progress(response)
+        is_stuck = progress.get("stuck", False)
 
         # 履歴に記録（振り返り用）
         self._history.append({
             "beat": self._beat_count,
             "timestamp": datetime.now().isoformat(),
-            "is_ok": is_ok,
-            "summary": (response or "")[:200],
+            "is_ok": not is_stuck,
+            "summary": progress.get("done", (response or "")[:200]),
+            "output": progress.get("output", ""),
+            "next": progress.get("next", ""),
         })
         # 直近 evolve_every * 2 件だけ保持
         max_history = self.config.evolve_every * 2
         if len(self._history) > max_history:
             self._history = self._history[-max_history:]
 
-        if is_ok:
-            logger.info(f"Heartbeat #{self._beat_count}: OK (silent)")
-            print(f"    💓 Heartbeat #{self._beat_count}: OK ✓")
-        else:
-            logger.info(f"Heartbeat #{self._beat_count}: Alert detected, notifying...")
-            print(f"    💓 Heartbeat #{self._beat_count}: Alert! Notifying...")
+        if is_stuck:
+            logger.info(f"Heartbeat #{self._beat_count}: STUCK — {progress.get('stuck_reason', '?')}")
+            print(f"    💓 Heartbeat #{self._beat_count}: STUCK — {progress.get('stuck_reason', '?')}")
             if self.after_heartbeat_callback:
                 try:
                     if asyncio.iscoroutinefunction(self.after_heartbeat_callback):
@@ -238,6 +238,10 @@ class HeartbeatRunner:
                         self.after_heartbeat_callback(response, self._beat_count)
                 except Exception as cb_err:
                     logger.error(f"Heartbeat callback error: {cb_err}")
+        else:
+            done_msg = progress.get("done", "completed")
+            logger.info(f"Heartbeat #{self._beat_count}: DONE — {done_msg}")
+            print(f"    💓 Heartbeat #{self._beat_count}: DONE — {done_msg}")
 
         # N回ごとにチェックリストを振り返り・進化させる
         if (
@@ -264,40 +268,75 @@ class HeartbeatRunner:
             logger.warning(f"Failed to read HEARTBEAT.md: {e}")
             return ""
 
-    def _build_prompt(self, checklist: str) -> str:
-        """ハートビート用プロンプトを構築"""
+    def _build_prompt(self, mission: str) -> str:
+        """ハートビート用プロンプトを構築（ミッション駆動型）"""
+        # 前回の成果サマリーを構築
+        prev_summary = ""
+        if self._history:
+            last = self._history[-1]
+            prev_summary = (
+                f"\n## 前回の成果 (beat #{last['beat']})\n"
+                f"{last['summary']}\n"
+            )
+
         return (
-            "[HEARTBEAT CHECK]\n\n"
-            "あなたは定期ハートビートチェックを実行中です。\n"
-            "以下のチェックリストの **各項目を必ずツールを使って1つずつ確認** してください。\n\n"
-            "## 重要な実行ルール\n"
-            "- まずチェックリストの全項目を TODO リストとして作成すること\n"
-            "- チェック項目ごとに適切なツールを呼び出して実際の状態を確認すること\n"
-            "- ツールを使わずに推測で OK と判断してはいけない\n"
-            "- 各チェック項目の結果を踏まえてから最終判断すること\n\n"
-            "## チェックリスト\n"
-            f"{checklist}\n\n"
-            "## 応答ルール\n"
-            f"- 全項目をチェックした結果、通知不要の場合: 「{self.config.ack_token}」とだけ回答してください\n"
-            f"- 注意が必要な項目がある場合: {self.config.ack_max_chars}文字以内で簡潔に報告してください\n"
-            "- 冗長な説明は不要です。要点のみ伝えてください"
+            "[HEARTBEAT MISSION]\n\n"
+            f"あなたは自律型エージェントです。これは定期実行 #{self._beat_count} 回目です。\n"
+            "以下のミッションを読み、**具体的なアウトプットを1つ以上生み出してください。**\n\n"
+            "## 実行ルール\n"
+            "- まず TODO リストを作成し、今回取り組むタスクを決める\n"
+            "- ツールを積極的に使う（web検索、ファイル操作、スキル作成など）\n"
+            "- 調査だけで終わらない。必ずコード・スキル・ドキュメントなど形あるものを作る\n"
+            "- 前回の続きがあれば、そこから始める\n"
+            "- 作ったもの・学んだことは memory に保存する\n\n"
+            f"## ミッション\n{mission}\n"
+            f"{prev_summary}\n"
+            "## 最終レポート\n"
+            "実行が終わったら、以下の形式で簡潔に報告してください:\n"
+            "```\n"
+            "DONE: [今回やったこと（1行）]\n"
+            "OUTPUT: [作成・変更したファイルやスキル名]\n"
+            "NEXT: [次回やるべきこと]\n"
+            "```\n"
+            "何も進められなかった場合は STUCK: [理由] と報告してください。"
         )
 
-    def _is_ack(self, response: str) -> bool:
-        """応答がACK（正常・通知不要）かどうかを判定"""
+    @staticmethod
+    def _parse_progress(response: str) -> Dict[str, Any]:
+        """応答から進捗レポートをパースする"""
+        result: Dict[str, Any] = {"stuck": False}
         if not response:
-            return True  # 空応答はOK扱い
-        cleaned = response.strip()
-        # ACKトークンが先頭または末尾にある
-        if cleaned.startswith(self.config.ack_token) or cleaned.endswith(self.config.ack_token):
-            # トークンを除いた残りが ack_max_chars 以下ならACK
-            remainder = cleaned.replace(self.config.ack_token, "").strip()
-            if len(remainder) <= self.config.ack_max_chars:
-                return True
-        # トークンが応答のどこかに含まれ、全体が短い場合もOK
-        if self.config.ack_token in cleaned and len(cleaned) <= self.config.ack_max_chars:
-            return True
-        return False
+            result["stuck"] = True
+            result["stuck_reason"] = "no response"
+            return result
+
+        text = response.strip()
+
+        # STUCK パターン
+        stuck_match = re.search(r'STUCK:\s*(.+?)(?:\n|$)', text)
+        if stuck_match:
+            result["stuck"] = True
+            result["stuck_reason"] = stuck_match.group(1).strip()
+            return result
+
+        # DONE / OUTPUT / NEXT パターン
+        done_match = re.search(r'DONE:\s*(.+?)(?:\n|$)', text)
+        if done_match:
+            result["done"] = done_match.group(1).strip()
+
+        output_match = re.search(r'OUTPUT:\s*(.+?)(?:\n|$)', text)
+        if output_match:
+            result["output"] = output_match.group(1).strip()
+
+        next_match = re.search(r'NEXT:\s*(.+?)(?:\n|$)', text)
+        if next_match:
+            result["next"] = next_match.group(1).strip()
+
+        # DONE が無い場合は応答全体の冒頭を要約として使う
+        if "done" not in result:
+            result["done"] = text[:150]
+
+        return result
 
     async def _evolve_checklist(self, orchestrator, current_checklist: str):
         """過去の heartbeat 結果を振り返り、HEARTBEAT.md を更新する"""
@@ -324,29 +363,36 @@ class HeartbeatRunner:
         else:
             logger.warning("Could not parse evolution response, skipping update")
 
-    def _build_evolve_prompt(self, current_checklist: str) -> str:
-        """振り返り用プロンプトを構築"""
+    def _build_evolve_prompt(self, current_mission: str) -> str:
+        """振り返り用プロンプトを構築（ミッション進化）"""
         # 履歴サマリーを構築
         history_lines = []
         for h in self._history:
-            status = "OK" if h["is_ok"] else "ALERT"
-            summary = h["summary"][:100] if not h["is_ok"] else ""
-            history_lines.append(f"  #{h['beat']} [{status}] {summary}".rstrip())
+            status = "DONE" if h["is_ok"] else "STUCK"
+            done = h.get("summary", "")[:100]
+            output = h.get("output", "")
+            next_task = h.get("next", "")
+            line = f"  #{h['beat']} [{status}] {done}"
+            if output:
+                line += f" | output: {output}"
+            if next_task:
+                line += f" | next: {next_task}"
+            history_lines.append(line.rstrip())
         history_text = "\n".join(history_lines) if history_lines else "  (まだ履歴がありません)"
 
         return (
-            "[HEARTBEAT EVOLUTION]\n\n"
-            "あなたはハートビートチェックリストの振り返りを行います。\n"
-            f"これまでの {len(self._history)} 回の結果を踏まえ、チェックリストを改善してください。\n\n"
-            "## 直近の結果\n"
+            "[MISSION EVOLUTION]\n\n"
+            "あなたはミッションの振り返りを行います。\n"
+            f"これまでの {len(self._history)} 回の実行結果を踏まえ、ミッションを進化させてください。\n\n"
+            "## 直近の実行結果\n"
             f"{history_text}\n\n"
-            "## 現在のチェックリスト\n"
-            f"{current_checklist}\n\n"
+            "## 現在のミッション\n"
+            f"{current_mission}\n\n"
             "## 判断基準\n"
-            "- 毎回 OK だった項目 → 頻度を下げるか削除を検討\n"
-            "- アラートが多かった項目 → より具体的な条件に改善\n"
-            "- チェックリストに無いが気になった事項 → 新規追加\n"
-            "- ユーザーの活動パターンに合わせた調整\n\n"
+            "- 達成したスプリント項目 → 新しい目標に置き換える\n"
+            "- STUCK が多い項目 → アプローチを変えるか、前提条件を整理する\n"
+            "- 新しく発見した可能性 → スプリントに追加する\n"
+            "- 長期ビジョンに近づいているか確認し、方向修正する\n\n"
             "## 出力形式\n"
             "更新後の HEARTBEAT.md の内容をそのまま出力してください。\n"
             "マークダウン形式で、コードブロック(```)で囲まず、ファイル内容だけを返してください。"
