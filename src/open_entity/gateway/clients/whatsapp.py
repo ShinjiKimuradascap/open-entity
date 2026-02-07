@@ -398,7 +398,6 @@ def on_message(c: NewClient, ev: MessageEv):
                 if len(result) > 4000:
                     result = result[:4000] + "\n\n... (長すぎるため省略)"
                 
-                import re
                 import os
                 
                 # アーティファクト（ツール経由で送信されたファイル）を処理
