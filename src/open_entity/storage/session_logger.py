@@ -70,10 +70,17 @@ SUMMARIZE_PROMPT = """以下の会話履歴を構造化された要約にして�
 ### 5. Pending Tasks（未完了タスク）
 - まだ完了していないこと
 
+### 6. Memory Index（記憶インデックス）
+- キーワード: 会話に登場した重要な用語・技術名・固有名詞をリスト
+- トピック: 議論したテーマや意思決定のトピック名をリスト
+- エンティティ: 関連するクラス名・ファイル名・サービス名をリスト
+※ 各項目の詳細が必要な場合は memory_recall(query="...") で長期記憶を検索できます
+
 ## 重要ルール
 - ファイルパスは省略せず完全なパスで記載
 - コードスニペットは重要な部分のみ（10行以内）
 - 推測せず、会話に明示された情報のみ記載
+- Memory Index はヒント（思い出すきっかけ）として機能する。詳細は書かず、キーワードのみ
 
 ## 会話履歴
 {conversation}
@@ -104,10 +111,17 @@ ROLLING_SUMMARIZE_PROMPT = """以下は「過去の要約」と「新しい会�
 ### 5. Pending Tasks（未完了タスク）
 - まだ完了していないこと（完了したものは削除）
 
+### 6. Memory Index（記憶インデックス）
+- キーワード: 過去の要約と新しい会話のキーワードを統合
+- トピック: 新しいトピックを追加、古いトピックは維持
+- エンティティ: 新しいエンティティを追加
+※ 各項目の詳細が必要な場合は memory_recall(query="...") で長期記憶を検索できます
+
 ## 重要ルール
 - ファイルパスは省略せず完全なパスで記載
 - 新しい情報で古い情報を更新
 - 完了したタスクは Pending から削除
+- Memory Index は累積する（古いキーワードも残す）
 
 ## 過去の要約
 {previous_summary}
@@ -122,17 +136,16 @@ ROLLING_SUMMARIZE_PROMPT = """以下は「過去の要約」と「新しい会�
 class ContextHealthMonitor:
     """コンテキストの健康状態を監視"""
 
-    NOTICE_THRESHOLD = 4000
-    WARNING_THRESHOLD = 6000
-    CRITICAL_THRESHOLD = 8000
-
-    def __init__(self, chars_per_token: float = 2.5):
-        self.chars_per_token = chars_per_token
+    # 閾値はトークン数（文字数 × 1.5 で推定）
+    NOTICE_THRESHOLD = 15000
+    WARNING_THRESHOLD = 22000
+    CRITICAL_THRESHOLD = 30000
 
     def estimate_tokens(self, text: str) -> int:
         if not text:
             return 0
-        return int(len(text) / self.chars_per_token)
+        from ..core.context_compressor import estimate_tokens
+        return estimate_tokens(text)
 
     def check_health(self, history: List[Dict], system_prompt: str = "") -> Dict[str, Any]:
         """コンテキストの健康状態をチェック"""
@@ -143,8 +156,8 @@ class ContextHealthMonitor:
                 content = str(content)
             total_chars += len(str(content))
 
-        # total_chars は文字数。文字数からトークン数を推定する（数値を文字列化しない）
-        total_tokens = int(total_chars / self.chars_per_token) if total_chars else 0
+        from ..core.context_compressor import TOKEN_ESTIMATE_RATIO
+        total_tokens = int(total_chars * TOKEN_ESTIMATE_RATIO) if total_chars else 0
 
         is_healthy = total_tokens < self.WARNING_THRESHOLD
         warning = None
@@ -468,8 +481,9 @@ class SessionLogger:
                 else:
                     result.append({"role": "system", "content": summary_text})
 
-            # Add recent tool memos (compact)
-            tool_memos = self._get_tool_memos(session_id, limit=5)
+            # Add tool memos within the recent history window
+            oldest_ts = messages[0].get("timestamp") if messages else None
+            tool_memos = self._get_tool_memos(session_id, since_timestamp=oldest_ts)
             if tool_memos:
                 memo_lines = ["[Recent Tool Memos]"]
                 for memo in tool_memos:
@@ -556,24 +570,42 @@ class SessionLogger:
             return compact
         return compact[: max_len - 3] + "..."
 
-    def _get_tool_memos(self, session_id: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Get recent tool memos for a session."""
+    def _get_tool_memos(self, session_id: str, since_timestamp: str = None) -> List[Dict[str, Any]]:
+        """Get tool memos for a session since a given timestamp.
+
+        If *since_timestamp* is provided, return **all** memos whose
+        timestamp >= that value (i.e. memos within the recent history window).
+        Otherwise fall back to the most recent 5 memos for backwards compat.
+        """
         try:
             with self._lock:
                 conn = self._get_connection()
                 cursor = conn.cursor()
 
-                cursor.execute(
-                    """
-                    SELECT content
-                    FROM session_events
-                    WHERE session_id = ?
-                      AND event_type = 'tool_memo'
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                    """,
-                    (session_id, limit)
-                )
+                if since_timestamp:
+                    cursor.execute(
+                        """
+                        SELECT content
+                        FROM session_events
+                        WHERE session_id = ?
+                          AND event_type = 'tool_memo'
+                          AND timestamp >= ?
+                        ORDER BY timestamp ASC
+                        """,
+                        (session_id, since_timestamp)
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT content
+                        FROM session_events
+                        WHERE session_id = ?
+                          AND event_type = 'tool_memo'
+                        ORDER BY timestamp DESC
+                        LIMIT 5
+                        """,
+                        (session_id,)
+                    )
                 rows = cursor.fetchall()
                 conn.close()
 
@@ -588,8 +620,10 @@ class SessionLogger:
                 if isinstance(content, dict):
                     memos.append(content)
 
-            # Return in chronological order
-            return list(reversed(memos))
+            # When using fallback (no since_timestamp), reverse to chronological order
+            if not since_timestamp:
+                memos = list(reversed(memos))
+            return memos
         except Exception as e:
             logger.error(f"Failed to get tool memos: {e}")
             return []

@@ -24,6 +24,7 @@ from .project_context import get_project_context
 from .mobile import NotifyMobileTool, RequestLocationTool, send_file_to_mobile, get_pending_artifacts, clear_artifacts, set_current_session
 from .scheduler import schedule_task, list_scheduled_tasks, remove_scheduled_task
 from .peer import talk_to_peer, wake_up_peer, report_to_peer, check_peer_alive, restart_peer
+from .memory_tools import memory_recall, set_memory_service
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,8 @@ TOOL_MAP = {
     "report_to_peer": report_to_peer,
     "check_peer_alive": check_peer_alive,
     "restart_peer": restart_peer,
+    # 記憶検索
+    "memory_recall": memory_recall,
     # NOTE: browser_* ツールは discovery.py で自動的に読み込まれる
 }
 
