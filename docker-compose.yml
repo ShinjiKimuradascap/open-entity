@@ -4,6 +4,8 @@ services:
     container_name: entity-a
     ports:
       - "8001:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # プロファイル（読み取り専用）
       - ./profiles:/app/profiles:ro
@@ -23,6 +25,10 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      # Ollama (ホストのOllamaに接続)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.2}
       # Slack 連携
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
@@ -69,6 +75,8 @@ services:
     container_name: entity-b
     ports:
       - "8002:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # プロファイル（読み取り専用）
       - ./profiles:/app/profiles:ro
@@ -88,6 +96,10 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
+      # Ollama (ホストのOllamaに接続)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.2}
       # Slack 連携
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
