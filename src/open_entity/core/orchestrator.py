@@ -11,7 +11,6 @@ from ..tools.skill_tools import get_loaded_skills, clear_session_skills
 from ..cancellation import check_cancelled, clear_cancel_event, OperationCancelled
 from .runtime import AgentRuntime, LLMProvider
 from ..storage.session_logger import SessionLogger
-from ..storage.semantic_memory import SemanticMemory
 from ..memory import MemoryService
 from ..utils.json_parser import SmartJSONParser
 
@@ -175,13 +174,6 @@ class Orchestrator:
         self._inline_evaluations: Dict[str, dict] = {}  # エージェント名 -> 評価結果
         self._agent_execution_metrics: List[Any] = []   # エージェント別実行メトリクス
 
-        # セマンティックメモリの初期化（embedding無効ならスキップ）
-        if embeddings_disabled:
-            self.semantic_memory = None
-        else:
-            db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
-            self.semantic_memory = SemanticMemory(db_path=db_path)
-
         # MemoryService（学習・記憶システム）の初期化
         # MOCO_MEMORY_SERVICE=off で無効化可能
         if (
@@ -197,6 +189,11 @@ class Orchestrator:
                 db_path=memory_db_path,
                 provider=provider_name
             )
+
+        # memory_recall ツールに MemoryService を注入
+        if self.memory_service:
+            from ..tools.memory_tools import set_memory_service
+            set_memory_service(self.memory_service)
 
         # Ad-hoc MCP サーバー設定の変換
         additional_mcp = []
@@ -309,8 +306,6 @@ class Orchestrator:
                     verbose=self.verbose,
                     progress_callback=self.progress_callback,
                     parent_agent=None if name == "orchestrator" else "orchestrator",
-                    semantic_memory=self.semantic_memory,
-                    enable_semantic_memory=not self._embeddings_disabled,
                     memory_service=self.memory_service,
                     system_prompt_override=full_system_prompt,
                     session_logger=self.session_logger
@@ -327,8 +322,6 @@ class Orchestrator:
                     verbose=self.verbose,
                     progress_callback=self.progress_callback,
                     parent_agent="orchestrator",
-                    semantic_memory=self.semantic_memory,
-                    enable_semantic_memory=not self._embeddings_disabled,
                     memory_service=self.memory_service,
                     system_prompt_override=full_system_prompt,
                     session_logger=self.session_logger
@@ -391,12 +384,10 @@ class Orchestrator:
                     provider=provider_name
                 )
 
-        # Semantic memory refresh
-        if self._embeddings_disabled:
-            self.semantic_memory = None
-        elif not self.semantic_memory:
-            db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
-            self.semantic_memory = SemanticMemory(db_path=db_path)
+        # memory_recall ツールに MemoryService を注入
+        if self.memory_service:
+            from ..tools.memory_tools import set_memory_service
+            set_memory_service(self.memory_service)
 
         # Refresh tool map for the new profile
         self.tool_map = discover_tools(profile=self.profile)
@@ -589,14 +580,22 @@ class Orchestrator:
                 else:
                     response = self._list_agents()
         except Exception as e:
-            # エラー発生時、部分応答を保存
+            # エラー発生時、部分応答 + ツール実行記録を保存
             if session_id and current_agent in self.runtimes:
-                partial = self.runtimes[current_agent]._partial_response
-                if partial:
+                runtime = self.runtimes[current_agent]
+                partial = runtime._partial_response or ""
+                tool_summary = runtime.get_tool_history_summary()
+
+                if partial or tool_summary:
+                    parts = [f"[エラーで中断: {type(e).__name__}]"]
+                    if tool_summary:
+                        parts.append(tool_summary)
+                    if partial:
+                        parts.append(partial)
                     self.session_logger.log_agent_message(
-                        session_id, 
-                        "assistant", 
-                        f"[エラーで中断: {type(e).__name__}]\n{partial}"
+                        session_id,
+                        "assistant",
+                        "\n".join(parts)
                     )
             raise
 
@@ -1086,7 +1085,8 @@ class Orchestrator:
                 detail=query,
                 agent_name=agent_name,
                 parent_agent=self.name,
-                status="running"
+                status="running",
+                start_time=time.time(),
             )
 
         runtime = self.runtimes[agent_name]
@@ -1235,7 +1235,11 @@ class Orchestrator:
                     detail=query,
                     agent_name=agent_name,
                     parent_agent=self.name,
-                    status="completed"
+                    status="completed",
+                    execution_time_ms=agent_execution_time_ms,
+                    tokens_input=runtime_metrics.get("prompt_tokens", 0),
+                    tokens_output=runtime_metrics.get("candidates_tokens", runtime_metrics.get("completion_tokens", 0)),
+                    tool_calls=agent_metric.tool_calls,
                 )
 
             # サブエージェントの応答を記録

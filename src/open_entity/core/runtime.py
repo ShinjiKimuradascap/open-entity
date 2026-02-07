@@ -85,8 +85,7 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 from ..tools.discovery import AgentConfig
-from ..storage.semantic_memory import SemanticMemory
-from .context_compressor import ContextCompressor
+from .context_compressor import ContextCompressor, estimate_tokens as _estimate_tokens
 
 # For tool usage logs
 MAX_ARG_LEN = 40  # Maximum number of characters for arguments
@@ -356,8 +355,10 @@ async def _execute_tool_safely_async(func: Callable, args: Dict[str, Any]) -> An
     return result
 
 
-# Maximum number of characters for tool output (saved to temporary file if exceeded)
-MAX_TOOL_OUTPUT_CHARS = 50000
+# Maximum number of characters for tool output sent to LLM context.
+# Longer results are saved to a temporary file; the LLM receives a preview
+# and can use read_file / grep_search to inspect the rest.
+MAX_TOOL_OUTPUT_CHARS = 2000
 _TEMP_OUTPUT_DIR = "/tmp/moco_tool_outputs"
 
 # Context limit management (within one agent execution)
@@ -453,10 +454,6 @@ When the following message is displayed in the tool output:
 - Use the displayed path, offset, and limit as is
 - Repeat until you have finished reading the rest
 """
-
-def _estimate_tokens(text: str) -> int:
-    """Estimate number of tokens (Simple: 4 chars ≒ 1 token)"""
-    return len(text) // 4
 
 def _extract_important_info(text: str) -> str:
     """
@@ -698,7 +695,10 @@ def _build_tool_memo(tool_name: str, args: Dict[str, Any], result_text: str) -> 
         preview = preview[:500]
     read_hint = None
     if truncated_path:
-        read_hint = f"read_file(path=\"{truncated_path}\", offset=1, limit=10000)"
+        read_hint = (
+            f"read_file(path=\"{truncated_path}\", offset=..., limit=...) or "
+            f"grep_search(pattern=..., path=\"{truncated_path}\")"
+        )
     memo = {
         "tool": tool_name,
         "args": _compact_args(args),
@@ -715,44 +715,45 @@ def _build_tool_memo(tool_name: str, args: Dict[str, Any], result_text: str) -> 
 
 def _truncate_tool_output(result: Any, tool_name: str) -> str:
     """
-    If the tool output is too long, save it to a temporary file and return a reference.
-    Also extracts important information (paths, functions, errors) to preserve in summaries.
+    If the tool output exceeds MAX_TOOL_OUTPUT_CHARS (2000), save the full
+    text to a temporary file and return a compact summary with a preview.
+    The LLM can then autonomously use read_file or grep_search to explore
+    the full output as needed.
     """
     if result is None:
         return "No output"
-    
+
     result_str = str(result)
-    
+
     if len(result_str) <= MAX_TOOL_OUTPUT_CHARS:
         return result_str
-    
-    # Save to a temporary file if too long
+
+    # Save full output to a temporary file
     import os
     import time
-    
+
     os.makedirs(_TEMP_OUTPUT_DIR, exist_ok=True)
     filename = f"{tool_name}_{int(time.time() * 1000)}.txt"
     filepath = os.path.join(_TEMP_OUTPUT_DIR, filename)
-    
+
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(result_str)
-    
-    # Extract important information for summaries
+
+    # Extract important information (paths, functions, errors, etc.)
     key_info = _extract_important_info(result_str)
-    
-    # Display the beginning and refer to the file for the rest
-    preview = result_str[:500]
+
+    # Send preview + file reference to LLM
+    preview = result_str[:MAX_TOOL_OUTPUT_CHARS]
     total_lines = result_str.count('\n') + 1
     total_chars = len(result_str)
-    
+
     return (
         f"{key_info}"
-        f"## Preview\n{preview}\n\n"
-        f"⚠️ OUTPUT TRUNCATED ⚠️\n"
-        f"Total: {total_chars:,} chars, {total_lines:,} lines\n"
-        f"Full output saved to: {filepath}\n\n"
-        f"👉 NEXT STEP: Execute the following to read the rest:\n"
-        f"   read_file(path=\"{filepath}\", offset=1, limit=10000)\n"
+        f"{preview}\n\n"
+        f"⚠️ OUTPUT TRUNCATED ({total_chars:,} chars, {total_lines:,} lines total)\n"
+        f"Full output saved to: {filepath}\n"
+        f"Use read_file(path=\"{filepath}\", offset=..., limit=...) or "
+        f"grep_search(pattern=..., path=\"{filepath}\") to explore the rest.\n"
     )
 
 
@@ -924,8 +925,6 @@ class AgentRuntime:
         verbose: bool = False,
         progress_callback: Optional[Callable] = None,
         parent_agent: Optional[str] = None,
-        semantic_memory: Optional[SemanticMemory] = None,
-        enable_semantic_memory: bool = True,
         skills: Optional[List[SkillConfig]] = None,
         memory_service = None,
         system_prompt_override: Optional[str] = None,
@@ -945,19 +944,11 @@ class AgentRuntime:
         
         # Memory context (dynamically updated in run())
         self._memory_context = ""
-        self._recall_results = []
-        
+
         # Tool call loop detection
         self.tool_tracker = ToolCallTracker(max_repeats=3, window_size=10)
         # Track repeated invalid tool calls (e.g. missing required arguments)
         self._invalid_tool_call_counts: Dict[str, int] = defaultdict(int)
-        
-        # Initialization of semantic memory
-        self.semantic_memory = semantic_memory
-        if not self.semantic_memory and enable_semantic_memory:
-            from pathlib import Path
-            db_path = os.getenv("SEMANTIC_DB_PATH", str(Path.cwd() / "data" / "semantic.db"))
-            self.semantic_memory = SemanticMemory(db_path=db_path)
 
         # Determine provider (environment variable, argument, or auto-selection)
         from .llm_provider import get_available_provider
@@ -1176,16 +1167,6 @@ class AgentRuntime:
 
         # Construction of context information
         context_header = f"---\n[Current Context]\nTimestamp: {now_str}\n"
-        
-        # Addition of recall results (semantic memory)
-        if hasattr(self, "_recall_results") and self._recall_results:
-            context_header += "\n[Related Knowledge/Past Incidents]\n"
-            for i, res in enumerate(self._recall_results):
-                content = res.get('content', '')
-                # Truncate if too long
-                if len(content) > 1000:
-                    content = content[:1000] + "..."
-                context_header += f"- Knowledge {i+1}:\n{content}\n"
         
         # MemoryService からの記憶コンテキスト追加
         if hasattr(self, "_memory_context") and self._memory_context:
@@ -1486,21 +1467,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
         # Cancellation check
         if session_id:
             check_cancelled(session_id)
-
-        # Recall from semantic memory
-        self._recall_results = []
-        if self.semantic_memory:
-            try:
-                self._recall_results = self.semantic_memory.search(user_input, top_k=3)
-                if self._recall_results and self.progress_callback:
-                    self.progress_callback(
-                        event_type="recall",
-                        agent_name=self.name,
-                        results=self._recall_results
-                    )
-            except Exception as e:
-                if self.verbose:
-                    print(f"Warning: Semantic recall failed: {e}")
 
         # MemoryService からの記憶コンテキスト取得
         self._memory_context = ""
@@ -1909,7 +1875,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                         if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
                             compressor = ContextCompressor(
                                 max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
-                                preserve_recent=10
                             )
                             messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
                             if was_compressed:
@@ -1961,7 +1926,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                             if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
                                 compressor = ContextCompressor(
                                     max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
-                                    preserve_recent=10
                                 )
                                 messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
                                 if was_compressed:
@@ -2120,7 +2084,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
                     compressor = ContextCompressor(
                         max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
-                        preserve_recent=10
                     )
                     messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
                     if was_compressed:
@@ -2180,7 +2143,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                     if usage_ratio >= CONTEXT_WARNING_THRESHOLD:
                         compressor = ContextCompressor(
                             max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
-                            preserve_recent=10
                         )
                         messages, was_compressed = compressor.compress_if_needed(messages, self.provider)
                         if was_compressed:
@@ -2289,7 +2251,6 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 return message_list
             compressor = ContextCompressor(
                 max_tokens=int(MAX_CONTEXT_TOKENS * CONTEXT_WARNING_THRESHOLD),
-                preserve_recent=10
             )
             dict_messages = _gemini_messages_to_dict(message_list)
             compressed_dicts, was_compressed = compressor.compress_if_needed(dict_messages, self.provider)
@@ -2297,22 +2258,8 @@ delegate_to_agent(agent_name="code-reviewer", task="このコードをレビュ�
                 return message_list
 
             # Try to keep recent messages in original Gemini format to preserve tool structure.
-            summary_content = ""
-            for msg in compressed_dicts:
-                role = msg.get("role")
-                content = str(msg.get("content", ""))
-                if role in ("assistant", "model") and content.startswith("[以前の会話の要約]"):
-                    summary_content = content
-                    break
-
-            if summary_content:
-                recent_messages = message_list[-compressor.preserve_recent:]
-                new_messages: List[Any] = [
-                    types.Content(role="model", parts=[types.Part(text=summary_content)])
-                ]
-                new_messages.extend(recent_messages)
-            else:
-                new_messages = _dict_to_gemini_messages(compressed_dicts)
+            # Convert compressed dicts back to Gemini format
+            new_messages = _dict_to_gemini_messages(compressed_dicts)
 
             # Update estimated tokens after compression
             self._accumulated_tokens = compressor.estimate_tokens(_gemini_messages_to_dict(new_messages))

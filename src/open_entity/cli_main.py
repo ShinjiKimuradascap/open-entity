@@ -152,10 +152,8 @@ def complete_profile(incomplete: str) -> List[str]:
 
 def prompt_profile_selection() -> str:
     """対話的にプロファイルを選択"""
-    from rich.console import Console
     from rich.prompt import Prompt
-    
-    console = Console()
+    from .ui.console import console
     profiles = get_available_profiles()
     
     if len(profiles) == 1:
@@ -232,9 +230,8 @@ def run(
     provider_enum, model = resolve_provider(provider, model)
 
     if rich_output:
-        from rich.console import Console
         from rich.panel import Panel
-        console = Console()
+        from .ui.console import console
 
     o = Orchestrator(
         profile=profile,
@@ -446,13 +443,16 @@ def chat(
     theme_config = THEMES[theme]
 
     init_environment()
-    from rich.console import Console
+    from .ui.console import console
 
     from .core.orchestrator import Orchestrator
     from .core.llm_provider import get_available_provider
     from .core.runtime import _safe_stream_print
+    from .ui.status_line import StatusLine
 
-    console = Console()
+    _status_line = StatusLine()
+    _active_status: dict = {"text": "", "start_time": 0.0}
+
     stream_flags = {"show_subagent_stream": subagent_stream, "show_tool_status": tool_status}
     # Track whether we have printed any streamed text without a newline recently.
     # Used to avoid mixing tool logs into the middle of a line.
@@ -507,6 +507,7 @@ def chat(
         try:
             from rich.panel import Panel
             from rich.text import Text
+            from rich.cells import cell_len
             from rich import box
 
             # Auto-follow: render only the bottom-most lines that fit in the panel.
@@ -528,8 +529,8 @@ def chat(
                     plain = t.plain
                 except Exception:
                     plain = str(ln)
-                # Approximate wrap rows
-                rows = max(1, (len(plain) + max(1, chat_w) - 1) // max(1, chat_w))
+                # Approximate wrap rows (cell_len accounts for CJK double-width chars)
+                rows = max(1, (cell_len(plain) + max(1, chat_w) - 1) // max(1, chat_w))
                 if used_rows + rows > chat_h:
                     break
                 visible_lines.append(ln)
@@ -553,7 +554,9 @@ def chat(
                 )
             )
             live.refresh()
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger("open_entity.cli").debug("pane render error: %s", e, exc_info=True)
             return
 
     def _pane_update_todo_panel(session_id: Optional[str]) -> None:
@@ -657,12 +660,18 @@ def chat(
             except OSError as e:
                 if getattr(e, "errno", None) == 32:
                     return
-                _safe_stream_print(text)
+                # ペーンモード中は raw print を避ける (Live レイアウトが崩れるため)
+                if not pane_state["enabled"]:
+                    _safe_stream_print(text)
             except Exception:
-                _safe_stream_print(text)
+                if not pane_state["enabled"]:
+                    _safe_stream_print(text)
 
         # Start marker for orchestrator output (helps distinguish from user input)
         if event_type == "start" and (agent_name or "") == "orchestrator":
+            _status_line.reset()
+            _active_status["text"] = ""
+            _active_status["start_time"] = 0.0
             stream_state["thinking_shown"] = False  # Reset thinking flag for new response
             stream_state["thinking_ended"] = False
             if pane_state["enabled"]:
@@ -676,8 +685,8 @@ def chat(
             stream_state["mid_line"] = True
             return
 
-        # Thinking/reasoning content (verbose mode only)
-        if event_type == "thinking" and content and verbose:
+        # Thinking/reasoning content
+        if event_type == "thinking" and content:
             if pane_state["enabled"]:
                 # Show thinking in pane with dimmed style
                 if not stream_state.get("thinking_shown"):
@@ -685,18 +694,29 @@ def chat(
                     stream_state["thinking_shown"] = True
                 # Don't show full thinking content in pane (too verbose)
                 return
-            # CLI direct output
-            if not stream_state.get("thinking_shown"):
-                if async_input and pt_ansi_print:
-                    pt_ansi_print("\x1b[2m💭 Thinking...\x1b[0m")
-                else:
-                    console.print("[dim]💭 Thinking...[/dim]")
-                stream_state["thinking_shown"] = True
-            # Show thinking content (dimmed)
             if async_input and pt_ansi_print:
-                pt_ansi_print(f"\x1b[2m{content}\x1b[0m")
-            else:
+                # Async-input mode: existing behavior
+                if not stream_state.get("thinking_shown"):
+                    pt_ansi_print("\x1b[2m💭 Thinking...\x1b[0m")
+                    stream_state["thinking_shown"] = True
+                if verbose:
+                    pt_ansi_print(f"\x1b[2m{content}\x1b[0m")
+                return
+            # Normal mode: ephemeral status line (non-verbose) or inline text (verbose)
+            if verbose:
+                if not stream_state.get("thinking_shown"):
+                    console.print("[dim]💭 Thinking...[/dim]")
+                    stream_state["thinking_shown"] = True
                 console.print(f"[dim]{content}[/dim]", end="")
+            else:
+                if not stream_state.get("thinking_shown"):
+                    if stream_state.get("mid_line"):
+                        _safe_stream_print("\n")
+                        stream_state["mid_line"] = False
+                    _active_status["text"] = "⏳ Thinking..."
+                    _active_status["start_time"] = time.time()
+                    _status_line.show("⏳ Thinking...", _active_status["start_time"])
+                    stream_state["thinking_shown"] = True
             return
 
         # Streamed text chunks
@@ -704,7 +724,8 @@ def chat(
             # End thinking display if it was shown
             if stream_state.get("thinking_shown") and not stream_state.get("thinking_ended"):
                 if not pane_state["enabled"]:
-                    _safe_stream_print("\n")  # Newline after thinking
+                    _status_line.clear()  # Clear ephemeral thinking status
+                    _active_status["text"] = ""
                 stream_state["thinking_ended"] = True
             name = agent_name or ""
             if name == "orchestrator" or stream_flags.get("show_subagent_stream"):
@@ -724,14 +745,20 @@ def chat(
                         pane_state["lines"] = pane_state["lines"][-pane_state["max_lines"] :]
                     _pane_update_chat_panel()
                     return
-                # Color the assistant output to visually separate it from the user's input line.
+                # Normal mode: clear ephemeral status, print chunk, re-show status
+                _status_line.clear()
                 _safe_stream_print_styled(content, theme_config.result)
                 stream_state["mid_line"] = True
+                if _active_status["text"]:
+                    _status_line.show(_active_status["text"], _active_status["start_time"])
             return
 
         # Ensure newline after orchestrator main response
         if event_type == "done":
             if (agent_name or "") == "orchestrator":
+                _status_line.reset()
+                _active_status["text"] = ""
+                _active_status["start_time"] = 0.0
                 if pane_state["enabled"]:
                     _pane_append("")  # spacing
                     _pane_update_chat_panel()
@@ -762,11 +789,12 @@ def chat(
                 return
             # If we're mid-stream, start a fresh line to keep logs readable.
             if stream_state.get("mid_line"):
+                _status_line.clear()
                 _safe_stream_print("\n")
                 stream_state["mid_line"] = False
-            if status == "running":
-                if async_input and pt_ansi_print:
-                    # Show agent + truncated task text with colors (Gemini CLI style)
+            if async_input and pt_ansi_print:
+                # Async-input mode: existing behavior (permanent lines)
+                if status == "running":
                     msg = f"\x1b[2m→\x1b[0m \x1b[36m{name}\x1b[0m"
                     if detail:
                         d = detail.replace("\n", " ").strip()
@@ -774,18 +802,53 @@ def chat(
                             d = d[:87] + "..."
                         msg += f" \x1b[2m{d}\x1b[0m"
                     pt_ansi_print(msg)
-                else:
-                    console.print(f"[dim]→ {name}[/dim]")
-            elif status == "completed":
-                if async_input and pt_ansi_print:
+                elif status == "completed":
                     pt_ansi_print(f"\x1b[32m✓\x1b[0m \x1b[36m{name}\x1b[0m")
                 else:
-                    console.print(f"[green]✓ {name}[/green]")
-            else:
-                if async_input and pt_ansi_print:
                     pt_ansi_print(f"\x1b[2m{status or 'delegate'}\x1b[0m \x1b[36m{name}\x1b[0m")
+                return
+            # Normal mode: ephemeral status line for running, metrics on completion
+            if status == "running":
+                d = detail.replace("\n", " ").strip() if detail else ""
+                if len(d) > 80:
+                    d = d[:77] + "..."
+                status_text = f"⏳ {name}: {d}" if d else f"⏳ {name}"
+                _active_status["text"] = status_text
+                _active_status["start_time"] = kwargs.get("start_time", time.time())
+                _status_line.show(status_text, _active_status["start_time"])
+            elif status == "completed":
+                _status_line.clear()
+                _active_status["text"] = ""
+                # Build metrics suffix
+                metrics_parts = []
+                exec_time_ms = kwargs.get("execution_time_ms", 0)
+                tokens_in = kwargs.get("tokens_input", 0)
+                tokens_out = kwargs.get("tokens_output", 0)
+                tool_count = kwargs.get("tool_calls", 0)
+                if exec_time_ms > 0:
+                    secs = exec_time_ms / 1000.0
+                    if secs >= 60:
+                        mins = int(secs // 60)
+                        remaining = secs % 60
+                        metrics_parts.append(f"{mins}m {remaining:.0f}s")
+                    else:
+                        metrics_parts.append(f"{secs:.1f}s")
+                total_tokens = tokens_in + tokens_out
+                if total_tokens > 0:
+                    if total_tokens >= 1000:
+                        metrics_parts.append(f"{total_tokens / 1000:.1f}k tokens")
+                    else:
+                        metrics_parts.append(f"{total_tokens} tokens")
+                if tool_count > 0:
+                    metrics_parts.append(f"{tool_count} tools")
+                metrics_str = " \u00b7 ".join(metrics_parts)
+                if metrics_str:
+                    console.print(f"[green]\u2713 {name}[/green] [dim]({metrics_str})[/dim]")
                 else:
-                    console.print(f"[dim]{status or 'delegate'} {name}[/dim]")
+                    console.print(f"[green]\u2713 {name}[/green]")
+            else:
+                _status_line.clear()
+                console.print(f"[dim]{status or 'delegate'} {name}[/dim]")
             return
 
         # Tool status: show running + success/error so file ops are verifiable in-chat.
@@ -827,36 +890,55 @@ def chat(
                 return
 
             if stream_state.get("mid_line"):
+                _status_line.clear()
                 _safe_stream_print("\n")
                 stream_state["mid_line"] = False
 
-            # Running line (start)
-            if status == "running":
-                # Default: keep tool-status output compact (one line per tool).
-                # Show the "running" line only in verbose mode.
-                if verbose:
+            # Async-input mode: existing behavior (permanent lines)
+            if async_input and pt_ansi_print:
+                if status == "running":
+                    if verbose:
+                        line = tool_name or "tool"
+                        if detail:
+                            line += f" \u2192 {detail}"
+                        pt_ansi_print(f"\x1b[2m\u2192\x1b[0m \x1b[36m{line}\x1b[0m")
+                elif status == "completed":
+                    result_str = "" if result is None else str(result)
+                    is_error = result_str.startswith("Error") or result_str.startswith("ERROR:")
                     line = tool_name or "tool"
                     if detail:
-                        line += f" → {detail}"
-                    if async_input and pt_ansi_print:
-                        pt_ansi_print(f"\x1b[2m→\x1b[0m \x1b[36m{line}\x1b[0m")
+                        line += f" \u2192 {detail}"
+                    if is_error:
+                        pt_ansi_print(f"\x1b[31m\u2717\x1b[0m \x1b[36m{line}\x1b[0m")
                     else:
-                        console.print(f"[dim]→ {line}[/dim]")
+                        pt_ansi_print(f"\x1b[32m\u2713\x1b[0m \x1b[36m{line}\x1b[0m")
+                return
+
+            # Normal mode: ephemeral status line for running, permanent for completed
+            if status == "running":
+                line = tool_name or "tool"
+                if detail:
+                    line += f" {detail}"
+                status_text = f"\u23f3 {line}..."
+                _active_status["text"] = status_text
+                _active_status["start_time"] = time.time()
+                _status_line.show(status_text, _active_status["start_time"])
                 return
 
             if status != "completed":
                 return
 
+            _status_line.clear()
+            _active_status["text"] = ""
+
             # Determine success/failure from result text
             result_str = "" if result is None else str(result)
             is_error = result_str.startswith("Error") or result_str.startswith("ERROR:")
 
-            # Build a concise line, e.g. "✓ write_file → MOBILE_SPEC.md"
+            # Build a concise line
             line = tool_name or "tool"
             if detail:
-                line += f" → {detail}"
-            # Only show the (potentially long) tool result summary in verbose mode.
-            # This keeps default tool-status output short (no "Successfully edited ... (+22)" etc.).
+                line += f" {detail}"
             if verbose and result_str:
                 summary = result_str.splitlines()[0].strip()
                 if len(summary) > 140:
@@ -865,15 +947,9 @@ def chat(
                     line += f" ({summary})"
 
             if is_error:
-                if async_input and pt_ansi_print:
-                    pt_ansi_print(f"\x1b[31m✗\x1b[0m \x1b[36m{line}\x1b[0m")
-                else:
-                    console.print(f"[red]✗ {line}[/red]")
+                console.print(f"[red]\u2717 {line}[/red]")
             else:
-                if async_input and pt_ansi_print:
-                    pt_ansi_print(f"\x1b[32m✓\x1b[0m \x1b[36m{line}\x1b[0m")
-                else:
-                    console.print(f"[green]✓ {line}[/green]")
+                console.print(f"[dim]\u2713 {line}[/dim]")
             return
 
     # プロファイルの解決（指定なしの場合は対話選択）
@@ -1172,7 +1248,12 @@ def chat(
                     try:
                         live_ctx.stop()
                     except Exception:
-                        pass
+                        # stop() が途中で失敗した場合、カーソルを復元して端末を安定させる
+                        try:
+                            console.file.write("\x1b[?25h")
+                            console.file.flush()
+                        except Exception:
+                            pass
 
                 text = console.input(f"[bold {theme_config.status}]> [/bold {theme_config.status}]")
 
@@ -1181,7 +1262,10 @@ def chat(
                     try:
                         live_ctx.start()
                     except Exception:
-                        pass
+                        # Live の再開に失敗した場合、ペーンモードを無効にして通常モードに切り替え
+                        pane_state["enabled"] = False
+                        pane_state["live"] = None
+                        console.print("[yellow]Todo pane disabled (display error). Chat continues normally.[/yellow]")
                     if text and text.strip():
                         _pane_append(f"[bold {theme_config.status}]User:[/bold {theme_config.status}] {text.strip()}")
                         _pane_update_chat_panel()
@@ -1214,13 +1298,16 @@ def chat(
                 # シンプルにrun_syncを呼ぶだけ（streaming時はruntimeが直接出力）
                 reply = o.run_sync(text, session_id)
             except KeyboardInterrupt:
+                _status_line.reset()
                 request_cancel(session_id)
                 console.print("\n[yellow]Interrupted. Type 'exit' to quit or continue with a new prompt.[/yellow]")
                 continue
             except OperationCancelled:
+                _status_line.reset()
                 console.print("\n[yellow]Operation cancelled.[/yellow]")
                 continue
             except Exception as e:  # noqa: BLE001
+                _status_line.reset()
                 console.print(f"[red]Error: {e}[/red]")
                 continue
             finally:
@@ -1232,6 +1319,7 @@ def chat(
                 _print_result(console, reply, theme_name=ui_state.theme, verbose=verbose)
                 console.print()
     except KeyboardInterrupt:
+        _status_line.reset()
         console.print("\n[dim]Bye![/dim]")
     finally:
         if live_ctx is not None:
