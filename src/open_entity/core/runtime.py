@@ -1349,6 +1349,32 @@ class AgentRuntime:
         "analyze_image", "generate_image",
         # モバイル連携
         "send_file_to_mobile",
+        # スキル化済みツール（execute_skill 経由で利用可能、直接ツールとしては不要）
+        # browser-tools (28)
+        "browser_open", "browser_attach", "browser_snapshot", "browser_click",
+        "browser_fill", "browser_type", "browser_press", "browser_hover",
+        "browser_select", "browser_get_text", "browser_get_value", "browser_get_url",
+        "browser_get_title", "browser_is_visible", "browser_is_enabled", "browser_wait",
+        "browser_screenshot", "browser_scroll", "browser_back", "browser_forward",
+        "browser_reload", "browser_eval", "browser_close", "browser_console",
+        "browser_errors", "browser_tab", "browser_set_viewport", "browser_set_device",
+        # amp-tools (12)
+        "amp_cli", "amp_send", "amp_history", "amp_discover",
+        "amp_identity_list", "amp_identity_show", "amp_identity_create",
+        "amp_identity_import", "amp_identity_use", "amp_identity_delete",
+        "amp_identity_export", "amp_identity_reset",
+        # peer-tools (5)
+        "talk_to_peer", "wake_up_peer", "report_to_peer",
+        "check_peer_alive", "restart_peer",
+        # stats-tools (3)
+        "get_agent_stats", "get_session_stats", "set_current_session",
+        # 重複・冗長ツール
+        "execute_bash_in_sandbox",
+        "build_code_index", "build_doc_index", "update_code_index", "update_doc_index",
+        "get_index_stats",
+        "execute_js_skill",
+        "read_lints",
+        "check_gh_cli",
     })
 
     def _prepare_tools(self):
@@ -1520,6 +1546,12 @@ You have access to tools via the function calling API. You MUST use the function
 - To read a file: use `read_file` — one call is enough
 - To run a command: use `execute_bash` — one call is enough
 - To check the project: use `get_project_context` — one call is enough
+
+### Skills usage:
+- Skills are loaded automatically based on your input
+- To use a skill's tool: call `execute_skill` with skill_name, tool_name, and arguments
+- Example: `execute_skill(skill_name="browser-tools", tool_name="browser_open", arguments={"url": "https://example.com"})`
+- Available skill tools are listed in the Skills section below (if present)
 """
             prompt += ollama_tool_rules
 
