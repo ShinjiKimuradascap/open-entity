@@ -1438,6 +1438,21 @@ class AgentRuntime:
                 if self.verbose:
                     print(f"Warning: Tool '{tool_name}' not found in provided tool_map")
 
+    def _inject_skill_tools(self, skills: List[SkillConfig]):
+        """スキルのツールをネイティブなツール定義として動的に追加（Claude Code方式）。
+
+        スキルがマッチした時にオーケストレーターから呼ばれる。
+        ブロックリストで除外されていたスキルツールを available_tools に追加し、
+        LLMがスキルのツールを直接呼び出せるようにする。
+        """
+        for skill in skills:
+            for tool_name in (skill.allowed_tools or []):
+                if tool_name in self.tool_map and tool_name not in self.available_tools:
+                    func = self.tool_map[tool_name]
+                    self.available_tools[tool_name] = func
+                    self.tool_declarations.append(_func_to_declaration(func, tool_name))
+                    self.openai_tools.append(_func_to_openai_tool(func, tool_name))
+
     def _update_context_usage(self, result: str) -> str:
         """
         Accumulate tokens from tool results and perform limit checks.

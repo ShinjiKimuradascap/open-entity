@@ -1149,9 +1149,10 @@ class Orchestrator:
                 if name not in matched_names and skill.matches_input(query):
                     auto_matched.append(skill)
 
-            # 3. スキルをランタイムに注入
+            # 3. スキルをランタイムに注入（ツール定義も動的追加）
             if auto_matched:
                 runtime.skills = auto_matched
+                runtime._inject_skill_tools(auto_matched)
                 if self.verbose:
                     print(f"[Skills] Auto-injected {len(auto_matched)} skills to @{agent_name}: {[s.name for s in auto_matched]}")
             else:

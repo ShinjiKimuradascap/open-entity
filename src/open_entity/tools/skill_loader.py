@@ -355,7 +355,8 @@ class SkillLoader:
         # allowed-tools (Claude Code standard) または allowed_tools をパース
         allowed_tools = metadata.get("allowed-tools") or metadata.get("allowed_tools") or []
         if isinstance(allowed_tools, str):
-            allowed_tools = [allowed_tools]
+            # カンマ区切り文字列を分割: "tool1, tool2, tool3" → ["tool1", "tool2", "tool3"]
+            allowed_tools = [t.strip() for t in allowed_tools.split(",") if t.strip()]
         elif not isinstance(allowed_tools, list):
             allowed_tools = []
 
