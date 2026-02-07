@@ -1368,13 +1368,27 @@ class AgentRuntime:
         "check_peer_alive", "restart_peer",
         # stats-tools (3)
         "get_agent_stats", "get_session_stats", "set_current_session",
-        # 重複・冗長ツール
+        # 重複・冗長ツール（コアツールで代替可能）
         "execute_bash_in_sandbox",
         "build_code_index", "build_doc_index", "update_code_index", "update_doc_index",
         "get_index_stats",
         "execute_js_skill",
         "read_lints",
         "check_gh_cli",
+        # ローカルモデル向け: ツール数をさらに削減（コアツールで代替可能な補助ツール）
+        "ripgrep",  # grep で代替
+        "find_definition", "find_references",  # grep で代替
+        "codebase_search", "semantic_search",  # grep + glob_search で代替
+        "tree",  # list_dir で代替
+        "file_info",  # read_file / execute_bash で代替
+        "create_pr", "generate_commit_message",  # execute_git で代替
+        "get_git_diff", "get_git_history", "get_git_status",  # execute_git で代替
+        "start_background", "stop_process", "list_processes",  # execute_bash で代替
+        "get_output", "wait_for_pattern", "wait_for_exit", "send_input",  # execute_bash で代替
+        "wait",  # 不要
+        "schedule_task", "list_scheduled_tasks", "remove_scheduled_task",  # 基本的に不要
+        "load_skill", "list_loaded_skills",  # execute_skill で十分
+        "memory_recall",  # ローカルモデルでは不要
     })
 
     def _prepare_tools(self):
@@ -1541,17 +1555,14 @@ You have access to tools via the function calling API. You MUST use the function
 - Do NOT chain unnecessary tools (e.g., don't call browser_open after websearch succeeds)
 - Do NOT call semantic_search, browser_open, or webfetch unless specifically needed
 
-### Tool selection guidance:
-- To search the web: use `websearch` — the result is usually sufficient, no need for webfetch
-- To read a file: use `read_file` — one call is enough
-- To run a command: use `execute_bash` — one call is enough
-- To check the project: use `get_project_context` — one call is enough
-
-### Skills usage:
-- Skills are loaded automatically based on your input
-- To use a skill's tool: call `execute_skill` with skill_name, tool_name, and arguments
-- Example: `execute_skill(skill_name="browser-tools", tool_name="browser_open", arguments={"url": "https://example.com"})`
-- Available skill tools are listed in the Skills section below (if present)
+### Tool selection:
+You have full internet access. Choose the right tool for the task:
+- `websearch(query="...")` — search the internet for news, facts, documentation, current events, weather, prices, etc.
+- `webfetch(url="...")` — fetch a specific web page
+- `read_file` / `edit_file` / `write_file` — local file operations
+- `grep` / `glob_search` — search code and find files
+- `execute_bash` — run shell commands
+- `execute_skill` — use skill tools (browser, AMP, peer, stats)
 """
             prompt += ollama_tool_rules
 
