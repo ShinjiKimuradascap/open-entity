@@ -51,6 +51,38 @@ class AgentIdentity:
 
 
 @dataclass
+class AgentRecord:
+    """Agent registration record for DHT/registry."""
+    agent_id: str
+    public_key: str
+    endpoint: str
+    capabilities: List[str] = field(default_factory=list)
+    last_seen: datetime = field(default_factory=datetime.now)
+    reputation_score: float = 0.5
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "public_key": self.public_key,
+            "endpoint": self.endpoint,
+            "capabilities": self.capabilities,
+            "last_seen": self.last_seen.isoformat(),
+            "reputation_score": self.reputation_score,
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentRecord":
+        return cls(
+            agent_id=data["agent_id"],
+            public_key=data["public_key"],
+            endpoint=data["endpoint"],
+            capabilities=data.get("capabilities", []),
+            last_seen=datetime.fromisoformat(data["last_seen"]) if "last_seen" in data else datetime.now(),
+            reputation_score=data.get("reputation_score", 0.5),
+        )
+
+
+@dataclass
 class A2AMessage:
     """A2A message format."""
     message_id: str
@@ -62,8 +94,8 @@ class A2AMessage:
     signature: str
     ttl: int = 3600
     
-    def to_json(self) -> str:
-        return json.dumps({
+    def to_dict(self) -> Dict[str, Any]:
+        return {
             "message_id": self.message_id,
             "sender": self.sender.to_dict(),
             "recipient": self.recipient.to_dict(),
@@ -72,11 +104,13 @@ class A2AMessage:
             "timestamp": self.timestamp.isoformat(),
             "signature": self.signature,
             "ttl": self.ttl,
-        })
+        }
+    
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict())
     
     @classmethod
-    def from_json(cls, json_str: str) -> "A2AMessage":
-        data = json.loads(json_str)
+    def from_dict(cls, data: Dict[str, Any]) -> "A2AMessage":
         return cls(
             message_id=data["message_id"],
             sender=AgentIdentity.from_dict(data["sender"]),
@@ -87,6 +121,10 @@ class A2AMessage:
             signature=data["signature"],
             ttl=data.get("ttl", 3600),
         )
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> "A2AMessage":
+        return cls.from_dict(json.loads(json_str))
     
     def verify_signature(self, secret_key: str) -> bool:
         """Verify message signature."""

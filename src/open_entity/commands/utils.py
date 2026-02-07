@@ -1,16 +1,13 @@
 """CLI utility functions."""
 from pathlib import Path
 from typing import Optional
-from dotenv import load_dotenv, find_dotenv
 
 
 def init_environment():
     """環境変数の初期化（後方互換性のために残す）"""
-    # 既に _early_load_dotenv() で読み込み済みだが、
-    # 明示的に呼ばれた場合は再読み込み
-    env_path = find_dotenv(usecwd=True) or (Path(__file__).parent.parent.parent / ".env")
-    if env_path:
-        load_dotenv(env_path, override=True)
+    # env_loader経由で初期化
+    from ..utils.env_loader import init_environment as _init_env
+    _init_env(override=True)
 
 
 def resolve_provider(provider_str: str, model: Optional[str] = None) -> tuple:

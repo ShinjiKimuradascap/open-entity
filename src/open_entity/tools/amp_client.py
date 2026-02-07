@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from typing import List, Optional, Any, Dict
 
@@ -7,6 +8,17 @@ try:
 except ImportError:
     # サブプロセスからロードされる場合のフォールバック
     from open_entity.utils.path import get_working_directory
+
+# .env から設定を読み込み
+from dotenv import load_dotenv
+load_dotenv()
+
+# AMPバイナリパス（環境変数 or デフォルト）
+AMP_BIN = os.getenv("AMP_BIN_PATH", "amp")
+# AMPデフォルトゲートウェイ
+DEFAULT_AMP_GATEWAY = os.getenv("AMP_GATEWAY_URL")
+# AMP Identity
+DEFAULT_AMP_IDENTITY = os.getenv("AMP_IDENTITY")
 
 
 def amp_cli(args: List[str], stdin: Optional[str] = None, timeout: int = 60) -> str:
@@ -39,7 +51,7 @@ def amp_cli(args: List[str], stdin: Optional[str] = None, timeout: int = 60) -> 
         timeout = 60
     timeout = max(1, min(timeout, 300))
 
-    command = ["amp"] + args
+    command = [AMP_BIN] + args
     try:
         result = subprocess.run(
             command,
@@ -77,10 +89,15 @@ def amp_send(
     sender_id: Optional[str] = None,
     msg_type: str = "text",
     metadata: Optional[Any] = None,
-    encrypt: bool = True,
+    encrypt: bool = False,
     profile: Optional[str] = None,
     timeout: int = 60
 ) -> str:
+    # .env のデフォルト値を使用
+    if gateway is None:
+        gateway = DEFAULT_AMP_GATEWAY
+    if sender_id is None:
+        sender_id = DEFAULT_AMP_IDENTITY
     """
     amp の send コマンド用ショートカット。
 
@@ -97,6 +114,10 @@ def amp_send(
     """
     if not to or not message:
         return "Error: to and message are required."
+    
+    # 暗号化を使う場合は profile が必要（keypairを含む）
+    if encrypt and not profile:
+        return "Error: encrypt=True requires a profile with keypair. Use encrypt=False for unencrypted messages."
 
     args = ["send", "--to", to]
     _append_flag(args, "--gateway", gateway)
@@ -118,6 +139,8 @@ def amp_send(
 
 def amp_history(limit: int = 50, gateway: Optional[str] = None, profile: Optional[str] = None, timeout: int = 60) -> str:
     """amp history のショートカット。"""
+    if gateway is None:
+        gateway = DEFAULT_AMP_GATEWAY
     args = ["history"]
     _append_flag(args, "--limit", limit)
     _append_flag(args, "--gateway", gateway)
@@ -127,6 +150,8 @@ def amp_history(limit: int = 50, gateway: Optional[str] = None, profile: Optiona
 
 def amp_discover(local_only: bool = False, gateway: Optional[str] = None, profile: Optional[str] = None, timeout: int = 60) -> str:
     """amp discover のショートカット。"""
+    if gateway is None:
+        gateway = DEFAULT_AMP_GATEWAY
     args = ["discover"]
     if local_only:
         args.append("--local")
@@ -154,6 +179,8 @@ def amp_identity_create(
     timeout: int = 60
 ) -> str:
     """amp identity create のショートカット。"""
+    if gateway is None:
+        gateway = DEFAULT_AMP_GATEWAY
     args = ["identity", "create"]
     _append_flag(args, "--name", name)
     _append_flag(args, "--gateway", gateway)

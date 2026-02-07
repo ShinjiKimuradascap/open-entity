@@ -2,52 +2,33 @@
 """Moco CLI"""
 
 # ruff: noqa: E402
-import warnings
 # ========================================
-# 警告の抑制 (インポート前に設定)
+# Early initialization (must happen before other imports)
 # ========================================
-# Python 3.9 EOL や SSL 関連の不要な警告を非表示にする
-warnings.filterwarnings("ignore", category=FutureWarning)
-try:
-    # urllib3 の NotOpenSSLWarning はインポート時に発生するため、
-    # 警告フィルターを先に設定しておく必要がある
-    warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL 1.1.1+.*")
-    # Google GenAI の thought_signature 警告を抑制
-    warnings.filterwarnings("ignore", message=".*non-text parts in the response.*")
-    warnings.filterwarnings("ignore", message=".*thought_signature.*")
-except Exception:
-    pass
+from .utils.env_loader import setup_warning_filters, load_dotenv_early
 
-# ========================================
-# 重要: .env の読み込みは最初に行う必要がある
-# 他のモジュールがインポート時に環境変数を参照するため
-# ========================================
+# Setup warning filters and load .env before other imports
+setup_warning_filters()
+load_dotenv_early()
+
+# Standard imports
 import os
-from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
-
-def _early_load_dotenv():
-    """モジュールインポート前に .env を読み込む"""
-    env_path = find_dotenv(usecwd=True) or (Path(__file__).parent.parent.parent / ".env")
-    if env_path:
-        load_dotenv(env_path)
-
-# 他のモジュールをインポートする前に環境変数を読み込む
-_early_load_dotenv()
 
 # ここから通常のインポート
 import typer
 import time
+import sys
+import threading as _threading
+from datetime import datetime
 from typing import Optional, List
 from .ui.theme import ThemeName, THEMES
 
 def init_environment():
     """環境変数の初期化（後方互換性のために残す）"""
-    # 既に _early_load_dotenv() で読み込み済みだが、
+    # 既に load_dotenv_early() で読み込み済みだが、
     # 明示的に呼ばれた場合は再読み込み
-    env_path = find_dotenv(usecwd=True) or (Path(__file__).parent.parent.parent / ".env")
-    if env_path:
-        load_dotenv(env_path, override=True)
+    from .utils.env_loader import init_environment as _init_env
+    _init_env(override=True)
 
 DEFAULT_PROFILE = os.environ.get("MOCO_PROFILE", "entity")
 
@@ -440,6 +421,7 @@ def chat(
     use_optimizer: bool = typer.Option(False, "--optimizer/--no-optimizer", help="Optimizerによるエージェント自動選択"),
 ):
     """対話型チャット"""
+    import threading as _threading  # Ensure threading is available in function scope
     from .ui.layout import ui_state
     ui_state.theme = theme
     theme_config = THEMES[theme]
@@ -458,7 +440,7 @@ def chat(
     stream_flags = {"show_subagent_stream": subagent_stream, "show_tool_status": tool_status}
     # Track whether we have printed any streamed text without a newline recently.
     # Used to avoid mixing tool logs into the middle of a line.
-    stream_state = {"mid_line": False}
+    stream_state = {"mid_line": False, "saw_orchestrator_chunk": False}
 
     # prompt_toolkit printing helpers (used in --async-input mode)
     pt_ansi_print = None
@@ -482,6 +464,9 @@ def chat(
         "layout": None,
         "lines": [],
         "max_lines": 500,
+        "avatar_text": "",
+        "avatar_stop": None,
+        "avatar_thread": None,
     }
 
     def _pane_append(line: str) -> None:
@@ -498,6 +483,9 @@ def chat(
         # Trim
         if len(pane_state["lines"]) > pane_state["max_lines"]:
             pane_state["lines"] = pane_state["lines"][-pane_state["max_lines"] :]
+        # Update avatar based on latest content
+        if parts:
+            _pane_update_avatar_panel(parts[-1])
 
     def _pane_update_chat_panel() -> None:
         if not pane_state["enabled"]:
@@ -555,10 +543,12 @@ def chat(
                     box=box.ROUNDED,
                 )
             )
-            live.refresh()
-        except Exception as e:
-            import logging
-            logging.getLogger("open_entity.cli").debug("pane render error: %s", e, exc_info=True)
+            if live is not None:
+                try:
+                    live.refresh()
+                except Exception:
+                    pass
+        except Exception:
             return
 
     def _pane_update_todo_panel(session_id: Optional[str]) -> None:
@@ -586,7 +576,11 @@ def chat(
                     box=box.ROUNDED,
                 )
             )
-            live.refresh()
+            if live is not None:
+                try:
+                    live.refresh()
+                except Exception:
+                    pass
         except Exception as e:
             try:
                 from rich.panel import Panel
@@ -601,9 +595,94 @@ def chat(
                         box=box.ROUNDED,
                     )
                 )
-                live.refresh()
+                if live is not None:
+                    try:
+                        live.refresh()
+                    except Exception:
+                        pass
             except Exception:
                 return
+
+    # Avatar state tracking - thread-safe frame counter
+    avatar_state = {"last_expression": None, "frame_counter": 0, "lock": _threading.Lock() if pane_state["enabled"] else None}
+
+    def _pane_update_avatar_panel(text: str = "", frame_offset: int = 0) -> None:
+        """Update avatar state based on current text content - thread-safe version"""
+        if not pane_state["enabled"]:
+            return
+        if text:
+            pane_state["avatar_text"] = text
+        try:
+            from open_entity.ui.avatar import get_avatar
+            # Get avatar instance to check current expression
+            avatar = get_avatar()
+            
+            # Analyze text to get new expression
+            new_expression = avatar.analyze_text(text)
+            
+            # Check if expression changed
+            expression_changed = new_expression != avatar_state["last_expression"]
+            if expression_changed or avatar_state["last_expression"] is None:
+                avatar_state["last_expression"] = new_expression
+                # Reset frame counter on expression change
+                if avatar_state["lock"]:
+                    with avatar_state["lock"]:
+                        avatar_state["frame_counter"] = 0
+
+            # Calculate frame index (thread-safe with lock)
+            frame_idx = 0
+            if avatar_state["lock"]:
+                with avatar_state["lock"]:
+                    frame_idx = (avatar_state["frame_counter"] + frame_offset) % 3  # 3 frames per expression
+            else:
+                frame_idx = frame_offset % 3
+
+        except Exception:
+            return
+
+    def _start_avatar_animator() -> None:
+        """Start avatar animation thread - thread-safe version that only updates frame counter"""
+        if not pane_state["enabled"]:
+            return
+        try:
+            import threading as _threading
+            import time as _time
+        except Exception:
+            return
+        if pane_state.get("avatar_thread") and pane_state["avatar_thread"].is_alive():
+            return
+        stop_event = pane_state.get("avatar_stop")
+        if stop_event is None:
+            stop_event = _threading.Event()
+            pane_state["avatar_stop"] = stop_event
+        else:
+            stop_event.clear()
+
+        def _run():
+            """Animation loop - just increments frame counter, no direct UI calls"""
+            frame = 0
+            while not stop_event.is_set():
+                # Just update the frame counter (thread-safe)
+                if avatar_state["lock"]:
+                    with avatar_state["lock"]:
+                        avatar_state["frame_counter"] = frame
+                live = pane_state.get("live")
+                if live is not None:
+                    try:
+                        live.refresh()
+                    except Exception:
+                        pass
+                frame = (frame + 1) % 3  # Cycle through 3 frames
+                _time.sleep(0.3)  # 3.3 FPS to keep CPU low in terminals
+
+        t = _threading.Thread(target=_run, daemon=True)
+        pane_state["avatar_thread"] = t
+        t.start()
+
+    def _stop_avatar_animator() -> None:
+        stop_event = pane_state.get("avatar_stop")
+        if stop_event is not None:
+            stop_event.set()
 
     # Streaming callback for CLI:
     # - tool/delegate logs are printed elsewhere (keep as-is)
@@ -676,14 +755,16 @@ def chat(
             _active_status["start_time"] = 0.0
             stream_state["thinking_shown"] = False  # Reset thinking flag for new response
             stream_state["thinking_ended"] = False
+            stream_state["saw_orchestrator_chunk"] = False
             if pane_state["enabled"]:
-                _pane_append("[bold]🤖[/bold] ")
+                _pane_append("[bold]👩‍💻[/bold] ")
                 _pane_update_chat_panel()
+                _start_avatar_animator()
                 return
             if stream_state.get("mid_line"):
                 _safe_stream_print("\n")
                 stream_state["mid_line"] = False
-            _safe_stream_print_styled("🤖 ", f"bold {theme_config.result}")
+            _safe_stream_print_styled("👩‍💻 ", f"bold {theme_config.result}")
             stream_state["mid_line"] = True
             return
 
@@ -731,10 +812,12 @@ def chat(
                 stream_state["thinking_ended"] = True
             name = agent_name or ""
             if name == "orchestrator" or stream_flags.get("show_subagent_stream"):
+                if name == "orchestrator":
+                    stream_state["saw_orchestrator_chunk"] = True
                 if pane_state["enabled"]:
                     # Append to last line (create if needed)
                     if not pane_state["lines"]:
-                        pane_state["lines"].append("🤖 ")
+                        pane_state["lines"].append("👩‍💻 ")
                     chunk = str(content)
                     parts = chunk.split("\n")
                     # First part appends to current last line
@@ -746,6 +829,8 @@ def chat(
                     if len(pane_state["lines"]) > pane_state["max_lines"]:
                         pane_state["lines"] = pane_state["lines"][-pane_state["max_lines"] :]
                     _pane_update_chat_panel()
+                    # Update avatar expression based on content
+                    _pane_update_avatar_panel(chunk)
                     return
                 # Normal mode: clear ephemeral status, print chunk, re-show status
                 _status_line.clear()
@@ -764,6 +849,7 @@ def chat(
                 if pane_state["enabled"]:
                     _pane_append("")  # spacing
                     _pane_update_chat_panel()
+                    _stop_avatar_animator()
                     return
                 _safe_stream_print("\n")
                 stream_state["mid_line"] = False
@@ -1035,7 +1121,7 @@ def chat(
     show_welcome_dashboard(o, theme_config)
     # -------------------------
 
-    # If todo pane is enabled, set up a 2-pane Rich layout
+    # If todo pane is enabled, set up a 3-pane Rich layout (chat / avatar / todo)
     live_ctx = None
     if todo_pane:
         try:
@@ -1045,36 +1131,76 @@ def chat(
             from rich.text import Text
             from rich import box
             from open_entity.tools.todo import set_current_session
+            from open_entity.ui.avatar import render_avatar, get_avatar
 
             set_current_session(session_id)
 
             root = Layout(name="root")
             width = getattr(console, "size", None).width if getattr(console, "size", None) else 120
 
-            if width >= 120:
+            if width >= 140:
+                # Wide terminal: 3 columns (chat | avatar | todo)
+                root.split_row(
+                    Layout(name="chat", ratio=4),
+                    Layout(name="avatar", ratio=1, minimum_size=24),
+                    Layout(name="todo", ratio=2, minimum_size=36),
+                )
+            elif width >= 100:
+                # Medium terminal: chat + sidebar (avatar+todo stacked)
                 root.split_row(
                     Layout(name="chat", ratio=3),
-                    Layout(name="todo", ratio=1, minimum_size=36),
+                    Layout(name="sidebar", ratio=1, minimum_size=30),
+                )
+                root["sidebar"].split_column(
+                    Layout(name="avatar", ratio=1),
+                    Layout(name="todo", ratio=2),
                 )
             else:
-                # Fallback for narrow terminals: place todo below
+                # Narrow terminal: stacked layout
                 root.split_column(
                     Layout(name="chat", ratio=3),
+                    Layout(name="avatar", ratio=1),
                     Layout(name="todo", ratio=1),
                 )
 
             pane_state["enabled"] = True
             pane_state["layout"] = root
 
-            # Initial render
+            def _get_avatar_panel():
+                try:
+                    from open_entity.ui.avatar import render_avatar_frame
+                    text = pane_state.get("avatar_text", "")
+                    frame_idx = 0
+                    if avatar_state["lock"]:
+                        with avatar_state["lock"]:
+                            frame_idx = avatar_state["frame_counter"]
+                    else:
+                        frame_idx = avatar_state.get("frame_counter", 0)
+                    avatar_art, avatar_status = render_avatar_frame(text, frame_idx, width=22)
+                    return Panel(
+                        Text(avatar_art, style="bright_magenta"),
+                        title=f"👩‍💻 {avatar_status}",
+                        border_style=theme_config.accent,
+                        box=box.ROUNDED,
+                    )
+                except Exception:
+                    return Panel(Text("eve", style="bright_magenta"), title="👩‍💻 eve", border_style=theme_config.accent, box=box.ROUNDED)
+
+            class _AvatarRenderable:
+                def __rich_console__(self, _console, _options):
+                    yield _get_avatar_panel()
+
             root["chat"].update(
                 Panel(Text("(waiting for output...)", style="dim"), title="Chat", border_style=theme_config.status, box=box.ROUNDED)
             )
+            # Initialize avatar panel (animated via Live refresh + frame counter)
+            _pane_update_avatar_panel("Ready")
+            root["avatar"].update(_AvatarRenderable())
             root["todo"].update(
                 Panel(Text("(loading...)", style="dim"), title="Todos", border_style=theme_config.tools, box=box.ROUNDED)
             )
 
-            live_ctx = Live(root, console=console, auto_refresh=False)
+            live_ctx = Live(root, console=console, auto_refresh=False, screen=False)
             live_ctx.__enter__()
             pane_state["live"] = live_ctx
 
@@ -1103,7 +1229,7 @@ def chat(
                 async_input = False
 
         if async_input:
-            import threading
+            import threading as _threading
             import queue
             from datetime import datetime as _dt
             from prompt_toolkit.shortcuts import print_formatted_text
@@ -1124,7 +1250,7 @@ def chat(
             pt_ansi_print = _pt_ansi_print
 
             pending: "queue.Queue[str | None]" = queue.Queue()
-            busy_lock = threading.Lock()
+            busy_lock = _threading.Lock()
             busy = {"running": False}
             stop_requested = {"stop": False}
 
@@ -1164,7 +1290,7 @@ def chat(
                         if stop_requested["stop"]:
                             return
 
-            worker = threading.Thread(target=_worker, daemon=True)
+            worker = _threading.Thread(target=_worker, daemon=True)
             worker.start()
 
             kb = KeyBindings()
@@ -1250,7 +1376,6 @@ def chat(
                     try:
                         live_ctx.stop()
                     except Exception:
-                        # stop() が途中で失敗した場合、カーソルを復元して端末を安定させる
                         try:
                             console.file.write("\x1b[?25h")
                             console.file.flush()
@@ -1258,13 +1383,11 @@ def chat(
                             pass
 
                 text = console.input(f"[bold {theme_config.status}]> [/bold {theme_config.status}]")
-
-                # 入力が終わったら Live を再開し、左ペインにもユーザー入力を残す
+                # 入力が終わったら左ペインにもユーザー入力を残す
                 if pane_state["enabled"] and live_ctx is not None:
                     try:
                         live_ctx.start()
                     except Exception:
-                        # Live の再開に失敗した場合、ペーンモードを無効にして通常モードに切り替え
                         pane_state["enabled"] = False
                         pane_state["live"] = None
                         console.print("[yellow]Todo pane disabled (display error). Chat continues normally.[/yellow]")
@@ -1316,7 +1439,8 @@ def chat(
                 clear_cancel_event(session_id)
 
             # stream 時は Live または runtime の標準出力で表示済み（ここで二重表示しない）
-            if reply and not stream:
+            # ただし、実際にchunkが出なかった場合は最終結果を表示する
+            if reply and (not stream or not stream_state.get("saw_orchestrator_chunk")):
                 console.print()
                 _print_result(console, reply, theme_name=ui_state.theme, verbose=verbose)
                 console.print()

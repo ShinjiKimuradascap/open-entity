@@ -58,8 +58,6 @@ except (ImportError, ValueError) as e:
             "Please set OPENAI_API_KEY or GEMINI_API_KEY environment variable."
         )
 
-from .peer import talk_to_peer, wake_up_peer, report_to_peer, check_peer_alive
-
 TOOL_MAP = {
     # ファイル操作
     "read_file": read_file,

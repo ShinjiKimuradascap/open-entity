@@ -1,42 +1,26 @@
 #!/usr/bin/env python3
-"""Moco CLI - Thin wrapper for cli_main"""
+"""Moco CLI - Thin wrapper for cli_main
+
+This module serves as the entry point for the CLI. It handles early
+environment initialization before delegating to cli_main.
+"""
 
 # ruff: noqa: E402
-import warnings
-# ========================================
-# 警告の抑制 (インポート前に設定)
-# ========================================
-# Python 3.9 EOL や SSL 関連の不要な警告を非表示にする
-warnings.filterwarnings("ignore", category=FutureWarning)
-try:
-    # urllib3 の NotOpenSSLWarning はインポート時に発生するため、
-    # 警告フィルターを先に設定しておく必要がある
-    warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL 1.1.1+.*")
-    # Google GenAI の thought_signature 警告を抑制
-    warnings.filterwarnings("ignore", message=".*non-text parts in the response.*")
-    warnings.filterwarnings("ignore", message=".*thought_signature.*")
-except Exception:
-    pass
 
 # ========================================
-# 重要: .env の読み込みは最初に行う必要がある
-# 他のモジュールがインポート時に環境変数を参照するため
+# Early initialization (must happen before other imports)
 # ========================================
-import os
-from pathlib import Path
-from dotenv import load_dotenv, find_dotenv
+# Import env_loader to setup warning filters and load .env
+from .utils.env_loader import load_dotenv_early, setup_warning_filters
 
-def _early_load_dotenv():
-    """モジュールインポート前に .env を読み込む"""
-    env_path = find_dotenv(usecwd=True) or (Path(__file__).parent.parent.parent / ".env")
-    if env_path:
-        load_dotenv(env_path)
+# Setup warning filters (before any other imports)
+setup_warning_filters()
 
-# 他のモジュールをインポートする前に環境変数を読み込む
-_early_load_dotenv()
+# Load .env before other modules are imported
+load_dotenv_early()
 
 # ========================================
-# メインロジックは cli_main からインポート
+# Main logic imported from cli_main
 # ========================================
 from .cli_main import (
     app,
