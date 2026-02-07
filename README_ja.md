@@ -2,17 +2,17 @@
   <video src="docs/assets/moco-intro.mp4" width="100%" autoplay loop muted playsinline></video>
 </div>
 
-> **M**ulti-agent **O**rchestration **CO**re
+> **Open Entity** — Lightweight AI Agent Orchestration
 
-[![GitHub stars](https://img.shields.io/github/stars/moco-ai/moco?style=social)](https://github.com/moco-ai/moco)
+[![GitHub stars](https://img.shields.io/github/stars/ShinjiKimuradascap/open-entity?style=social)](https://github.com/ShinjiKimuradascap/open-entity)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![GitHub issues](https://img.shields.io/github/issues/moco-ai/moco)](https://github.com/moco-ai/moco/issues)
-[![GitHub release](https://img.shields.io/github/v/release/moco-ai/moco)](https://github.com/moco-ai/moco/releases)
+[![GitHub issues](https://img.shields.io/github/issues/ShinjiKimuradascap/open-entity)](https://github.com/ShinjiKimuradascap/open-entity/issues)
+[![GitHub release](https://img.shields.io/github/v/release/ShinjiKimuradascap/open-entity)](https://github.com/ShinjiKimuradascap/open-entity/releases)
 
 **マルチプロバイダ対応・プロファイルベースの軽量AIエージェントオーケストレーションフレームワーク**
 
-MOCO は、複数のLLMプロバイダ（Gemini, OpenAI, OpenRouter, Z.ai）に対応し、ドメイン別のプロファイルで複数エージェントの振る舞いを柔軟にカスタマイズできるマルチエージェントオーケストレーションフレームワークです。
+Open Entity は、複数のLLMプロバイダ（Gemini, OpenAI, OpenRouter, Z.ai）に対応し、ドメイン別のプロファイルで複数エージェントの振る舞いを柔軟にカスタマイズできるマルチエージェントオーケストレーションフレームワークです。
 
 ## ✨ 特徴
 
@@ -25,8 +25,8 @@ MOCO は、複数のLLMプロバイダ（Gemini, OpenAI, OpenRouter, Z.ai）に�
 - **📝 自動コンテキスト圧縮**: トークン上限に近づくと古い会話を自動要約して圧縮
 
 ### CLI & UI
-- **💻 リッチCLI**: `moco run`, `moco chat` でターミナルから即座に実行
-- **🌐 Web UI**: `moco ui` でブラウザベースのチャットインターフェースを起動
+- **💻 リッチCLI**: `oe run`, `oe chat` でターミナルから即座に実行
+- **🌐 Web UI**: `oe ui` でブラウザベースのチャットインターフェースを起動
 - **📊 タスク管理**: バックグラウンドでタスクを実行、進捗確認、ログ表示
 - **📁 セッション管理**: 会話履歴の保存・復元、名前付きセッション
 
@@ -47,13 +47,13 @@ MOCO は、複数のLLMプロバイダ（Gemini, OpenAI, OpenRouter, Z.ai）に�
 ### 基本コマンド
 
 ```bash
-moco run "タスク"              # タスクを実行
-moco chat                      # 対話型チャット（ストリーミング）
-moco chat -s my-session        # 名前付きセッションで対話
-moco chat --new                # 新規セッションを強制開始
-moco ui                        # Web UI を起動
-moco version                   # バージョン表示
-moco list-profiles             # プロファイル一覧
+oe run "タスク"              # タスクを実行
+oe chat                      # 対話型チャット（ストリーミング）
+oe chat -s my-session        # 名前付きセッションで対話
+oe chat --new                # 新規セッションを強制開始
+oe ui                        # Web UI を起動
+oe version                   # バージョン表示
+oe list-profiles             # プロファイル一覧
 ```
 
 ### 対話モード内コマンド (Slash Commands)
@@ -67,48 +67,49 @@ moco list-profiles             # プロファイル一覧
 *   `/tree [depth]`: ディレクトリ構造を表示
 *   `/model [model_name]`: モデルの表示・変更
 *   `/profile [profile_name]`: プロファイルの変更
+*   `/heartbeat [trigger]`: ハートビート状態表示 / 手動実行
 *   `/clear`: 履歴をクリアしてセッション再開
 *   `/quit`: チャットを終了
 
 ### Web UI
 
 ```bash
-moco ui                        # http://0.0.0.0:8000 で起動
-moco ui -p 3000                # ポート指定
-moco ui -h 127.0.0.1           # ホスト指定
-moco ui -r                     # 開発モード（自動リロード）
+oe ui                        # http://0.0.0.0:8000 で起動
+oe ui -p 3000                # ポート指定
+oe ui -h 127.0.0.1           # ホスト指定
+oe ui -r                     # 開発モード（自動リロード）
 ```
 
 ### タスク管理（バックグラウンド実行）
 
 ```bash
-moco tasks run "タスク" -P zai -w /path/to/project  # バックグラウンド実行
-moco tasks list                # タスク一覧
-moco tasks status              # リアルタイムダッシュボード
-moco tasks logs <task_id>      # ログ表示（最大10KB）
-moco tasks logs <task_id> -a   # フルログ表示（--all）
-moco tasks cancel <task_id>    # キャンセル
+oe tasks run "タスク" -P zai -w /path/to/project  # バックグラウンド実行
+oe tasks list                # タスク一覧
+oe tasks status              # リアルタイムダッシュボード
+oe tasks logs <task_id>      # ログ表示（最大10KB）
+oe tasks logs <task_id> -a   # フルログ表示（--all）
+oe tasks cancel <task_id>    # キャンセル
 ```
 
 ### セッション管理
 
 ```bash
-moco sessions list             # セッション一覧
-moco sessions show <id>        # セッション詳細
-moco run "続き" --continue     # 直前のセッションを継続
-moco run "続き" -s my-session  # 名前付きセッションを継続
+oe sessions list             # セッション一覧
+oe sessions show <id>        # セッション詳細
+oe run "続き" --continue     # 直前のセッションを継続
+oe run "続き" -s my-session  # 名前付きセッションを継続
 ```
 
 ### スキル管理（Claude Skills互換）
 
 ```bash
-moco skills list               # インストール済みスキル一覧
-moco skills info               # 利用可能なレジストリ情報
-moco skills sync anthropics    # 公式スキルを同期
-moco skills sync community     # コミュニティスキルを同期
-moco skills search pdf         # スキル検索
-moco skills install <github>   # GitHubからインストール
-moco skills uninstall <name>   # アンインストール
+oe skills list               # インストール済みスキル一覧
+oe skills info               # 利用可能なレジストリ情報
+oe skills sync anthropics    # 公式スキルを同期
+oe skills sync community     # コミュニティスキルを同期
+oe skills search pdf         # スキル検索
+oe skills install <github>   # GitHubからインストール
+oe skills uninstall <name>   # アンインストール
 ```
 
 
@@ -181,10 +182,6 @@ oe heartbeat edit      # HEARTBEAT.md をエディタで開く
 5. 注意が必要 → アダプター経由でアラート送信（LINE, Telegram等）
 6. N回ごと → 振り返りを行い `HEARTBEAT.md` を書き換え
 
-### モバイル連携 (WhatsApp)
-
-`moco` は WhatsApp から操作可能です。詳細は `moco/src/moco/gateway/clients/whatsapp.py` を参照。
-
 ### オプション
 
 ```bash
@@ -205,9 +202,9 @@ oe heartbeat edit      # HEARTBEAT.md をエディタで開く
 
 **プロバイダ指定例:**
 ```bash
-moco run "タスク" --provider zai -m glm-4.7        # 別々に指定
-moco run "タスク" --provider zai/glm-4.7          # 一括指定（推奨）
-moco run "タスク" --provider openrouter -m claude-sonnet-4
+oe run "タスク" --provider zai -m glm-4.7        # 別々に指定
+oe run "タスク" --provider zai/glm-4.7          # 一括指定（推奨）
+oe run "タスク" --provider openrouter -m claude-sonnet-4
 ```
 
 ## 🚀 クイックスタート
@@ -216,8 +213,8 @@ moco run "タスク" --provider openrouter -m claude-sonnet-4
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/moco-ai/moco.git
-cd moco
+git clone https://github.com/ShinjiKimuradascap/open-entity.git
+cd open-entity
 
 # 依存関係をインストール
 pip install -e .
@@ -230,61 +227,37 @@ pipx install .
 
 ```bash
 # .env ファイルを作成
-cat << EOF > .env
-# Gemini（デフォルト）
-GEMINI_API_KEY=your-gemini-api-key
-
-# OpenAI（オプション）
-OPENAI_API_KEY=your-openai-api-key
-
-# OpenRouter（オプション）
-OPENROUTER_API_KEY=your-openrouter-api-key
-
-# Z.ai（オプション）
-ZAI_API_KEY=your-zai-api-key
-
-# Moonshot（オプション）
-MOONSHOT_API_KEY=your-moonshot-api-key
-
-# 統一プロバイダ設定（推奨）
-LLM_PROVIDER=moonshot
-MOONSHOT_MODEL=kimi-k2.5
-MOONSHOT_VISION_MODEL=kimi-k2.5
-
-# Embedding（フォールバック用）
-EMBEDDING_PROVIDER=gemini
-EMBEDDING_MODEL=gemini-embedding-001
-EOF
+cp .env.example .env
+# .env を編集して API キーを設定
 ```
 
 ### 最初の実行
+
+```bash
+# タスクを実行
+oe run "Hello, World! と表示するPythonスクリプトを作成して"
+
+# プロファイルを指定
+oe run "セキュリティ監査を実行" --profile security
+
+# プロバイダを切り替え
+oe run "コードをレビューして" --provider openai
+
+# 対話モード
+oe chat
+```
 
 ### 実行中の処理を停止する
 
 - Web UI でチャットを実行中に表示される「停止」ボタンを押すと、そのセッションのストリーミングレスポンスが中断されます。
 - バックエンドではセッションごとにキャンセル用のフラグを管理しており、「停止」ボタンは `POST /api/sessions/{session_id}/cancel` を呼び出してフラグを立てます。
-- CLI についても同じキャンセル機構（`moco.cancellation` モジュール）を利用する想定ですが、現時点では Esc キーなどによる対話的な中断 UI は未実装です。
-
-```bash
-# タスクを実行
-moco run "Hello, World! と表示するPythonスクリプトを作成して"
-
-# プロファイルを指定
-moco run "セキュリティ監査を実行" --profile security
-
-# プロバイダを切り替え
-moco run "コードをレビューして" --provider openai
-
-# 対話モード
-moco chat
-```
 
 ## 🏗️ アーキテクチャ
 
 ```mermaid
 graph TB
     subgraph "CLI / API"
-        CLI[moco CLI]
+        CLI[oe CLI]
         API[Python API]
     end
 
@@ -295,6 +268,7 @@ graph TB
         GUARD[Guardrails]
         TELEM[Telemetry]
         CKPT[CheckpointManager]
+        HB[HeartbeatRunner]
     end
 
     subgraph "Storage"
@@ -329,6 +303,7 @@ graph TB
     ORCH --> CKPT
     ORCH --> SESSION
     ORCH --> SEMANTIC
+    HB --> ORCH
 
     RUNTIME --> GEMINI
     RUNTIME --> OPENAI
@@ -339,9 +314,8 @@ graph TB
     RUNTIME --> MCP
 
     ORCH --> DEFAULT
+    ORCH --> CODE
     ORCH --> DEV
-    ORCH --> SEC
-    ORCH --> TAX
 ```
 
 ### コンポーネント説明
@@ -352,8 +326,9 @@ graph TB
 | **AgentRuntime** | 個々のエージェントの実行環境。LLM呼び出しとツール実行を担当 |
 | **ContextCompressor** | トークン数監視と自動圧縮。古い会話をLLMで要約 |
 | **Guardrails** | 入力/出力/ツール呼び出しの検証。危険パターンのブロック |
+| **HeartbeatRunner** | プロアクティブ監視。定期的にHEARTBEAT.mdを評価し、自己進化 |
 | **SessionLogger** | 会話履歴のSQLite永続化 |
-| **SemanticMemory** | FAISS + Gemini Embeddingsによる類似度検索 |
+| **SemanticMemory** | FAISS + Embeddingsによる類似度検索 |
 | **CheckpointManager** | 会話状態のスナップショット保存/復元 |
 
 ## ⚙️ 設定
@@ -362,27 +337,21 @@ graph TB
 
 | 変数名 | 説明 | デフォルト |
 |--------|------|-----------|
-| `GENAI_API_KEY` | Gemini API キー | - |
-| `GEMINI_API_KEY` | Gemini API キー (後方互換) | - |
+| `GEMINI_API_KEY` | Gemini API キー | - |
 | `OPENAI_API_KEY` | OpenAI API キー | - |
 | `OPENROUTER_API_KEY` | OpenRouter API キー | - |
 | `ZAI_API_KEY` | Z.ai API キー | - |
-| `MOCO_DEFAULT_PROVIDER` | デフォルトプロバイダを強制指定 | 自動選択 |
-| `GEMINI_MODEL` | Gemini モデル名 | `gemini-2.0-flash` |
-| `OPENAI_MODEL` | OpenAI モデル名 | `gpt-5.2-codex` |
-| `OPENROUTER_MODEL` | OpenRouter モデル名 | `google/gemini-3-flash-preview` |
-| `ZAI_MODEL` | Z.ai モデル名 | `glm-4.7` |
-| `SEMANTIC_DB_PATH` | セマンティックメモリDB | `data/semantic.db` |
-| `MEMORY_DB_PATH` | 学習メモリDB | `src/moco/data/memory.db` |
-
-**プロバイダ自動選択の優先順位**: 設定されたAPIキーに基づき、`zai` → `openrouter` → `gemini` の順で自動選択されます。
+| `MOONSHOT_API_KEY` | Moonshot API キー | - |
+| `LLM_PROVIDER` | デフォルトプロバイダを指定 | 自動選択 |
+| `EMBEDDING_PROVIDER` | Embeddingプロバイダ | gemini |
+| `EMBEDDING_MODEL` | Embeddingモデル | gemini-embedding-001 |
 
 ### プロファイル設定
 
-プロファイルは `moco/profiles/<name>/` ディレクトリで定義します：
+プロファイルは `profiles/<name>/` ディレクトリで定義します：
 
 ```
-moco/profiles/my-profile/
+profiles/my-profile/
 ├── profile.yaml      # プロファイル設定
 ├── agents/           # エージェント定義（Markdown）
 │   ├── orchestrator.md
@@ -391,43 +360,7 @@ moco/profiles/my-profile/
 │   └── custom_tool.py
 └── skills/           # スキル定義（Claude Skills互換）
     └── my-skill/
-        └── skill.md
-```
-
-### 組み込みプロファイル
-
-| プロファイル | エージェント数 | 説明 |
-|-------------|:--------------:|------|
-| **default** | 1 | 最小構成。シンプルなタスク向け |
-| **code** | 2 | 汎用コーディング。orchestrator + code-reviewer |
-| **development** | 14 | マルチエージェント開発チーム（下表参照） |
-
-#### development プロファイルのエージェント
-
-| エージェント | 役割 |
-|-------------|------|
-| orchestrator | タスクの振り分け、全体管理 |
-| backend-coder | バックエンド実装（Python, Node.js, Go等） |
-| frontend-coder | フロントエンド実装（React, Vue, Angular等） |
-| code-reviewer | コードレビュー、品質チェック |
-| architect | アーキテクチャ設計 |
-| api-designer | API設計（REST, GraphQL） |
-| schema-designer | データベーススキーマ設計 |
-| unit-tester | ユニットテスト作成 |
-| integration-tester | 統合テスト作成 |
-| test-strategist | テスト戦略策定 |
-| security-reviewer | セキュリティレビュー |
-| performance-reviewer | パフォーマンスレビュー |
-| refactorer | リファクタリング |
-| doc-writer | ドキュメント作成 |
-
-```bash
-# プロファイル一覧表示
-moco list-profiles
-
-# 使用例
-moco run "APIを実装して" --profile development
-moco chat --profile code
+        └── SKILL.md
 ```
 
 ### エージェント組織パターン
@@ -445,122 +378,24 @@ orchestrator
 └── @code-reviewer  → コードレビュー
 ```
 
-```python
-# orchestrator.md での記述例
-delegate_to_agent(agent_name="backend-coder", task="API を実装して")
-```
-
-#### 2. 多層階層型（Multi-level Hierarchy）
-
-サブエージェントがさらにサブエージェントに委譲。
-
-```
-orchestrator
-└── @chief-architect
-    ├── @architect-team-a → チームAの設計
-    └── @architect-team-b → チームBの設計
-```
-
-```yaml
-# chief-architect.md
-tools:
-  - delegate_to_agent  # サブエージェントにも委譲権限を付与
-```
-
-#### 3. 並列型（Parallel）
+#### 2. 並列型（Parallel）
 
 複数のエージェントが同時に独立して作業。
 
 ```markdown
-# orchestrator.md で複数の @メンションを同時に書く
 @backend-coder APIを実装して
 @frontend-coder UIを実装して
 @unit-tester テストを作成して
 ```
 
-MOCO は自動的に並列実行し、すべての結果を集約します。
+Open Entity は自動的に並列実行し、すべての結果を集約します。
 
-#### 4. パイプライン型（Sequential）
+#### 3. パイプライン型（Sequential）
 
 処理結果を次のエージェントに渡すチェーン。
 
 ```
 @api-designer → @backend-coder → @unit-tester → @code-reviewer
-```
-
-```markdown
-# orchestrator.md での記述例
-1. @api-designer に API 設計を依頼
-2. 設計結果を @backend-coder に渡して実装を依頼
-3. 実装結果を @unit-tester に渡してテスト作成を依頼
-4. すべてを @code-reviewer に渡してレビューを依頼
-```
-
-#### 5. ピアレビュー型（Peer Review）
-
-サブエージェント同士が互いの成果物をレビュー。
-
-```yaml
-# backend-coder.md
-tools:
-  - delegate_to_agent
-
-# プロンプト内で
-実装完了後、@frontend-coder にAPI連携部分のレビューを依頼
-```
-
-#### 6. 合意形成型（Consensus）
-
-複数の専門家が議論して最適解を導出。
-
-```markdown
-# orchestrator.md
-以下の専門家に意見を求め、総合判断：
-@security-reviewer セキュリティ観点
-@performance-reviewer パフォーマンス観点
-@architect 設計観点
-
-3つの意見を統合して最終決定
-```
-
-#### 7. 競争型（Competition）
-
-複数のアプローチを同時に試し、最良を選択。
-
-```markdown
-# orchestrator.md
-3つのアプローチで同時に実装：
-@approach-simple シンプルな実装
-@approach-perf パフォーマンス重視
-@approach-flex 拡張性重視
-
-結果を比較して最良の実装を採用
-```
-
-#### profile.yaml
-
-```yaml
-name: my-profile
-description: カスタムプロファイルの説明
-include_base_tools: true  # ベースツールを含めるか
-```
-
-#### エージェント定義（Markdown）
-
-```markdown
----
-description: エージェントの説明
-mode: primary  # primary または chat
-tools:
-  read_file: true
-  write_file: true
-  custom_tool: true
----
-
-あなたは専門家エージェントです。
-ユーザーの質問に答えてください。
-
-現在時刻: {{CURRENT_DATETIME}}
 ```
 
 ## 🔧 ツール一覧
@@ -575,26 +410,11 @@ tools:
 | `execute_bash` | Bashコマンドを実行 | `bash` |
 | `list_dir` | ディレクトリ一覧 | - |
 | `glob_search` | Globパターン検索 | - |
-| `tree` | ディレクトリツリー表示 | - |
-| `file_info` | ファイル情報取得 | - |
 | `grep` | 正規表現検索 | - |
-| `ripgrep` | 高速grep（rg） | - |
-| `find_definition` | 定義を検索 | - |
-| `find_references` | 参照を検索 | - |
-| `codebase_search` | セマンティックコード検索 | - |
 | `websearch` | Web検索 | - |
 | `webfetch` | Webページ取得 | - |
 | `todowrite` | TODOリスト書き込み | - |
 | `todoread` | TODOリスト読み込み | - |
-
-### Git ツール
-
-| ツール名 | 説明 |
-|----------|------|
-| `git_status` | Git ステータス表示 |
-| `git_diff` | 差分表示 |
-| `git_commit` | AI生成コミットメッセージでコミット |
-| `create_pr` | GitHub PR作成 |
 
 ### スキルツール
 
@@ -604,194 +424,9 @@ tools:
 | `load_skill` | スキルをロードして知識を使用 |
 | `list_loaded_skills` | ロード済みスキル一覧 |
 
-### プロセス管理ツール
-
-| ツール名 | 説明 |
-|----------|------|
-| `start_background` | バックグラウンドプロセス開始 |
-| `stop_process` | プロセス停止 |
-| `list_processes` | プロセス一覧 |
-| `send_input` | プロセスに入力送信 |
-| `wait_for_pattern` | 出力パターンを待機 |
-
-### プロファイル固有ツール
-
-各プロファイルは独自のツールを定義できます：
-
-- **security**: `network_scan`, `cve_lookup`, `incident`, `threat_intel` など
-- **tax**: `tax_calculator`, `tax_law_search`, `mortgage_calculator` など
-- **development**: コード生成・レビュー用ツール
-
-## 📖 使用例
-
-### Python API
-
-```python
-from moco.core.orchestrator import Orchestrator
-from moco.core.runtime import LLMProvider
-
-# オーケストレーターの初期化
-orchestrator = Orchestrator(
-    profile="development",
-    provider=LLMProvider.GEMINI,
-    stream=True,
-    verbose=False
-)
-
-# セッション作成
-session_id = orchestrator.create_session(title="開発タスク")
-
-# タスク実行
-result = orchestrator.run_sync(
-    "README.mdを作成してください",
-    session_id=session_id
-)
-print(result)
-
-# セッション継続
-result = orchestrator.run_sync(
-    "テストも追加して",
-    session_id=session_id
-)
-```
-
-### ガードレールの設定
-
-```python
-from moco.core.guardrails import Guardrails, GuardrailResult, GuardrailAction
-
-# カスタムバリデーターを定義
-def block_sensitive_data(text: str) -> GuardrailResult:
-    if "password" in text.lower():
-        return GuardrailResult(
-            action=GuardrailAction.BLOCK,
-            message="パスワード情報は出力できません"
-        )
-    return GuardrailResult(action=GuardrailAction.ALLOW)
-
-# ガードレールを設定
-guardrails = Guardrails(
-    max_input_length=50000,
-    max_tool_calls_per_turn=10,
-    enable_dangerous_pattern_check=True
-)
-guardrails.add_output_validator(block_sensitive_data)
-
-orchestrator = Orchestrator(
-    profile="default",
-    guardrails=guardrails
-)
-```
-
-### MCP サーバーとの連携
-
-```python
-from moco.core.mcp_client import MCPClient, MCPConfig, MCPServerConfig
-
-# MCP設定
-mcp_config = MCPConfig(
-    enabled=True,
-    servers=[
-        MCPServerConfig(
-            name="filesystem",
-            command="npx",
-            args=["-y", "@anthropic/mcp-server-filesystem", "/path/to/dir"]
-        )
-    ]
-)
-
-# MCPクライアントを初期化
-mcp_client = MCPClient(mcp_config)
-
-# オーケストレーターに渡す
-orchestrator = Orchestrator(
-    profile="default",
-    mcp_client=mcp_client
-)
-```
-
-## 🗂️ ディレクトリ構造
-
-```
-moco/
-├── cli.py                 # CLIエントリポイント
-├── core/
-│   ├── orchestrator.py    # メインオーケストレーター
-│   ├── runtime.py         # エージェント実行環境
-│   ├── context_compressor.py  # コンテキスト圧縮
-│   ├── guardrails.py      # ガードレール
-│   ├── checkpoint.py      # チェックポイント管理
-│   ├── mcp_client.py      # MCPクライアント
-│   └── telemetry.py       # テレメトリ
-├── storage/
-│   ├── session_logger.py  # セッション管理
-│   └── semantic_memory.py # セマンティックメモリ
-├── tools/
-│   ├── base.py            # 基本ツール
-│   ├── filesystem.py      # ファイルシステム操作
-│   ├── search.py          # 検索ツール
-│   ├── web.py             # Web関連ツール
-│   └── discovery.py       # ツール/エージェント検出
-├── profiles/
-│   ├── default/           # 最小構成（1エージェント）
-│   ├── code/              # 汎用コーディング（2エージェント）
-│   └── development/       # マルチエージェント開発チーム（14エージェント）
-└── ui/
-    ├── console.py         # コンソールUI
-    └── theme.py           # テーマ設定
-```
-
-## 🧪 開発
-
-### 開発環境のセットアップ
-
-```bash
-# 開発用依存関係をインストール
-pip install -e ".[dev]"
-
-# テスト実行
-pytest
-
-# 型チェック
-mypy moco/
-
-# リンター
-ruff check moco/
-```
-
-### 新しいプロファイルの作成
-
-```bash
-# プロファイルディレクトリを作成
-mkdir -p moco/profiles/my-profile/{agents,tools,skills}
-
-# profile.yaml を作成
-cat << EOF > moco/profiles/my-profile/profile.yaml
-name: my-profile
-description: 私のカスタムプロファイル
-include_base_tools: true
-EOF
-
-# orchestrator.md を作成
-cat << EOF > moco/profiles/my-profile/agents/orchestrator.md
----
-description: カスタムオーケストレーター
-mode: primary
-tools:
-  read_file: true
-  write_file: true
----
-
-あなたはカスタムエージェントです。
-EOF
-
-# 使用
-moco run "タスク" --profile my-profile
-```
-
 ## 🧠 学習メモリ機能
 
-MOCO は会話から知識を自動的に学習し、次回の対話で活用します。
+Open Entity は会話から知識を自動的に学習し、次回の対話で活用します。
 
 ### 機能概要
 
@@ -805,51 +440,15 @@ MOCO は会話から知識を自動的に学習し、次回の対話で活用し
 
 ```bash
 # 情報を教える
-moco run "経費精算は田中さんに聞いてね"
+oe run "経費精算は田中さんに聞いてね"
 
 # 後で質問すると、学習した内容を活用
-moco run "経費精算どこに聞けばいい？"
+oe run "経費精算どこに聞けばいい？"
 # → 「田中さんに聞いてください」と回答
 ```
-
-### データベース
-
-学習データは SQLite に保存されます（デフォルト: `src/moco/data/memory.db`）
-
-```bash
-# 記憶の確認
-sqlite3 src/moco/data/memory.db "SELECT content FROM memories"
-
-# ツール実行ログの確認
-sqlite3 src/moco/data/memory.db "SELECT tool_name, success FROM task_run_events"
-```
-
-### テーブル構造
-
-- **memories**: 学習した知識（content, type, keywords, embedding）
-- **task_run_events**: ツール実行ログ（run_id, tool_name, params, result, success）
-- **relations**: エンティティ間の関係性（NetworkX 連携用、オプション）
 
 ## 📄 ライセンス
 
 MIT License
 
-Copyright (c) 2024-2026 Moco Team
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Copyright (c) 2024-2026 Open Entity Team
