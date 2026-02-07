@@ -464,7 +464,29 @@ def on_message(c: NewClient, ev: MessageEv):
     threading.Thread(target=call_moco_thread, daemon=True).start()
 
 
+def _ensure_api_token():
+    """MOCO_API_TOKEN が未設定なら自動生成して .env に書き込む"""
+    global MOCO_API_TOKEN
+    if MOCO_API_TOKEN:
+        return
+    import secrets as _secrets
+    from dotenv import find_dotenv, set_key
+    token = _secrets.token_urlsafe(32)
+    env_path = find_dotenv(usecwd=True)
+    if not env_path:
+        env_path = os.path.join(os.getcwd(), ".env")
+        open(env_path, "a").close()
+    set_key(env_path, "MOCO_API_TOKEN", token)
+    os.environ["MOCO_API_TOKEN"] = token
+    MOCO_API_TOKEN = token
+    print(f"🔑 APIトークンを自動生成しました: {token}")
+    print(f"   保存先: {env_path}")
+    print("   ※ moco ui を再起動して同じトークンを読み込んでください。\n")
+
+
 def main():
+    _ensure_api_token()
+
     print("""
 ╔════════════════════════════════════════════════════════════════╗
 ║              WhatsApp ↔ moco 連携                              ║
@@ -483,7 +505,13 @@ def main():
 ║    /help            - ヘルプ表示                               ║
 ╚════════════════════════════════════════════════════════════════╝
     """)
-    
+
+    if MOCO_API_TOKEN:
+        print(f"🔐 APIトークン: {MOCO_API_TOKEN[:8]}...")
+    else:
+        print("⚠️  APIトークン未設定（認証なしで接続します）")
+    print()
+
     try:
         print("🚀 WhatsApp 接続開始...")
         print("   初回はQRコードが表示されます。スマホでスキャンしてください。")

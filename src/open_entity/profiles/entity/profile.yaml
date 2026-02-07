@@ -9,7 +9,7 @@ embeddings: on
 # Heartbeat - プロアクティブ監視機構
 heartbeat:
   enabled: true
-  interval: 15m
+  interval: 5m
   active_hours: "09:00-22:00"
   timezone: "Asia/Tokyo"
   ack_token: "HEARTBEAT_OK"

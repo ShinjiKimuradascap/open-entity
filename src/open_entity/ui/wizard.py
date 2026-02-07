@@ -1,4 +1,5 @@
 import os
+import secrets
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -50,8 +51,22 @@ class SetupWizard:
         )
         self.env.update("LLM_PROVIDER", provider)
 
-        # Step 3: API Key (Optional check)
-        # 簡易的にチェックが必要な場合はここに追加可能だが、一旦基本のみ
+        # Step 3: API Token (auto-generate)
+        console.print("\n[bold green]Step 3: API トークンの生成[/bold green]")
+        existing_token = os.environ.get("MOCO_API_TOKEN")
+        if existing_token:
+            console.print(f"既存のトークンが設定済みです: [dim]{existing_token[:8]}...[/dim]")
+            if Confirm.ask("新しいトークンを再生成しますか？", default=False):
+                token = secrets.token_urlsafe(32)
+                self.env.update("MOCO_API_TOKEN", token)
+                console.print(f"新しいトークン: [bold yellow]{token}[/bold yellow]")
+            else:
+                console.print("既存のトークンをそのまま使用します。")
+        else:
+            token = secrets.token_urlsafe(32)
+            self.env.update("MOCO_API_TOKEN", token)
+            console.print(f"APIトークンを自動生成しました: [bold yellow]{token}[/bold yellow]")
+            console.print("[dim]WhatsApp等の外部連携で /api/chat を呼ぶ際に Bearer トークンとして使用されます。[/dim]")
 
         console.print()
         console.print(Panel.fit(
