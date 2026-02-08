@@ -38,6 +38,26 @@ def load_dotenv_early():
         pass
 
 
+def init_environment(override=False):
+    """Initialize environment variables.
+
+    Args:
+        override: If True, override existing environment variables.
+    """
+    try:
+        from dotenv import load_dotenv
+
+        env_path = find_dotenv()
+        if env_path:
+            load_dotenv(env_path, override=override)
+        else:
+            package_env = Path(__file__).parent.parent.parent.parent / ".env"
+            if package_env.exists():
+                load_dotenv(str(package_env), override=override)
+    except ImportError:
+        pass
+
+
 def setup_warning_filters():
     """Setup warning filters to reduce noise during startup."""
     # Suppress common warnings that clutter output
