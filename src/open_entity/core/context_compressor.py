@@ -10,6 +10,7 @@
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Tuple, Optional
 
 logger = logging.getLogger(__name__)
@@ -166,7 +167,7 @@ class ContextCompressor:
 ## 要約"""
 
         from .llm_provider import generate_text, get_analyzer_model
-        provider_name = provider or "openrouter"
+        provider_name = provider or os.environ.get("LLM_PROVIDER", "openrouter")
         model_name = self.summary_model or get_analyzer_model(provider_name)
         try:
             return generate_text(
@@ -187,7 +188,7 @@ class ContextCompressor:
     def compress_if_needed(
         self,
         messages: List[Dict[str, Any]],
-        provider: str = "openrouter"
+        provider: str = None
     ) -> Tuple[List[Dict[str, Any]], bool]:
         """
         必要に応じてメッセージリストを圧縮する。

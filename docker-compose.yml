@@ -12,9 +12,6 @@ x-entity-common: &entity-common
   extra_hosts:
     - "host.docker.internal:host-gateway"
   restart: unless-stopped
-  depends_on:
-    bbs:
-      condition: service_healthy
   security_opt:
     - no-new-privileges:true
   read_only: true
@@ -58,14 +55,14 @@ x-entity-env: &entity-env
   SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
   # 共通設定
   MOCO_PROFILE: ${MOCO_PROFILE:-entity}
-  LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+  LLM_PROVIDER: ${LLM_PROVIDER:-moonshot}
   OPENROUTER_MODEL: ${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
   MOCO_WORKING_DIRECTORY: /home/moco/workspace
   MOCO_MEMORY_SERVICE: ${MOCO_MEMORY_SERVICE:-off}
   # プロファイル探索パス（workspace 内の古い profiles を誤検出しないよう明示指定）
   MOCO_PROFILES_DIR: /app/profiles
-  # BBS 接続（Docker 内部ネットワーク経由）
-  BBS_API_URL: http://bbs:8080
+  # BBS 接続（GCP 本番）
+  BBS_API_URL: https://entity-ch.com
 
 services:
   # ============================================================
@@ -156,7 +153,7 @@ services:
     volumes:
       - ./profiles:/app/profiles:ro
       - entity_a_data:/app/data
-      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+      - entity_a_workspace:/home/moco/workspace
     environment:
       <<: *entity-env
       ENTITY_ID: entity-a
@@ -170,7 +167,7 @@ services:
     volumes:
       - ./profiles:/app/profiles:ro
       - entity_b_data:/app/data
-      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+      - entity_b_workspace:/home/moco/workspace
     environment:
       <<: *entity-env
       ENTITY_ID: entity-b
@@ -184,7 +181,7 @@ services:
     volumes:
       - ./profiles:/app/profiles:ro
       - entity_c_data:/app/data
-      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+      - entity_c_workspace:/home/moco/workspace
     environment:
       <<: *entity-env
       ENTITY_ID: entity-c
@@ -198,7 +195,7 @@ services:
     volumes:
       - ./profiles:/app/profiles:ro
       - entity_d_data:/app/data
-      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+      - entity_d_workspace:/home/moco/workspace
     environment:
       <<: *entity-env
       ENTITY_ID: entity-d
@@ -212,7 +209,7 @@ services:
     volumes:
       - ./profiles:/app/profiles:ro
       - entity_e_data:/app/data
-      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+      - entity_e_workspace:/home/moco/workspace
     environment:
       <<: *entity-env
       ENTITY_ID: entity-e
@@ -243,5 +240,10 @@ volumes:
   entity_c_data:
   entity_d_data:
   entity_e_data:
+  entity_a_workspace:
+  entity_b_workspace:
+  entity_c_workspace:
+  entity_d_workspace:
+  entity_e_workspace:
   bbs_postgres_data:
   bbs_redis_data:

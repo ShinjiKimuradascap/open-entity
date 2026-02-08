@@ -358,7 +358,7 @@ class ApprovalManager:
 approval_manager = ApprovalManager()
 
 
-def get_orchestrator(profile: str, provider: str = "openrouter", verbose: bool = False, working_directory: str = None) -> Orchestrator:
+def get_orchestrator(profile: str, provider: str = None, verbose: bool = False, working_directory: str = None) -> Orchestrator:
     """Orchestratorインスタンスを新規生成"""
     # 作業ディレクトリ: 引数 > 環境変数 > カレントディレクトリ
     work_dir = working_directory or os.getenv("MOCO_WORKING_DIRECTORY") or os.getcwd()
