@@ -1466,16 +1466,20 @@ def ui(
     host: str = typer.Option("0.0.0.0", "--host", "-h", help="ホストアドレス"),
     port: int = typer.Option(8000, "--port", "-p", help="ポート番号"),
     reload: bool = typer.Option(False, "--reload", "-r", help="開発モード（自動リロード）"),
-    profile: str = typer.Option(None, "--profile", "-P", help="使用するプロファイル (例: entity)"),
+    profile: str = typer.Option(None, "--profile", help="使用するプロファイル (例: entity)"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-P", help="LLMプロバイダ (gemini/openai/openrouter/zai/moonshot/ollama) - 省略時は自動選択"),
 ):
     """Web UI を起動"""
     import uvicorn
     from rich.console import Console
-    
+
     # プロファイルが指定された場合、環境変数を設定
     if profile:
         os.environ["MOCO_PROFILE"] = profile
-    
+    # プロバイダが指定された場合、環境変数を設定
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+
     console = Console()
     active_profile = os.environ.get("MOCO_PROFILE", "default")
     console.print(f"\n🚀 [bold cyan]Moco Web UI[/bold cyan] starting... (profile: {active_profile})")

@@ -111,11 +111,17 @@ async def startup_event():
 
         default_profile = os.getenv("MOCO_PROFILE", "entity")
         profile_config = load_profile_config(default_profile)
+        # heartbeat 設定がなければ entity プロファイルからフォールバック
+        if "heartbeat" not in profile_config and default_profile != "entity":
+            entity_config = load_profile_config("entity")
+            profile_config["heartbeat"] = entity_config.get("heartbeat", {})
         hb_config = HeartbeatConfig(profile_config)
 
         if hb_config.enabled:
             def _make_orchestrator():
-                return get_orchestrator(default_profile)
+                from open_entity.core.llm_provider import get_available_provider
+                provider = get_available_provider()
+                return get_orchestrator(default_profile, provider=provider)
 
             async def _heartbeat_notify(response: str, beat_count: int):
                 """ハートビート通知をアダプター経由で送信"""
