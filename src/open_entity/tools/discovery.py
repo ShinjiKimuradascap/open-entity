@@ -244,55 +244,10 @@ def discover_tools(profile: str, additional_mcp: Optional[List[Any]] = None) -> 
         except Exception as e:
             logger.error(f"Error loading MCP tools: {e}")
 
-    # 4. Skills のロジック型ツールを読み込む
-    from .skill_loader import SkillLoader
-    from .skill_tools import execute_skill
-
-    loader = SkillLoader(profile=profile)
-    skills = loader.load_skills()
-
-    def _find_original_function(skill_path: str, tool_name: str):
-        """スキルの index.py から元の関数を取得（シグネチャ付与用）"""
-        index_py = os.path.join(skill_path, "index.py")
-        if not os.path.exists(index_py):
-            return None
-        cache_key = f"_skill_sig_{os.path.basename(skill_path)}"
-        try:
-            if cache_key in sys.modules:
-                mod = sys.modules[cache_key]
-            else:
-                spec = importlib.util.spec_from_file_location(cache_key, index_py)
-                if not spec or not spec.loader:
-                    return None
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules[cache_key] = mod
-                spec.loader.exec_module(mod)
-            return getattr(mod, tool_name, None)
-        except Exception:
-            return None
-
-    def _wrap_declared_skill_tool(skill_name: str, tool_name: str, description: str = "", skill_path: str = ""):
-        def _tool(**kwargs):
-            return execute_skill(skill_name=skill_name, tool_name=tool_name, arguments=kwargs)
-        _tool.__name__ = tool_name
-        _tool.__doc__ = description or f"Skill tool: {skill_name}.{tool_name}"
-        # 元の関数からシグネチャ・型情報をコピー（ツール定義の引数スキーマ生成に必要）
-        if skill_path:
-            original_func = _find_original_function(skill_path, tool_name)
-            if original_func:
-                _tool.__signature__ = inspect.signature(original_func)
-                _tool.__annotations__ = getattr(original_func, '__annotations__', {})
-                if original_func.__doc__:
-                    _tool.__doc__ = original_func.__doc__
-        return _tool
-
-    for skill in skills.values():
-        if skill.is_logic and skill.exposed_tools:
-            for tool_name, tool_def in skill.exposed_tools.items():
-                desc = tool_def.get("description", "")
-                tool_map[tool_name] = _wrap_declared_skill_tool(
-                    skill.name, tool_name, desc, skill_path=skill.path
-                )
+    # 4. スキルツールは tool_map に入れない（オンデマンドロード）
+    # スキルのツールは load_skill() / matches_input() でマッチした時に
+    # runtime._inject_skill_tools() で動的に追加される。
+    # これによりトークン消費を削減し、Claude Code と同じ設計にする。
 
     return tool_map
 

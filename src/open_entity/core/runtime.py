@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 import asyncio
 import os
+import sys
 import json
 import inspect
 import hashlib
@@ -1349,25 +1350,8 @@ class AgentRuntime:
         "analyze_image", "generate_image",
         # モバイル連携
         "send_file_to_mobile",
-        # スキル化済みツール（execute_skill 経由で利用可能、直接ツールとしては不要）
-        # browser-tools (28)
-        "browser_open", "browser_attach", "browser_snapshot", "browser_click",
-        "browser_fill", "browser_type", "browser_press", "browser_hover",
-        "browser_select", "browser_get_text", "browser_get_value", "browser_get_url",
-        "browser_get_title", "browser_is_visible", "browser_is_enabled", "browser_wait",
-        "browser_screenshot", "browser_scroll", "browser_back", "browser_forward",
-        "browser_reload", "browser_eval", "browser_close", "browser_console",
-        "browser_errors", "browser_tab", "browser_set_viewport", "browser_set_device",
-        # amp-tools (12)
-        "amp_cli", "amp_send", "amp_history", "amp_discover",
-        "amp_identity_list", "amp_identity_show", "amp_identity_create",
-        "amp_identity_import", "amp_identity_use", "amp_identity_delete",
-        "amp_identity_export", "amp_identity_reset",
-        # peer-tools (5)
-        "talk_to_peer", "wake_up_peer", "report_to_peer",
-        "check_peer_alive", "restart_peer",
-        # stats-tools (3)
-        "get_agent_stats", "get_session_stats", "set_current_session",
+        # スキルツール (browser 28, AMP 12, peer 5, stats 3) は tool_map に入らない。
+        # _inject_skill_tools() でオンデマンド追加されるため、ブロックリスト不要。
         # 重複・冗長ツール（コアツールで代替可能）
         "execute_bash_in_sandbox",
         "build_code_index", "build_doc_index", "update_code_index", "update_doc_index",
@@ -1438,20 +1422,56 @@ class AgentRuntime:
                 if self.verbose:
                     print(f"Warning: Tool '{tool_name}' not found in provided tool_map")
 
+    @staticmethod
+    def _load_skill_function(skill_path: str, tool_name: str):
+        """スキルの index.py から元の関数を取得する。"""
+        import importlib.util
+        index_py = os.path.join(skill_path, "index.py")
+        if not os.path.exists(index_py):
+            return None
+        cache_key = f"_skill_mod_{os.path.basename(skill_path)}"
+        try:
+            if cache_key in sys.modules:
+                mod = sys.modules[cache_key]
+            else:
+                spec = importlib.util.spec_from_file_location(cache_key, index_py)
+                if not spec or not spec.loader:
+                    return None
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[cache_key] = mod
+                spec.loader.exec_module(mod)
+            return getattr(mod, tool_name, None)
+        except Exception:
+            return None
+
     def _inject_skill_tools(self, skills: List[SkillConfig]):
         """スキルのツールをネイティブなツール定義として動的に追加（Claude Code方式）。
 
-        スキルがマッチした時にオーケストレーターから呼ばれる。
-        ブロックリストで除外されていたスキルツールを available_tools に追加し、
-        LLMがスキルのツールを直接呼び出せるようにする。
+        スキルの index.py から元の関数を取得し、execute_skill 経由のラッパーを作成して
+        available_tools / openai_tools / tool_declarations に追加する。
+        tool_map には入れず、必要な時だけオンデマンドで追加する。
         """
+        from ..tools.skill_tools import execute_skill
         for skill in skills:
             for tool_name in (skill.allowed_tools or []):
-                if tool_name in self.tool_map and tool_name not in self.available_tools:
-                    func = self.tool_map[tool_name]
-                    self.available_tools[tool_name] = func
-                    self.tool_declarations.append(_func_to_declaration(func, tool_name))
-                    self.openai_tools.append(_func_to_openai_tool(func, tool_name))
+                if tool_name in self.available_tools:
+                    continue  # 既に追加済み
+                # 元の関数を取得（シグネチャ用）
+                original_func = self._load_skill_function(skill.path, tool_name)
+                if not original_func:
+                    continue
+                # execute_skill 経由のラッパーを作成
+                _sn, _tn = skill.name, tool_name
+                def _wrapper(_skill_name=_sn, _tool_name=_tn, **kwargs):
+                    return execute_skill(skill_name=_skill_name, tool_name=_tool_name, arguments=kwargs)
+                _wrapper.__name__ = tool_name
+                _wrapper.__doc__ = original_func.__doc__ or f"Skill tool: {skill.name}.{tool_name}"
+                _wrapper.__signature__ = inspect.signature(original_func)
+                _wrapper.__annotations__ = getattr(original_func, '__annotations__', {})
+                # 登録
+                self.available_tools[tool_name] = _wrapper
+                self.tool_declarations.append(_func_to_declaration(_wrapper, tool_name))
+                self.openai_tools.append(_func_to_openai_tool(_wrapper, tool_name))
 
     def _on_skill_loaded(self):
         """load_skill 実行後のフック: ロードされたスキルのツール定義を動的に追加する。
