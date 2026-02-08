@@ -1,147 +1,219 @@
+# ============================================================
+# Open Entity - 5エージェント + BBS 構成
+# ============================================================
+# 全起動:      docker compose up -d
+# BBS のみ:    docker compose up -d bbs bbs-db bbs-redis bbs-worker
+# Slack 連携:  docker compose --profile slack up -d
+# ============================================================
+
+# ---- 共通設定 (YAML anchor) ----
+x-entity-common: &entity-common
+  build: .
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  restart: unless-stopped
+  depends_on:
+    bbs:
+      condition: service_healthy
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp:size=100M,mode=1777
+    - /var/tmp:size=50M,mode=1777
+    - /home/moco/.moco:size=50M,mode=1777
+  cap_drop:
+    - ALL
+  cap_add:
+    - CHOWN
+    - SETUID
+    - SETGID
+  deploy:
+    resources:
+      limits:
+        cpus: "2"
+        memory: 4G
+      reservations:
+        cpus: "0.5"
+        memory: 512M
+
+x-entity-env: &entity-env
+  # LLM API キー
+  GEMINI_API_KEY: ${GEMINI_API_KEY}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  MOONSHOT_API_KEY: ${MOONSHOT_API_KEY}
+  # Ollama
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1}
+  OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.2}
+  # Slack
+  SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+  SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+  # 共通設定
+  MOCO_PROFILE: ${MOCO_PROFILE:-entity}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+  OPENROUTER_MODEL: ${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
+  MOCO_WORKING_DIRECTORY: /home/moco/workspace
+  MOCO_MEMORY_SERVICE: ${MOCO_MEMORY_SERVICE:-off}
+  # BBS 接続（Docker 内部ネットワーク経由）
+  BBS_API_URL: http://bbs:8080
+
 services:
+  # ============================================================
+  # BBS (entity_bbs) - エージェント間掲示板
+  # ============================================================
+  bbs:
+    build:
+      context: ${ENTITY_BBS_PATH:-../entity_bbs}
+      dockerfile: Dockerfile
+    container_name: entity-bbs-api
+    ports:
+      - "8090:8080"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://entity_bbs:${BBS_POSTGRES_PASSWORD:-changeme}@bbs-db:5432/entity_bbs
+      - REDIS_URL=redis://bbs-redis:6379/0
+      - SECRET_KEY=${BBS_SECRET_KEY:-dev-secret-key}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    depends_on:
+      bbs-db:
+        condition: service_healthy
+      bbs-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  bbs-db:
+    image: postgres:16-alpine
+    container_name: entity-bbs-db
+    environment:
+      - POSTGRES_USER=entity_bbs
+      - POSTGRES_PASSWORD=${BBS_POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=entity_bbs
+    volumes:
+      - bbs_postgres_data:/var/lib/postgresql/data
+      - ${ENTITY_BBS_PATH:-../entity_bbs}/scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U entity_bbs -d entity_bbs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bbs-redis:
+    image: redis:7-alpine
+    container_name: entity-bbs-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - bbs_redis_data:/data
+    ports:
+      - "6380:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bbs-worker:
+    build:
+      context: ${ENTITY_BBS_PATH:-../entity_bbs}
+      dockerfile: Dockerfile
+    container_name: entity-bbs-worker
+    command: ["python", "-m", "entity_bbs.worker"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://entity_bbs:${BBS_POSTGRES_PASSWORD:-changeme}@bbs-db:5432/entity_bbs
+      - REDIS_URL=redis://bbs-redis:6379/0
+    depends_on:
+      - bbs-db
+      - bbs-redis
+    restart: unless-stopped
+
+  # ============================================================
+  # エージェント 5体
+  # ============================================================
   entity-a:
-    build: .
+    <<: *entity-common
     container_name: entity-a
     ports:
       - "8001:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
-      # プロファイル（読み取り専用）
       - ./profiles:/app/profiles:ro
-      # データ永続化
       - entity_a_data:/app/data
-      # ワークスペース（AIの作業領域 - ここだけ書き込み可能）
       - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
     environment:
-      # エンティティ識別
-      - ENTITY_ID=entity-a
-      - ENTITY_PORT=8001
-      - PEER_PORT=8002
-      - PEER_URL=http://entity-b:8000
-      # LLM API キー（.envファイルから読み込み）
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
-      # Ollama (ホストのOllamaに接続)
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
-      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.2}
-      # Slack 連携
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
-      # その他設定
-      - MOCO_PROFILE=${MOCO_PROFILE:-entity}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
-      # サンドボックス：作業ディレクトリを制限
-      - MOCO_WORKING_DIRECTORY=/home/moco/workspace
-      # Memory Service
-      - MOCO_MEMORY_SERVICE=${MOCO_MEMORY_SERVICE:-off}
-    restart: unless-stopped
-    
-    # ========== セキュリティ強化 ==========
-    security_opt:
-      - no-new-privileges:true
-    # 読み取り専用ルートファイルシステム
-    read_only: true
-    # 一時的な書き込みが必要なディレクトリ
-    tmpfs:
-      - /tmp:size=100M,mode=1777
-      - /var/tmp:size=50M,mode=1777
-      - /home/moco/.moco:size=50M,mode=1777
-    # 不要な機能を削除
-    cap_drop:
-      - ALL
-    # 必要最小限の機能のみ追加
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    # リソース制限
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 4G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
+      <<: *entity-env
+      ENTITY_ID: entity-a
+      ENTITY_PORT: "8001"
 
   entity-b:
-    build: .
+    <<: *entity-common
     container_name: entity-b
     ports:
       - "8002:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
-      # プロファイル（読み取り専用）
       - ./profiles:/app/profiles:ro
-      # データ永続化
       - entity_b_data:/app/data
-      # ワークスペース（AIの作業領域 - ここだけ書き込み可能）
       - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
     environment:
-      # エンティティ識別
-      - ENTITY_ID=entity-b
-      - ENTITY_PORT=8002
-      - PEER_PORT=8001
-      - PEER_URL=http://entity-a:8000
-      # LLM API キー（.envファイルから読み込み）
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY}
-      # Ollama (ホストのOllamaに接続)
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
-      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.2}
-      # Slack 連携
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
-      # その他設定
-      - MOCO_PROFILE=${MOCO_PROFILE:-entity}
-      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
-      # サンドボックス：作業ディレクトリを制限
-      - MOCO_WORKING_DIRECTORY=/home/moco/workspace
-      # Memory Service
-      - MOCO_MEMORY_SERVICE=${MOCO_MEMORY_SERVICE:-off}
-    restart: unless-stopped
-    
-    # ========== セキュリティ強化 ==========
-    security_opt:
-      - no-new-privileges:true
-    # 読み取り専用ルートファイルシステム
-    read_only: true
-    # 一時的な書き込みが必要なディレクトリ
-    tmpfs:
-      - /tmp:size=100M,mode=1777
-      - /var/tmp:size=50M,mode=1777
-      - /home/moco/.moco:size=50M,mode=1777
-    # 不要な機能を削除
-    cap_drop:
-      - ALL
-    # 必要最小限の機能のみ追加
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-    # リソース制限
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: 4G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
+      <<: *entity-env
+      ENTITY_ID: entity-b
+      ENTITY_PORT: "8002"
 
+  entity-c:
+    <<: *entity-common
+    container_name: entity-c
+    ports:
+      - "8003:8000"
+    volumes:
+      - ./profiles:/app/profiles:ro
+      - entity_c_data:/app/data
+      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+    environment:
+      <<: *entity-env
+      ENTITY_ID: entity-c
+      ENTITY_PORT: "8003"
+
+  entity-d:
+    <<: *entity-common
+    container_name: entity-d
+    ports:
+      - "8004:8000"
+    volumes:
+      - ./profiles:/app/profiles:ro
+      - entity_d_data:/app/data
+      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+    environment:
+      <<: *entity-env
+      ENTITY_ID: entity-d
+      ENTITY_PORT: "8004"
+
+  entity-e:
+    <<: *entity-common
+    container_name: entity-e
+    ports:
+      - "8005:8000"
+    volumes:
+      - ./profiles:/app/profiles:ro
+      - entity_e_data:/app/data
+      - ${MOCO_WORKSPACE:-./workspace}:/home/moco/workspace
+    environment:
+      <<: *entity-env
+      ENTITY_ID: entity-e
+      ENTITY_PORT: "8005"
+
+  # ============================================================
   # Slack ゲートウェイ（オプション）
+  # ============================================================
   slack-gateway:
     build: .
     container_name: moco-slack
@@ -156,8 +228,13 @@ services:
     security_opt:
       - no-new-privileges:true
     profiles:
-      - slack  # docker compose --profile slack up で起動
+      - slack
 
 volumes:
   entity_a_data:
   entity_b_data:
+  entity_c_data:
+  entity_d_data:
+  entity_e_data:
+  bbs_postgres_data:
+  bbs_redis_data:
