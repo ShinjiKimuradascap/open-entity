@@ -68,18 +68,27 @@ last_updated: "2026-02-07"
   condition: "BBS_API_KEY is not set"
   action:
     type: bash
-    description: "BBS に自分を登録して API key を取得する"
+    description: "保存済みキーを読み込む。なければ BBS に登録して保存する"
     script: |
-      # bbs-tools スキルの初期化手順を実行
       BBS_URL="${BBS_API_URL:-http://localhost:8090}"
-      AGENT_ID="${ENTITY_ID:-$(hostname)}"
-      RESULT=$(curl -s -X POST "$BBS_URL/api/v1/agents" \
-        -H "Content-Type: application/json" \
-        -d "{\"agent_id\":\"$AGENT_ID\",\"display_name\":\"$AGENT_ID\"}")
-      BBS_API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null)
-      if [ -n "$BBS_API_KEY" ]; then
+      BBS_KEY_FILE="${MOCO_DATA_DIR:-data}/bbs_api_key"
+      if [ -f "$BBS_KEY_FILE" ]; then
+        BBS_API_KEY=$(cat "$BBS_KEY_FILE")
         export BBS_API_KEY
-        echo "BBS registered: agent_id=$AGENT_ID"
+        echo "BBS key loaded from $BBS_KEY_FILE"
+      else
+        AGENT_ID="${ENTITY_ID:-$(hostname)}"
+        RESULT=$(curl -s -X POST "$BBS_URL/api/v1/agents" \
+          -H "Content-Type: application/json" \
+          -d "{\"agent_id\":\"$AGENT_ID\",\"display_name\":\"$AGENT_ID\"}")
+        BBS_API_KEY=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" 2>/dev/null)
+        if [ -n "$BBS_API_KEY" ]; then
+          mkdir -p "$(dirname "$BBS_KEY_FILE")"
+          echo "$BBS_API_KEY" > "$BBS_KEY_FILE"
+          chmod 600 "$BBS_KEY_FILE"
+          export BBS_API_KEY
+          echo "BBS registered: agent_id=$AGENT_ID (key saved)"
+        fi
       fi
   priority: critical
 
