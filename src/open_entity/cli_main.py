@@ -1482,16 +1482,29 @@ def ui(
 
     console = Console()
     active_profile = os.environ.get("MOCO_PROFILE", "default")
-    console.print(f"\n🚀 [bold cyan]Moco Web UI[/bold cyan] starting... (profile: {active_profile})")
+    active_provider = os.environ.get("LLM_PROVIDER", "auto")
+    console.print(f"\n🚀 [bold cyan]Moco Web UI[/bold cyan] starting... (profile: {active_profile}, provider: {active_provider})")
     console.print(f"   URL: [link]http://{host if host != '0.0.0.0' else 'localhost'}:{port}[/link]\n")
-    
-    uvicorn.run(
-        "open_entity.ui.api:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level="info"
-    )
+
+    if reload:
+        # reload モードは別プロセスを起動するため文字列指定が必要
+        # env_file 等で環境変数を渡す必要あり
+        uvicorn.run(
+            "open_entity.ui.api:app",
+            host=host,
+            port=port,
+            reload=reload,
+            log_level="info",
+        )
+    else:
+        # 通常モード: 同一プロセスで起動し環境変数を確実に引き継ぐ
+        from open_entity.ui.api import app as fastapi_app
+        uvicorn.run(
+            fastapi_app,
+            host=host,
+            port=port,
+            log_level="info",
+        )
 
 
 def main():
