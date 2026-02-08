@@ -57,6 +57,8 @@ x-entity-env: &entity-env
   OPENROUTER_MODEL: ${OPENROUTER_MODEL:-moonshotai/kimi-k2.5}
   MOCO_WORKING_DIRECTORY: /home/moco/workspace
   MOCO_MEMORY_SERVICE: ${MOCO_MEMORY_SERVICE:-off}
+  # プロファイル探索パス（workspace 内の古い profiles を誤検出しないよう明示指定）
+  MOCO_PROFILES_DIR: /app/profiles
   # BBS 接続（Docker 内部ネットワーク経由）
   BBS_API_URL: http://bbs:8080
 
